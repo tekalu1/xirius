@@ -235,7 +235,8 @@ fn ui_329_the_window_watches_its_probe_for_onsets() {
     let probe = Arc::new(Probe::new());
     let p = s.project();
     let find = |x: PluginId| (x == id).then(|| probe.clone());
-    s.instruments.poll_with(&p, 48_000.0, Instant::now(), find);
+    s.instruments
+        .poll_with(&p, 48_000.0, Instant::now(), true, find);
     assert!(probe.watching());
     assert!(s.instruments.echoes.contains_key(&id));
 }

@@ -238,14 +238,16 @@ fn ui_327_the_probe_is_watched_while_the_window_is_open() {
     let probe = Arc::new(Probe::new());
     let p = s.project();
     let find = |x: PluginId| (x == id).then(|| probe.clone());
-    s.instruments.poll_with(&p, 48_000.0, Instant::now(), find);
+    s.instruments
+        .poll_with(&p, 48_000.0, Instant::now(), true, find);
     assert!(probe.watching());
     assert!(s.instruments.dynamics.contains_key(&id));
     let (x, y) = s.instrument_center(&g, id, Part::Close).unwrap();
     assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
     s.instrument_up();
     let p = s.project();
-    s.instruments.poll_with(&p, 48_000.0, Instant::now(), find);
+    s.instruments
+        .poll_with(&p, 48_000.0, Instant::now(), true, find);
     assert!(!probe.watching());
 }
 

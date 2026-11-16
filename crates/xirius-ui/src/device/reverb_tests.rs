@@ -287,7 +287,8 @@ fn ui_330_the_reflections_light_and_a_dot_runs_down_the_tail() {
     let probe = Arc::new(Probe::new());
     let p = st.project();
     let find = |x: PluginId| (x == id).then(|| probe.clone());
-    st.instruments.poll_with(&p, 48_000.0, Instant::now(), find);
+    st.instruments
+        .poll_with(&p, 48_000.0, Instant::now(), true, find);
     assert!(probe.watching());
     assert!(st.instruments.echoes.contains_key(&id));
 }

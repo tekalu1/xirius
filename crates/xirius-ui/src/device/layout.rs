@@ -420,6 +420,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         "limiter" => super::limiter::body(def, s),
         "delay" => super::delay::body(def, s),
         "reverb" => super::reverb::body(def, s),
+        "pitch-correction" => super::pitch::body(def, s),
         "sampler" => super::sampler::body(def, s),
         "drum-kit" => super::sampler::kit_body(def, s),
         _ => rows(def),
@@ -434,6 +435,7 @@ pub fn natural_w(def: &BuiltinDef) -> f32 {
         "limiter" => super::limiter::NATURAL_W,
         "delay" => super::delay::NATURAL_W,
         "reverb" => super::reverb::NATURAL_W,
+        "pitch-correction" => super::pitch::NATURAL_W,
         "sampler" => super::sampler::NATURAL_W,
         "drum-kit" => super::sampler::KIT_W,
         _ => rows(def).w,
@@ -448,6 +450,7 @@ pub fn min_w(def: &BuiltinDef) -> f32 {
         "limiter" => super::limiter::MIN_W,
         "delay" => super::delay::MIN_W,
         "reverb" => super::reverb::MIN_W,
+        "pitch-correction" => super::pitch::MIN_W,
         "sampler" | "drum-kit" => super::sampler::MIN_W,
         _ => rows(def).w,
     }

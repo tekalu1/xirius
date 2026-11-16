@@ -165,7 +165,8 @@ fn ui_328_the_history_keeps_five_seconds_with_the_gain_on_the_input() {
     let probe = Arc::new(Probe::new());
     let p = s.project();
     let find = |x: PluginId| (x == id).then(|| probe.clone());
-    s.instruments.poll_with(&p, 48_000.0, Instant::now(), find);
+    s.instruments
+        .poll_with(&p, 48_000.0, Instant::now(), true, find);
     assert!(probe.watching());
     let mut d = Dynamics::default();
     let t0 = Instant::now();

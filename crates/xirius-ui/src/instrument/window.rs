@@ -380,6 +380,8 @@ pub struct Windows {
     pub(crate) meters: HashMap<PluginId, Meter>,
     /// Each open dynamics device's levels and their history (UI-327).
     pub(crate) dynamics: HashMap<PluginId, Dynamics>,
+    /// Four seconds of Pitch Correction probe values, with audible timestamps (UI-359).
+    pub(crate) pitch: HashMap<PluginId, crate::device::pitch::History>,
     /// Each open Delay's or Reverb's onsets: its repeats or reflections
     /// light from the last (UI-329, UI-330).
     pub(crate) echoes: HashMap<PluginId, delay::Echo>,
@@ -915,6 +917,11 @@ impl Windows {
             if let Some(pitch) = b.keyboard.as_ref().and_then(|k| k.key_at(x, y)) {
                 return Some((i, Part::Key(pitch)));
             }
+            if def.uid == "pitch-correction"
+                && let Some(pitch) = play::key_at(&b.keys, x, y)
+            {
+                return Some((i, Part::Key(pitch)));
+            }
             if let Some(pitch) = play::key_at(&b.pads, x, y) {
                 return Some((i, Part::Pad(pitch)));
             }
@@ -1028,6 +1035,7 @@ impl Windows {
         self.analysers.retain(|id, _| open.contains(id));
         self.meters.retain(|id, _| open.contains(id));
         self.dynamics.retain(|id, _| open.contains(id));
+        self.pitch.retain(|id, _| open.contains(id));
         self.echoes.retain(|id, _| open.contains(id));
         self.voices.retain(|id, _| open.contains(id));
         if self.hot.is_some_and(|(id, _)| !open.contains(&id)) {
@@ -1218,6 +1226,7 @@ impl Windows {
         p: &Project,
         rate: f64,
         now: std::time::Instant,
+        playing: bool,
         probe_of: impl Fn(PluginId) -> Option<std::sync::Arc<xirius_engine::stock::Probe>>,
     ) -> bool {
         let open: Vec<PluginId> = self.open.iter().map(|w| w.plugin).collect();
@@ -1236,6 +1245,27 @@ impl Windows {
             probe.watch(true);
             self.watched.push(id);
             let (input, out) = probe.take_peaks();
+            if let Some((_, plugin, def)) = live(p, &w)
+                && def.uid == "pitch-correction"
+            {
+                let history = self.pitch.entry(id).or_default();
+                if playing {
+                    let range = def.params[6].to_plain(
+                        *plugin
+                            .params
+                            .get("range")
+                            .unwrap_or(&def.params[6].default_norm()),
+                    );
+                    history.feed(
+                        probe.pitch_view(),
+                        now,
+                        crate::device::pitch::latency(rate, range),
+                    );
+                    moving = true;
+                } else {
+                    history.clear();
+                }
+            }
             let m = self.meters.entry(id).or_default();
             m.step(xirius_engine::mixer::MeterReading {
                 peak: out,
@@ -1365,14 +1395,19 @@ impl Windows {
 fn bar(r: Rect, p: &Project, track: &Track, plugin: &Plugin, def: &BuiltinDef) -> title_bar::Bar {
     let source = source_of(p, plugin);
     let head = Rect::new(r.x, r.y, r.w, title_bar::BAR_H);
-    title_bar::layout(head, track.shown_name(), &plugin.name, seats(def, &source))
+    title_bar::layout(
+        head,
+        track.shown_name(),
+        &plugin.name,
+        seats(def, plugin.takes_notes(), &source),
+    )
 }
 
 /// The bar's seats for a built-in device whose sources are named `source`.
-fn seats<'a>(def: &BuiltinDef, source: &'a str) -> title_bar::Seats<'a> {
+fn seats<'a>(def: &BuiltinDef, notes: bool, source: &'a str) -> title_bar::Seats<'a> {
     title_bar::Seats {
         power: true,
-        sidechain: title_bar::takes_sidechain(def),
+        sidechain: title_bar::takes_sidechain(def) || notes,
         channel: true,
         source,
     }
@@ -1381,6 +1416,13 @@ fn seats<'a>(def: &BuiltinDef, source: &'a str) -> title_bar::Seats<'a> {
 /// The side-chain seat's name for `plugin`'s sources: the first source's
 /// channel, «+n» for the rest (UI-336).
 pub(crate) fn source_of(p: &Project, plugin: &Plugin) -> String {
+    if plugin.takes_notes() {
+        return plugin
+            .note_source
+            .as_ref()
+            .and_then(|s| p.tracks.get(&s.track))
+            .map_or_else(String::new, |t| t.shown_name().to_string());
+    }
     let sources = plugin
         .sidechain
         .as_ref()
@@ -1645,6 +1687,18 @@ impl Studio {
                 self.close_device_view(w.plugin);
             }
             Part::Key(pitch) => {
+                if let Some((_, x, def)) = live(&p, &w)
+                    && def.uid == "pitch-correction"
+                {
+                    let key = def.params[0].to_plain(*x.params.get("key").unwrap_or(&0.0)) as u8;
+                    let scale = *x.params.get("scale").unwrap_or(&0.0);
+                    self.device_set(
+                        w.plugin,
+                        1,
+                        crate::device::pitch::toggle_scale(scale, (pitch + 12 - key) % 12),
+                    );
+                    return true;
+                }
                 // A Sampler's key chooses the zone that plays it (UI-333).
                 if let Some((_, x, def)) = live(&p, &w)
                     && def.uid == "sampler"
@@ -1785,6 +1839,24 @@ impl Studio {
                 let Some((track, plugin, def)) = live(&p, &w) else {
                     return true;
                 };
+                if plugin.takes_notes() {
+                    if part == Part::Sidechain
+                        && let Some(source) = plugin.note_source
+                    {
+                        let state = if source.on { "off" } else { "on" };
+                        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                        self.run_command(
+                            "plugin.note_source.enable",
+                            json!({ "id": w.plugin.to_string(), "state": state }),
+                        );
+                    } else {
+                        let anchor =
+                            self.instruments
+                                .part_rect(r, &p, track, plugin, def, Part::Sources);
+                        self.open_popup(PopupKind::KeySources(w.plugin), anchor);
+                    }
+                    return true;
+                }
                 let keyed = plugin
                     .sidechain
                     .as_ref()
@@ -2170,7 +2242,9 @@ impl Studio {
         self.instruments.multi_pressed = multi_pressed;
         let shown = self
             .instruments
-            .poll_with(&p, rate, now, |id| plugins.stock_probe(id));
+            .poll_with(&p, rate, now, self.transport.playing, |id| {
+                plugins.stock_probe(id)
+            });
         // after the windows, so a probe a window let go is watched again for the mixer
         let probes: Vec<_> = self
             .gr_ids(&p)
@@ -2496,8 +2570,16 @@ fn paint_window(
                 modified,
                 steps: (true, true),
                 pinned: w.pinned,
-                keyed: plugin.sidechain.as_ref().is_some_and(|sc| sc.on),
-                seats: seats(def, &source_of(&studio.project(), plugin)),
+                keyed: if plugin.takes_notes() {
+                    plugin.note_source.as_ref().is_some_and(|s| s.on)
+                } else {
+                    plugin.sidechain.as_ref().is_some_and(|sc| sc.on)
+                },
+                seats: seats(
+                    def,
+                    plugin.takes_notes(),
+                    &source_of(&studio.project(), plugin),
+                ),
             },
         );
 
@@ -2573,7 +2655,17 @@ fn paint_window(
                 live: sounding,
                 turn,
             };
-            graph::paint(pen, def, n, plane, &shown, &view);
+            if def.uid == "pitch-correction" {
+                crate::device::pitch::paint_graph(
+                    pen,
+                    plane,
+                    ins.pitch.get(&plugin.id),
+                    std::time::Instant::now(),
+                    plugin.note_source.as_ref().is_some_and(|s| s.on),
+                );
+            } else {
+                graph::paint(pen, def, n, plane, &shown, &view);
+            }
         }
         // An empty Drum Kit pad's voice: its planes at the defaults, dim like a bypassed
         // device's, with no point to take.
@@ -2663,6 +2755,10 @@ fn paint_window(
                 .unwrap_or_default();
             pressed.extend(down);
             keyboard.paint(pen, &pressed);
+        }
+        if def.uid == "pitch-correction" {
+            let key = def.params[0].to_plain(shown[0]) as u8;
+            crate::device::pitch::paint_keys(pen, &body.keys, shown[1], key);
         }
         let lit = ins.lit_pads(plugin.id, std::time::Instant::now());
         play::paint_pads(pen, &body.pads, &body.spots, &lit, pad);

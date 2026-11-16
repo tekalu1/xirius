@@ -1458,9 +1458,17 @@ pub(crate) fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             .instruments
             .part_rect(r, &p, track, x, def, Part::Sidechain);
         if seat.w > 0.0 {
-            let on = x.sidechain.as_ref().is_some_and(|sc| sc.on);
+            let on = if x.takes_notes() {
+                x.note_source.as_ref().is_some_and(|ns| ns.on)
+            } else {
+                x.sidechain.as_ref().is_some_and(|sc| sc.on)
+            };
             let mut node = accesskit::Node::new(accesskit::Role::Button);
-            node.set_label("サイドチェーン");
+            node.set_label(if x.takes_notes() {
+                "MIDI"
+            } else {
+                "サイドチェーン"
+            });
             node.set_toggled(if on {
                 accesskit::Toggled::True
             } else {
@@ -1471,7 +1479,13 @@ pub(crate) fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             let list = s.instruments.part_rect(r, &p, track, x, def, Part::Sources);
             let name = source_of(&p, x);
             let mut node = accesskit::Node::new(accesskit::Role::Button);
-            node.set_label(if name.is_empty() {
+            node.set_label(if x.takes_notes() {
+                if name.is_empty() {
+                    "MIDI".to_string()
+                } else {
+                    format!("MIDI {name}")
+                }
+            } else if name.is_empty() {
                 "サイドチェーンのソース".to_string()
             } else {
                 format!("サイドチェーンのソース {name}")
@@ -1515,10 +1529,44 @@ pub(crate) fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 out.push(mark(format!("device-{}-readout-{n}", w.plugin), node));
             }
         }
+        if x.takes_notes() {
+            if let Some(&graph) = body.graphs.first() {
+                let mut node = accesskit::Node::new(accesskit::Role::Group);
+                node.set_label("Correction");
+                node.set_bounds(bounds(graph));
+                out.push(mark(format!("device-{}-correction", w.plugin), node));
+            }
+            if let (Some(first), Some(last)) = (body.keys.first(), body.keys.last()) {
+                let mut node = accesskit::Node::new(accesskit::Role::Group);
+                node.set_label("Notes");
+                node.set_bounds(bounds(crate::studio::Rect::new(
+                    first.r.x,
+                    first.r.y - 28.0,
+                    last.r.right() - first.r.x,
+                    last.r.bottom() - first.r.y + 28.0,
+                )));
+                out.push(mark(format!("device-{}-notes", w.plugin), node));
+            }
+        }
         // A Sampler's keys and a Drum Kit's pads are Buttons named by their note (PLG-066).
         for k in &body.keys {
             let mut node = accesskit::Node::new(accesskit::Role::Button);
-            node.set_label(crate::roll::pitch_name(k.pitch));
+            node.set_label(if x.takes_notes() {
+                [
+                    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+                ][usize::from(k.pitch)]
+                .to_string()
+            } else {
+                crate::roll::pitch_name(k.pitch)
+            });
+            if x.takes_notes() {
+                let root = def.params[0].to_plain(now[0]) as u8;
+                node.set_toggled(if crate::device::pitch::lit(now[1], root, k.pitch) {
+                    accesskit::Toggled::True
+                } else {
+                    accesskit::Toggled::False
+                });
+            }
             node.set_bounds(bounds(k.r));
             out.push(mark(format!("device-{}-key-{}", w.plugin, k.pitch), node));
         }

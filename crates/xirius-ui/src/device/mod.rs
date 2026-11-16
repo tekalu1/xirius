@@ -15,9 +15,10 @@ pub mod limiter;
 #[cfg(test)]
 mod pad_auto_tests;
 #[cfg(test)]
-mod pitch_tests;
-#[cfg(test)]
 mod pad_select_tests;
+pub mod pitch;
+#[cfg(test)]
+mod pitch_tests;
 pub mod play;
 pub mod reverb;
 pub mod sampler;
