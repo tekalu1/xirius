@@ -82,9 +82,11 @@ pub const SHOTS: &[Shot] = &[
     },
 ];
 
-/// Where the script keeps its songs.
+/// Where the script keeps its songs; in a test, the folder the test lent it.
 fn dir() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("xirius-startup-shots-{}", std::process::id()))
+    crate::shot::script_dir(|| {
+        std::env::temp_dir().join(format!("xirius-startup-shots-{}", std::process::id()))
+    })
 }
 
 /// An input that hears a voice on its first channel and little on its second.
@@ -154,6 +156,11 @@ fn empty(s: &mut Studio, g: &Geometry, devices: &[(&str, usize, usize)]) {
 /// Three songs saved before, the newest first.
 fn remember(s: &mut Studio) {
     let root = dir();
+    // In a test, what the last stage left writing there (its recent-song list, its songs being
+    // put away) ends first, and a folder that cannot be emptied fails the test.
+    #[cfg(test)]
+    crate::shot::clear(&root);
+    #[cfg(not(test))]
     let _ = std::fs::remove_dir_all(&root);
     let keep = crate::keep::Keep::at(root.join("keep"));
     let now = xirius_core::store::now_ms();
@@ -298,6 +305,9 @@ mod tests {
     /// Every stage shows what it is for, without a window.
     #[test]
     fn each_stage_shows_its_part() {
+        // The songs and the recent-song list go in a folder of the test's own; it goes after the
+        // studio, once what still writes there has ended. Declared first, so dropped last.
+        let _folder = crate::shot::TestFolder::lent("xirius-startup-shots-");
         let mut s = Studio::sample();
         let g = s.geometry(
             1440.0,
@@ -349,6 +359,5 @@ mod tests {
         stage(&mut s, &g, 13);
         assert!(s.settings_scene(&g).has_text("更新を確認"));
         assert_eq!(s.error, None);
-        let _ = std::fs::remove_dir_all(dir());
     }
 }

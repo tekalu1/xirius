@@ -175,6 +175,25 @@ impl Owner {
         }
     }
 }
+/// Waits (at most 30 s) until the recent-song lists kept under `folder` have no update left to
+/// write: a test removes its folder only after them (`shot::settle`).
+#[cfg(test)]
+pub(crate) fn wait_settled(folder: &Path) {
+    let end = Instant::now() + Duration::from_secs(30);
+    loop {
+        let busy = owners()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(root, _)| root.starts_with(folder))
+            .filter_map(|(_, owner)| owner.upgrade())
+            .any(|owner| owner.status().is_none());
+        if !busy || Instant::now() >= end {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 /// Terminal errors/timeouts are logged once by the caller; no invisible wait forever.
 pub(crate) fn finish(since: Instant) -> Option<Vec<String>> {
     let statuses: Vec<_> = owners()

@@ -232,16 +232,15 @@ impl TestTemp {
 #[cfg(test)]
 impl Drop for TestTemp {
     fn drop(&mut self) {
-        remove_patiently(&self.0);
+        removed_or_fail(&self.0, remove_patiently(&self.0));
     }
 }
 
 /// A folder of a test's own, removed when dropped (also when the test fails). Before it goes, it
-/// waits for the songs closed under it to be put away on their threads (`song::wait_retired`)
-/// and for the browser's places read and written there (`browser_prefs_io::wait_read`,
-/// `browser_prefs_save::wait_written`), and it tries again for a while when Windows refuses a
-/// file a thread or a program that is ending still holds. Declare it before the studio, so that
-/// the studio is dropped first.
+/// waits for the work still writing there to end ([`settle`]), and it tries again for a while
+/// when Windows refuses a file a thread or a program that is ending still holds. A folder it
+/// cannot remove fails the test. Declare it before the studio, so that the studio is dropped
+/// first.
 #[cfg(test)]
 pub(crate) struct TestFolder(std::path::PathBuf);
 
@@ -257,6 +256,14 @@ impl TestFolder {
         )
     }
 
+    /// A folder of the test's own that the shot scripts it plays keep their files in (its
+    /// `script` folder, [`script_dir`]) until it goes.
+    pub(crate) fn lent(prefix: &str) -> TestFolder {
+        let folder = TestFolder::new(prefix);
+        LENT.set(Some(folder.0.join("script")));
+        folder
+    }
+
     pub(crate) fn path(&self) -> &std::path::Path {
         &self.0
     }
@@ -266,11 +273,62 @@ impl TestFolder {
         if self.0.as_os_str().is_empty() {
             return;
         }
-        crate::song::wait_retired(&self.0);
-        wait_unused(&self.0);
-        crate::browser_prefs_io::wait_read(&self.0);
-        crate::browser_prefs_save::wait_written(&self.0);
-        remove_patiently(&std::mem::take(&mut self.0));
+        LENT.with_borrow_mut(|lent| {
+            if lent.as_ref().is_some_and(|l| l.starts_with(&self.0)) {
+                *lent = None;
+            }
+        });
+        settle(&self.0);
+        let dir = std::mem::take(&mut self.0);
+        removed_or_fail(&dir, remove_patiently(&dir));
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The folder a test lent the shot scripts it plays ([`TestFolder::lent`]).
+    static LENT: RefCell<Option<std::path::PathBuf>> = const { RefCell::new(None) };
+}
+
+/// Where a shot script keeps the files it makes (songs, places, recent-song lists): in a test
+/// that lent it a folder ([`TestFolder::lent`]), there, so that the test waits for what still
+/// writes in it and fails when it cannot remove it; else `own()`.
+pub(crate) fn script_dir(own: impl FnOnce() -> std::path::PathBuf) -> std::path::PathBuf {
+    #[cfg(test)]
+    if let Some(lent) = LENT.with_borrow(|l| l.clone()) {
+        return lent;
+    }
+    own()
+}
+
+/// Waits for the work a test started that may still write under `folder`: the songs closed there
+/// being put away on their threads (`song::wait_retired`), the recent-song lists kept there
+/// (`recent_worker::wait_settled`), work marked [`Using`] it, and the browser's places read and
+/// written there (`browser_prefs_io::wait_read`, `browser_prefs_save::wait_written`).
+#[cfg(test)]
+pub(crate) fn settle(folder: &std::path::Path) {
+    crate::song::wait_retired(folder);
+    crate::recent_worker::wait_settled(folder);
+    wait_unused(folder);
+    crate::browser_prefs_io::wait_read(folder);
+    crate::browser_prefs_save::wait_written(folder);
+}
+
+/// Empties `folder` for a test once the work still writing in it has ended ([`settle`]); a folder
+/// it cannot remove fails the test.
+#[cfg(test)]
+pub(crate) fn clear(folder: &std::path::Path) {
+    settle(folder);
+    removed_or_fail(folder, remove_patiently(folder));
+}
+
+/// Fails the test when its folder could not be removed, unless it already fails.
+#[cfg(test)]
+fn removed_or_fail(dir: &std::path::Path, removed: std::io::Result<()>) {
+    if let Err(e) = removed
+        && !std::thread::panicking()
+    {
+        panic!("{} is left: {e}", dir.display());
     }
 }
 
@@ -325,12 +383,18 @@ fn wait_unused(folder: &std::path::Path) {
     }
 }
 
-/// Removes `dir`, trying again for up to 10 s while something still holds a file in it.
+/// Removes `dir`, trying again for up to 10 s while something still holds a file in it. A `dir`
+/// that is not there counts as removed.
 #[cfg(test)]
-fn remove_patiently(dir: &std::path::Path) {
+fn remove_patiently(dir: &std::path::Path) -> std::io::Result<()> {
     let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::fs::remove_dir_all(dir).is_err() && dir.exists() && std::time::Instant::now() < end {
-        std::thread::sleep(std::time::Duration::from_millis(50));
+    loop {
+        match std::fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(_) if !dir.exists() => return Ok(()),
+            Err(e) if std::time::Instant::now() >= end => return Err(e),
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
     }
 }
 
