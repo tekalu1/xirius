@@ -26,12 +26,20 @@ const fn spec(
         curve,
         off: Off::Never,
         preset: true,
+        automatable: true,
     }
 }
 
 /// A knob the built-in presets leave where it is.
 const fn no_preset(p: ParamSpec) -> ParamSpec {
     ParamSpec { preset: false, ..p }
+}
+
+const fn no_automation(p: ParamSpec) -> ParamSpec {
+    ParamSpec {
+        automatable: false,
+        ..p
+    }
 }
 
 /// A knob added after the first factory presets were made (PLG-062). The set now names
@@ -319,7 +327,7 @@ pub static PITCH_CORRECTION: BuiltinDef = BuiltinDef {
         ms("transition", "ノートトランジション", 1.0, 500.0, 100.0),
         pct("amount", "補正の量", 100.0, 100.0),
         toggle("formant", "フォルマント", true),
-        choice("range", "音域", &["Low", "Mid", "High"], 1),
+        no_automation(choice("range", "音域", &["Low", "Mid", "High"], 1)),
     ],
 };
 

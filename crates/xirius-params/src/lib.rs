@@ -100,6 +100,8 @@ pub struct ParamSpec {
     /// are not (PLG-071): a preset leaves them where they are, and a song from before them
     /// still reads the preset it was at.
     pub preset: bool,
+    /// Whether a new automation lane may target this parameter.
+    pub automatable: bool,
 }
 
 impl ParamSpec {

@@ -84,6 +84,7 @@ pub fn params(plugin: &Plugin) -> Vec<(String, String)> {
         return def
             .params
             .iter()
+            .filter(|p| p.automatable)
             .map(|p| (p.id.to_string(), p.label.to_string()))
             .collect();
     }

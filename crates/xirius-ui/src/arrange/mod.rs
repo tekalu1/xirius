@@ -631,6 +631,7 @@ pub fn targets_of(t: &Track) -> Vec<AutoTarget> {
             out.extend(
                 def.params
                     .iter()
+                    .filter(|p| p.automatable)
                     .map(|p| AutoTarget::Param(plugin.id, p.id.to_string())),
             );
         }
@@ -652,6 +653,12 @@ pub fn targets_of(t: &Track) -> Vec<AutoTarget> {
                 .params
                 .keys()
                 .filter(|k| {
+                    if plugin
+                        .builtin()
+                        .is_some_and(|def| def.params.iter().any(|p| p.id == *k && !p.automatable))
+                    {
+                        return false;
+                    }
                     // Which file sits in which pad, and a file's own range, are the device's
                     // bookkeeping, not a knob to move; a lane a song already has still shows.
                     if is_file_key(k) {

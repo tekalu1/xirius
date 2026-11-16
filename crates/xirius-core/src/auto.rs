@@ -319,6 +319,14 @@ impl AutoTarget {
 
     /// Does the channel still have what this lane points at?
     pub fn exists_on(&self, t: &Track) -> bool {
+        if let Self::Param(id, name) = self
+            && let Some(plugin) = t.inserts.iter().find(|p| p.id == *id)
+            && let Some(def) = plugin.builtin()
+            && let Some(spec) = def.params.iter().find(|p| p.id == name)
+            && !spec.automatable
+        {
+            return false;
+        }
         self.current(t).is_some()
     }
 }

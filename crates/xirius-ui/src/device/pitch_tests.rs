@@ -164,7 +164,7 @@ fn pitch_ui_history_waits_for_the_audio_latency_and_keeps_silence_empty() {
 }
 
 #[test]
-fn pitch_ui_automation_offers_all_seven_targets() {
+fn pitch_ui_automation_offers_six_targets_without_range() {
     use crate::studio::Studio;
     use serde_json::json;
     let mut s = Studio::sample();
@@ -182,7 +182,7 @@ fn pitch_ui_automation_offers_all_seven_targets() {
         .iter()
         .filter(|c| c.label.starts_with("Pitch Correction · "))
         .collect();
-    assert_eq!(pitch.len(), 7);
+    assert_eq!(pitch.len(), 6);
     let names: Vec<_> = pitch.iter().map(|c| c.label.as_str()).collect();
     for label in [
         "キー",
@@ -191,13 +191,30 @@ fn pitch_ui_automation_offers_all_seven_targets() {
         "ノートトランジション",
         "補正の量",
         "フォルマント",
-        "音域",
     ] {
         assert!(
             names.contains(&format!("Pitch Correction · {label}").as_str()),
             "{names:?}"
         );
     }
+    assert!(!names.contains(&"Pitch Correction · 音域"));
+    let id = s.project().tracks[&bass].inserts.last().unwrap().id;
+    assert!(!s.run_command(
+        "auto.lane.add",
+        json!({"track": bass.to_string(),
+        "target": format!("param:{id}:range")})
+    ));
+    assert!(s.run_command(
+        "plugin.param.set",
+        json!({"id": id.to_string(),
+        "param": "range", "plain": "High"})
+    ));
+    let project = s.project();
+    let p = project.tracks[&bass].inserts.last().unwrap();
+    assert_eq!(
+        p.builtin().unwrap().params[6].to_plain(p.params["range"]),
+        2.0
+    );
 }
 
 #[test]
