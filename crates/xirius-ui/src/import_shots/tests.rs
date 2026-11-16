@@ -65,6 +65,9 @@ fn play(s: &mut Studio, act: Act) {
 
 #[test]
 fn the_import_script_puts_real_files_and_takes_them_back() {
+    // The place, its peaks and the saved song go in a folder of the test's own; it goes after
+    // the studio, once what still writes there has ended. Declared first, so dropped last.
+    let _folder = crate::shot::TestFolder::lent("xirius-import-shots-");
     let mut s = Studio::sample();
     s.transport.mode = OutputMode::Silent { paced: true };
     let tracks = s.project().tracks.len();
@@ -120,5 +123,6 @@ fn the_import_script_puts_real_files_and_takes_them_back() {
         }
     }
     crate::audition::stop();
-    let _ = std::fs::remove_dir_all(dir());
+    // The peaks of the place's files and of the song's clips are written on threads of their own.
+    xirius_session::peaks::wait();
 }

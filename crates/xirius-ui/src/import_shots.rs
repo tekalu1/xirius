@@ -93,20 +93,23 @@ thread_local! {
     static DIR: RefCell<Option<Folder>> = const { RefCell::new(None) };
 }
 
-/// Where the run that is playing keeps its files: one folder a run, so tests do not meet.
+/// Where the run that is playing keeps its files: one folder a run, so tests do not meet; in a
+/// test, the folder the test lent it.
 pub fn dir() -> PathBuf {
-    DIR.with(|d| {
-        d.borrow_mut()
-            .get_or_insert_with(|| {
-                static RUN: AtomicUsize = AtomicUsize::new(0);
-                let n = RUN.fetch_add(1, Ordering::Relaxed);
-                Folder(
-                    std::env::temp_dir()
-                        .join(format!("xirius-import-shots-{}-{n}", std::process::id())),
-                )
-            })
-            .0
-            .clone()
+    crate::shot::script_dir(|| {
+        DIR.with(|d| {
+            d.borrow_mut()
+                .get_or_insert_with(|| {
+                    static RUN: AtomicUsize = AtomicUsize::new(0);
+                    let n = RUN.fetch_add(1, Ordering::Relaxed);
+                    Folder(
+                        std::env::temp_dir()
+                            .join(format!("xirius-import-shots-{}-{n}", std::process::id())),
+                    )
+                })
+                .0
+                .clone()
+        })
     })
 }
 
