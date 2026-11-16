@@ -17,12 +17,23 @@ use xirius_ui::popup::Action;
 use xirius_ui::song::Song;
 use xirius_ui::studio::{DrawerTab, Hit, Studio};
 
-/// A folder of the test's own, removed when dropped (also when the test fails).
+/// A folder of the test's own, removed when dropped (also when the test fails). The browser's
+/// file (its favourites and places, which the window reads as it starts) is kept in it too,
+/// not in the person's.
 fn temp_dir(name: &str) -> tempfile::TempDir {
-    tempfile::Builder::new()
+    let dir = tempfile::Builder::new()
         .prefix(&format!("xirius-ui-{name}-"))
         .tempdir()
-        .unwrap()
+        .unwrap();
+    // SAFETY: nextest runs each test in a process of its own (docs/testing.md), and this is
+    // set before the test starts a thread.
+    unsafe {
+        std::env::set_var(
+            "XIRIUS_BROWSER_FILE",
+            dir.path().join("prefs").join("browser.json"),
+        )
+    };
+    dir
 }
 
 /// A folder bundle whose binary is `bytes` (not a loadable DLL).
