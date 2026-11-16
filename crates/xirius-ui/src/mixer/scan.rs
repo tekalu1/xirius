@@ -324,7 +324,7 @@ mod menu_io_tests {
 
     #[test]
     fn the_automatic_scan_leaves_the_screen_as_it_was() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-scan-");
         let mut s = windowed(root.path());
         s.mixer.scan.auto = true;
         let g = s.geometry(1280.0, 720.0);
@@ -341,6 +341,13 @@ mod menu_io_tests {
         assert_eq!(s.error.as_deref(), Some("起動時の誤り"));
         assert!(s.palette.is_some());
         assert!(s.toast.is_none());
+        // The scan writes its list into the folder: it ends, and the list is read, before the
+        // folder goes.
+        while s.mixer.scan.running() || s.mixer.scan.catalog_read.is_some() {
+            s.poll_plugin_scan();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
     }
 
     /// The start screen with its inputs watched, as a device had them watched before the start
