@@ -187,6 +187,20 @@ pub struct Flow {
     pub adds: Vec<Add>,
 }
 
+/// The note sender beside its receiving insert, using the editor's card and port sizes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NoteRoute {
+    pub source: Rect,
+    pub port: Rect,
+}
+
+pub fn note_route(card: Rect, _seen: Rect) -> NoteRoute {
+    NoteRoute {
+        source: Rect::new(card.x - 132.0, card.y + 3.0, 100.0, 24.0),
+        port: Rect::new(card.x, card.y + 10.0, 10.0, 10.0),
+    }
+}
+
 /// A splitter's ＋ right of its columns.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Add {
@@ -310,6 +324,9 @@ pub fn layout(p: &Project, t: &Track, at: (f32, f32)) -> Flow {
     let output = crate::draw::output_label(p, t);
     // The widest part sets the width; everything is centred on it.
     let mut inner = chain_w(&rack.fx).max(pill_w(&input)).max(pill_w(&output));
+    if t.inserts.iter().any(|p| p.note_source.is_some()) {
+        inner = inner.max(400.0);
+    }
     match &rack.source {
         Some(Source::Multi { layers, .. }) => {
             inner = inner.max(cols_w(layers.iter().map(layer_w)));

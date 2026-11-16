@@ -478,6 +478,51 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow, se
         _ => None,
     };
     for card in f.cards.iter().filter(|c| meets(c.rect, seen)) {
+        if let Some(plugin) = plugin_of(t, card.pick)
+            && let Some(source) = plugin.note_source
+            && let Some(sender) = s.project().tracks.get(&source.track)
+        {
+            let route = super::flow::note_route(card.rect, seen);
+            let hot = matches!(w.hot, Some(Part::Card(p) | Part::Dot(p) | Part::More(p)) if p == card.pick);
+            let ink = if !source.on {
+                c.ink
+            } else if hot {
+                c.primary.1
+            } else {
+                c.ink_mark
+            };
+            pen.round(
+                route.source,
+                if hot { c.surface_3 } else { c.surface_1 },
+                Radius::S,
+            );
+            let label = pen.fit(
+                &sender.name,
+                FontSize::Small,
+                Weight::Regular,
+                route.source.w - 12.0,
+            );
+            pen.text(
+                &label,
+                FontSize::Small,
+                Weight::Regular,
+                ink,
+                Rect::new(
+                    route.source.x + 6.0,
+                    route.source.y,
+                    route.source.w - 12.0,
+                    route.source.h,
+                ),
+                Align::Left,
+            );
+            let y = route.port.y + route.port.h / 2.0;
+            let mut x = route.source.right() + 3.0;
+            while x < route.port.x {
+                pen.fill(Rect::new(x, y, 4.0_f32.min(route.port.x - x), 1.5), ink);
+                x += 7.0;
+            }
+            pen.round(route.port, ink, Radius::Pill);
+        }
         paint_card(pen, s, w, t, card, dragged == Some(card.pick));
     }
     for (i, gap) in f.gaps.iter().enumerate() {

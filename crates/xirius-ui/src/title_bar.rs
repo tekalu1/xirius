@@ -566,7 +566,7 @@ pub fn paint_with(pen: &mut Pen, r: Rect, bar: &Bar, v: &View<'_>) {
         let has = !v.seats.source.is_empty();
         let mut ink = seat_inks(c, has, v.keyed);
         if v.device == "Pitch Correction" && has && v.keyed {
-            ink.icon = c.ink_ai;
+            ink.icon = c.ink_mark;
         }
         if has {
             pen.round(seat, c.surface_3, Radius::S);

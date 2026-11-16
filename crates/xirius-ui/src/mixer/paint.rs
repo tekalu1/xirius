@@ -331,7 +331,7 @@ fn paint_strip(
             {
                 pen.round(row, c.surface_2, Radius::S);
                 let (mark, _, nm, _) = super::keys::key_parts(row);
-                pen.icon("sc", mark, if *on { c.ink_ai } else { c.ink });
+                pen.icon("sc", mark, if *on { c.ink_mark } else { c.ink });
                 if let Some(receiver) = p.tracks.get(owner) {
                     pen.mask(nm, |pen| {
                         pen.text(

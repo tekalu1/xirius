@@ -1555,11 +1555,11 @@ fn plugin_row(
             locked,
         );
     }
-    if let Some((r, on, notes)) = key_mark {
+    if let Some((r, on, _notes)) = key_mark {
         let ink = if chosen {
             c.primary.1
         } else if on {
-            if notes { c.ink_ai } else { c.ink_mark }
+            c.ink_mark
         } else {
             c.ink
         };
