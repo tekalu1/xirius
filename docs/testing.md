@@ -53,8 +53,12 @@ crash records as it starts, whether it falls over or not; `shot::CrashRecords` i
 `target/`, as the plugin copies below: a host still ending may hold its records after the test,
 and a later test removes the old ones. One that opens the
 browser or scans plugins with a song of its own names its files too (`XIRIUS_BROWSER_FILE`,
-`XIRIUS_PLUGIN_CACHE`, or the scan options of its song); and one that bounces or exports from an
-unsaved song points the temporary folder at one of its own (`shot::TestTemp`). A plugin a test loads into its own process cannot be removed on Windows
+`XIRIUS_PLUGIN_CACHE`, or the scan options of its song; a song a UI test makes with the default
+options keeps its plugin list in its `shot::TestFolder`, scans no installed folder, and stops a
+scan still running before it goes); and one that bounces or exports from an
+unsaved song points the temporary folder at one of its own (`shot::TestTemp`). A background job
+reads as ended before it writes its last record and lets go of its `<job>.lock` in the song's
+`exports` folder: a test that ends on seeing it ended waits for that lock to go first. A plugin a test loads into its own process cannot be removed on Windows
 until the process ends; it is copied under `target/` (`xirius_test_vst3::copies_dir`).
 
 `scripts/ci_tests.py` runs the tests with a temporary folder of the run's own, and with the
