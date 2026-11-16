@@ -112,20 +112,41 @@ fn segment(pen: &mut Pen, a: (f32, f32), b: (f32, f32), color: gpui::Hsla, width
     }
 }
 
+pub(crate) fn legend_items(graph: Rect) -> [(Rect, Rect); 3] {
+    const SAMPLE_W: f32 = 11.0;
+    const NAME_GAP: f32 = 4.0;
+    const PAIR_GAP: f32 = 10.0;
+    const NAME_W: [f32; 3] = [18.0, 24.0, 32.0];
+    let mut x = graph.right() - 144.0;
+    std::array::from_fn(|i| {
+        let sample = Rect::new(x, graph.y - 19.0, SAMPLE_W, 16.0);
+        let name = Rect::new(sample.right() + NAME_GAP, sample.y, NAME_W[i], 16.0);
+        x = name.right() + PAIR_GAP;
+        (sample, name)
+    })
+}
+
 pub fn paint_graph(pen: &mut Pen, r: Rect, history: Option<&History>, now: Instant, midi_on: bool) {
     let c = pen.c;
-    let legend = Rect::new(r.right() - 144.0, r.y - 19.0, 32.0, 16.0);
-    pen.fill(Rect::new(legend.x, legend.y + 8.0, 10.0, 1.0), c.ink_blue);
+    let [
+        (in_sample, in_name),
+        (out_sample, out_name),
+        (midi_sample, midi_name),
+    ] = legend_items(r);
+    pen.fill(
+        Rect::new(in_sample.x, in_sample.y + 8.0, in_sample.w, 1.0),
+        c.ink_blue,
+    );
     pen.text(
         "In",
         FontSize::Caption,
         Weight::Regular,
         c.ink_blue,
-        Rect::new(legend.x + 10.0, legend.y, 22.0, 16.0),
-        Align::Right,
+        in_name,
+        Align::Left,
     );
     pen.fill(
-        Rect::new(legend.x + 36.0, legend.y + 7.0, 11.0, 3.0),
+        Rect::new(out_sample.x, out_sample.y + 7.0, out_sample.w, 3.0),
         c.ink_blue,
     );
     pen.text(
@@ -133,12 +154,12 @@ pub fn paint_graph(pen: &mut Pen, r: Rect, history: Option<&History>, now: Insta
         FontSize::Caption,
         Weight::Regular,
         c.ink_blue,
-        Rect::new(legend.x + 48.0, legend.y, 24.0, 16.0),
-        Align::Right,
+        out_name,
+        Align::Left,
     );
     if midi_on {
         pen.fill(
-            Rect::new(legend.x + 76.0, legend.y + 6.0, 11.0, 5.0),
+            Rect::new(midi_sample.x, midi_sample.y + 6.0, midi_sample.w, 5.0),
             c.ink_mark,
         );
         pen.text(
@@ -146,8 +167,8 @@ pub fn paint_graph(pen: &mut Pen, r: Rect, history: Option<&History>, now: Insta
             FontSize::Caption,
             Weight::Regular,
             c.ink_mark,
-            Rect::new(legend.x + 88.0, legend.y, 40.0, 16.0),
-            Align::Right,
+            midi_name,
+            Align::Left,
         );
     }
     pen.round(r, c.surface_0, Radius::S);

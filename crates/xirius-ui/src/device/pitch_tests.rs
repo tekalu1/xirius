@@ -83,6 +83,24 @@ fn pitch_ui_millisecond_value_has_no_unneeded_decimal() {
 }
 
 #[test]
+fn pitch_ui_legend_pairs_each_sample_with_its_name_at_even_spacings() {
+    let graph = crate::studio::Rect::new(0.0, 0.0, 640.0, 220.0);
+    let pairs = super::pitch::legend_items(graph);
+    let sample_to_name: Vec<_> = pairs
+        .iter()
+        .map(|(sample, name)| name.x - sample.right())
+        .collect();
+    let between_pairs: Vec<_> = pairs
+        .windows(2)
+        .map(|pair| pair[1].0.x - pair[0].1.right())
+        .collect();
+    assert!(sample_to_name.iter().all(|gap| *gap == sample_to_name[0]));
+    assert!(between_pairs.iter().all(|gap| *gap == between_pairs[0]));
+    assert!(sample_to_name[0] < between_pairs[0]);
+    assert!(pairs[2].1.right() <= graph.right());
+}
+
+#[test]
 fn pitch_ui_automation_formats_key_amount_and_speed() {
     use xirius_core::auto::AutoTarget;
     use xirius_core::id::PluginId;
