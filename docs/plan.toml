@@ -8561,3 +8561,12 @@ remaining = "印どうしのホバー連動の仕上げ、オートメーショ�
 source = "2026-11-15 の利用者のモック承認（pitch-correction.html の 01・02・04） ; 2026-11-16 の利用者の決定（Range をオートメーションの行き先から外す）"
 done_when = "承認された窓の値・鍵盤・操作、タイトルバーのノート送り元、ミキサーとチャンネルエディターの印、オートメーションの表示を実装し、画面で確かめて docs/ui-approved.md に記録する"
 after = ["PLG-076", "MIX-051"]
+
+[[item]]
+id = "PLG-077"
+title = "プラグインのホストに実行形式でないファイルを選んだとき、起動を確認のダイアログで止めずに誤りで返す"
+area = "PLG"
+phase = "v1"
+source = "2026-11-17 の確認（error mode に SEM_FAILCRITICALERRORS が無いプロセスから、実行形式でないホストを起こすと、OS のダイアログの答えを待って起動が戻らない）"
+done_when = "Windows でホストを起こす間だけ、起こすスレッドの error mode に SEM_FAILCRITICALERRORS を足して戻す（ホストが継ぐプロセスの error mode は変えない）。実行形式でないホストは、ダイアログを出さずに既存の「ホストを起こせない」誤りで返る（tests/unlaunchable_host.rs、xirius-session の tests/plugin_process_preferences.rs が error mode 0 と 2 で通る）"
+status = "done"

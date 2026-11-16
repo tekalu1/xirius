@@ -2199,6 +2199,8 @@ impl Inner {
         let mut command = Command::new(host);
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
+        #[cfg(windows)]
+        let quiet = QuietStart::new();
         let mut child = command
             .arg("--parent")
             .arg(std::process::id().to_string())
@@ -2209,6 +2211,8 @@ impl Inner {
             .stderr(stderr)
             .spawn()
             .map_err(|e| format!("{}: {e}", host.display()))?;
+        #[cfg(windows)]
+        drop(quiet);
         let stdin = child.stdin.take().ok_or("no stdin")?;
         let mut stdout = child.stdout.take().ok_or("no stdout")?;
         let stop = Arc::new(AtomicU8::new(KEEP));
@@ -2579,6 +2583,35 @@ impl Inner {
         } else {
             Err(errors.join("; "))
         }
+    }
+}
+
+/// Critical errors off on this thread while the host starts. A host file that is not a program
+/// makes the system ask about it in a dialog, and the start waits for an answer the user may
+/// never see; with them off, the start fails instead. The host does not inherit this thread's
+/// mode, only the process's.
+#[cfg(windows)]
+struct QuietStart(u32);
+
+#[cfg(windows)]
+impl QuietStart {
+    fn new() -> Self {
+        use windows_sys::Win32::System::Diagnostics::Debug::{
+            GetThreadErrorMode, SEM_FAILCRITICALERRORS, SetThreadErrorMode,
+        };
+        let mut old = 0;
+        // SAFETY: only this thread's error mode, put back on drop.
+        unsafe { SetThreadErrorMode(GetThreadErrorMode() | SEM_FAILCRITICALERRORS, &mut old) };
+        Self(old)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for QuietStart {
+    fn drop(&mut self) {
+        use windows_sys::Win32::System::Diagnostics::Debug::SetThreadErrorMode;
+        // SAFETY: as above.
+        unsafe { SetThreadErrorMode(self.0, std::ptr::null_mut()) };
     }
 }
 
