@@ -653,6 +653,10 @@ fn every_history_command_undoes_and_redoes() {
         json!({"id": note_receiver, "state": "off"}),
     );
     rig.step("plugin.note_source.remove", json!({"id": note_receiver}));
+    rig.step(
+        "plugin.pitch_key.toggle",
+        json!({"id": note_receiver, "relative": 4}),
+    );
     let key = id_of(&rig.step("plugin.add", json!({"track": kick, "name": "Compressor"})));
     rig.step(
         "plugin.param.set",

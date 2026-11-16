@@ -8,7 +8,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
     vec![
         edit(
             "plugin.pitch_key.toggle",
-            "パラメーターを設定",
+            "Key",
             vec![
                 plugin(),
                 ArgDef::int("relative", "Key").range(0.0, 11.0).req(),

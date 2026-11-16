@@ -102,6 +102,10 @@ UI-359 のノート送信元では、機器のタイトルバーの入切が `in
 `plugin.note_source.set` / `remove` を 1 回呼ぶ。どちらも既存の `run_command` による
 所有者への委譲であり、画面の描画中には呼ばない。この 2 箇所の増分を集計に反映した。
 
+UI-359 の鍵盤操作は `instrument/window.rs` の入力処理から
+`plugin.pitch_key.toggle` を `run_command` で 1 回呼ぶ。既存の所有者へ渡す経路で、
+描画中や UI スレッド上のディスク I/O はない。この追加の呼び出しを集計に反映した。
+
 | 入口からの経路 | 再監査で確認・修正した境界 | 固定した競合・継続 |
 |---|---|---|
 | `ai_job` → Session / SessionExt → places | 全 MCP コマンドの実行は所有者へ渡す。通常 UI の places 7 コマンドも分類する | read/write を止めた実 MCP 入口。Browser 保存との両順序、同じ項目の変更と別項目の差分統合 |

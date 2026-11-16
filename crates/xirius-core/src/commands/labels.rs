@@ -167,7 +167,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("plugin.note_source.remove", "ノートの送り元を削除"),
     ("plugin.note_source.enable", "ノートの送り元を切り替え"),
     ("plugin.note_source.list", "ノートの送り元の一覧"),
-    ("plugin.pitch_key.toggle", "パラメーターを設定"),
+    ("plugin.pitch_key.toggle", "Key"),
     ("view.dock", "ドックを開閉"),
     ("track.reveal", "チャンネルを表示"),
     ("mixer.focus", "ミキサーでチャンネルを選択"),
@@ -567,6 +567,7 @@ pub fn label(name: &str) -> Option<&'static str> {
 /// Short field names for generated command forms. CLI help stays separate.
 pub fn argument(name: &str) -> &str {
     match name {
+        "relative" => "Key",
         "include_fx" => "FX を含める",
         "entry" => "ブラウザーの項目",
         "action" => "操作",
