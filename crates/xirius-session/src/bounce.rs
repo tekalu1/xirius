@@ -238,6 +238,7 @@ struct NewTrack {
     after: TrackId,
     like: Option<TrackId>,
     name: String,
+    output: Option<TrackId>,
 }
 
 struct Work {
@@ -304,6 +305,7 @@ fn clips(p: &Project, args: &Args) -> CmdResult<Work> {
     let mut work = Work::new(String::new());
     // A new track for each track the clips are on, below it.
     let mut made: BTreeMap<TrackId, usize> = BTreeMap::new();
+    let mut made_pad: BTreeMap<(TrackId, TrackId), usize> = BTreeMap::new();
     let (mut replaced, mut moved) = (0, 0);
     for id in &ids {
         let (t, c) = p.clip(*id)?;
@@ -342,6 +344,7 @@ fn clips(p: &Project, args: &Args) -> CmdResult<Work> {
                 after: tid,
                 like: Some(tid),
                 name: bounce_name(t),
+                output: None,
             });
             work.tracks.len() - 1
         });
@@ -350,13 +353,12 @@ fn clips(p: &Project, args: &Args) -> CmdResult<Work> {
         if let Some(x) = t.clips.first_mut() {
             x.muted = false;
         }
-        let select = std::iter::once(Select::Track(tid))
-            .chain(pad_bus_stems(t))
-            .collect();
+        let pad_stems = pad_bus_stems(t);
+        let source_name = bounce_name(t);
         work.pieces.push((
             Piece {
-                song,
-                select,
+                song: song.clone(),
+                select: vec![Select::Track(tid)],
                 from: c.start,
                 to: c.start + c.length,
                 tail: TAIL,
@@ -364,6 +366,36 @@ fn clips(p: &Project, args: &Args) -> CmdResult<Work> {
             },
             Dest::Track(k),
         ));
+        for select in pad_stems {
+            let Select::TrackBus(_, bus) = select else {
+                unreachable!()
+            };
+            let k = if let Some(k) = made_pad.get(&(tid, bus)) {
+                *k
+            } else {
+                let name = format!("{} · {}", source_name, p.track(bus)?.name);
+                work.tracks.push(NewTrack {
+                    after: tid,
+                    like: None,
+                    name,
+                    output: Some(bus),
+                });
+                let k = work.tracks.len() - 1;
+                made_pad.insert((tid, bus), k);
+                k
+            };
+            work.pieces.push((
+                Piece {
+                    song: song.clone(),
+                    select: vec![select],
+                    from: c.start,
+                    to: c.start + c.length,
+                    tail: TAIL,
+                    name: bounced(&c.name),
+                },
+                Dest::Track(k),
+            ));
+        }
         work.mute_clips.push(*id);
         moved += 1;
     }
@@ -414,13 +446,12 @@ fn tracks(p: &Project, args: &Args) -> CmdResult<Work> {
             after: *id,
             like: Some(*id),
             name: bounce_name(t),
+            output: None,
         });
         work.pieces.push((
             Piece {
                 song: pre_fader(p, *id, |_| true),
-                select: std::iter::once(Select::Track(*id))
-                    .chain(pad_bus_stems(t))
-                    .collect(),
+                select: vec![Select::Track(*id)],
                 from,
                 to,
                 tail: TAIL,
@@ -428,6 +459,29 @@ fn tracks(p: &Project, args: &Args) -> CmdResult<Work> {
             },
             Dest::Track(work.tracks.len() - 1),
         ));
+        for select in pad_bus_stems(t) {
+            let Select::TrackBus(_, bus) = select else {
+                unreachable!()
+            };
+            let name = format!("{} · {}", bounce_name(t), p.track(bus)?.name);
+            work.tracks.push(NewTrack {
+                after: *id,
+                like: None,
+                name: name.clone(),
+                output: Some(bus),
+            });
+            work.pieces.push((
+                Piece {
+                    song: pre_fader(p, *id, |_| true),
+                    select: vec![select],
+                    from,
+                    to,
+                    tail: TAIL,
+                    name,
+                },
+                Dest::Track(work.tracks.len() - 1),
+            ));
+        }
         work.mute_tracks.push(*id);
     }
     Ok(work)
@@ -551,13 +605,12 @@ fn range(p: &Project, args: &Args) -> CmdResult<Work> {
                 after: *id,
                 like: Some(*id),
                 name: bounce_name(t),
+                output: None,
             });
             work.pieces.push((
                 Piece {
                     song: pre_fader(p, *id, within),
-                    select: std::iter::once(Select::Track(*id))
-                        .chain(pad_bus_stems(t))
-                        .collect(),
+                    select: vec![Select::Track(*id)],
                     from,
                     to,
                     tail,
@@ -565,6 +618,29 @@ fn range(p: &Project, args: &Args) -> CmdResult<Work> {
                 },
                 Dest::Track(work.tracks.len() - 1),
             ));
+            for select in pad_bus_stems(t) {
+                let Select::TrackBus(_, bus) = select else {
+                    unreachable!()
+                };
+                let name = format!("{} · {}", bounce_name(t), p.track(bus)?.name);
+                work.tracks.push(NewTrack {
+                    after: *id,
+                    like: None,
+                    name: name.clone(),
+                    output: Some(bus),
+                });
+                work.pieces.push((
+                    Piece {
+                        song: pre_fader(p, *id, within),
+                        select: vec![select],
+                        from,
+                        to,
+                        tail,
+                        name,
+                    },
+                    Dest::Track(work.tracks.len() - 1),
+                ));
+            }
             work.mute_clips.extend(inside(t));
         }
         work.message = format!("選択範囲を {} トラックにバウンスしました", ids.len());
@@ -575,6 +651,7 @@ fn range(p: &Project, args: &Args) -> CmdResult<Work> {
             after: *ids.last().expect("not empty"),
             like: None,
             name: name.clone(),
+            output: None,
         });
         let mut song = p.clone();
         for id in &ids {
@@ -733,6 +810,9 @@ fn render_all(
             });
             if let Some(like) = t.like {
                 v["like"] = json!(like.to_string());
+            }
+            if let Some(output) = t.output {
+                v["to"] = json!(output.to_string());
             }
             v
         })

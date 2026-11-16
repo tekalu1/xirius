@@ -700,7 +700,7 @@ GitHub のリリースから新しいバージョンがあるかを確認しま�
 | `mute_tracks` | — | `{"items":{"type":"string"},"type":"array"}` | ミュートするトラック（track の ID のリスト） |
 | `replace` | — | `{"items":{"type":"object"},"type":"array"}` | 置き換えるクリップ [{id, file, name?}] |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
-| `tracks` | — | `{"items":{"type":"object"},"type":"array"}` | 新しいトラック [{after, like?, name, clips: [{name, file, start, length}]}] |
+| `tracks` | — | `{"items":{"type":"object"},"type":"array"}` | 新しいトラック [{after, like?, to?, name, clips: [{name, file, start, length}]}] |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
 ## `browser.favorite`

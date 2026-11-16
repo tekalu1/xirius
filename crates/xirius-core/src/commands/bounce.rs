@@ -9,7 +9,7 @@ use super::*;
 use crate::auto::AutoTarget;
 use crate::command::EditCtx;
 use crate::id::{IdKind, TrackId};
-use crate::model::{AudioProcess, Track, TrackKind};
+use crate::model::{AudioProcess, Output as TrackOutput, Track, TrackKind};
 
 pub(super) fn defs() -> Vec<CommandDef> {
     vec![
@@ -55,7 +55,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ArgDef::objects("replace", "置き換えるクリップ [{id, file, name?}]"),
                 ArgDef::objects(
                     "tracks",
-                    "新しいトラック [{after, like?, name, clips: [{name, file, start, length}]}]",
+                    "新しいトラック [{after, like?, to?, name, clips: [{name, file, start, length}]}]",
                 ),
                 ArgDef::id_list("mute_clips", IdKind::Clip, "ミュートするクリップ"),
                 ArgDef::id_list("mute_tracks", IdKind::Track, "ミュートするトラック"),
@@ -127,6 +127,14 @@ fn apply(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             Some(s) => Some(s.parse::<TrackId>().map_err(CmdError::invalid)?),
             None => None,
         };
+        let to = match x["to"].as_str() {
+            Some(s) => {
+                let id = s.parse::<TrackId>().map_err(CmdError::invalid)?;
+                p.bus(id)?;
+                Some(id)
+            }
+            None => None,
+        };
         let (parent, i) = p
             .find_node(Node::Track(after))
             .ok_or_else(|| CmdError::not_found(format!("トラック {after} が見つかりません")))?;
@@ -154,6 +162,9 @@ fn apply(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             None => Track::new(TrackId(p.alloc()), TrackKind::Audio, ""),
         };
         t.name = name;
+        if let Some(to) = to {
+            t.output = Some(TrackOutput::Bus(to));
+        }
         for c in x["clips"].as_array().map_or(&[][..], Vec::as_slice) {
             let id = ClipId(p.alloc());
             t.clips.push(Clip {

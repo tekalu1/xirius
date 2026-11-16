@@ -325,6 +325,14 @@ struct Wiring {
 
 fn wiring(p: &Project, g: &Graph, scope: &Scope, t: &Track) -> Wiring {
     let discard = g.buses.len();
+    // A pad-only bounce hears the direct pad feed at the target bus. Its source track's
+    // Main output and ordinary sends belong to the regular track stem instead.
+    if matches!(scope.select, Select::TrackBus(track, _) if track == t.id) {
+        return Wiring {
+            output: EOut::Bus(discard),
+            sends: Vec::new(),
+        };
+    }
     if !scope.includes(t.id) {
         return Wiring {
             output: EOut::Master,
