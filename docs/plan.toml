@@ -7902,12 +7902,14 @@ done_when = "バンク A〜H × 16 のパッドで、パッドごとに Sampler 
 
 [[item]]
 id = "PLG-069"
-title = "Drum Kit に Random・Stack のレイヤー、パッドの出力、ループのスライスを足す"
+title = "Drum Kit に Random・Stack のレイヤー、パッドの Output、ループのスライスを足す"
+status = "partial"
 area = "PLG"
 phase = "later"
 source = "devices-v2/report.md § 3 ; devices-v2/report.md § 8"
 after = ["PLG-068"]
-done_when = "レイヤーに Random と Stack を足し、ミキサーが複数の出力を受けられるようになったらパッドの Output（Main・St 2〜16・Mono 1〜16）を出し、ループをスライスしてパッドに並べられる"
+done_when = "レイヤーに Random と Stack を足し、パッドごとの Output を Main・今あるバス・New Bus から選べる。New Bus はパッド名のバスをキットの下に作り、複数選択と取り消しは 1 回で動く。バスへ出す音はキットのインサートとフェーダーを通らず、キットの M・S とバスの処理を通り、ステム・書き出し・遅れ補正・輪の検査・保存で正しく働く。バスを消すと Main に戻り、フリーズは理由を出して断る。CLI・MCP と窓から同じ命令を使え、承認済みの形を実機で確かめる。ループをスライスしてパッドに並べられる"
+remaining = "Random・Stack のレイヤーと、ループのスライスをパッドに並べる操作は段階 2 に残る。"
 
 [[item]]
 id = "PLG-070"
