@@ -41,6 +41,85 @@ fn pitch_ui_has_the_approved_controls_and_graph_at_both_widths() {
 }
 
 #[test]
+fn pitch_ui_pick_lists_and_bottom_row_match_the_approved_layout() {
+    let def = &PITCH_CORRECTION;
+    let values: Vec<_> = def.params.iter().map(|p| p.default_norm()).collect();
+    for width in [360.0, 640.0] {
+        let body = layout::body(
+            def,
+            &Shape {
+                w: width,
+                values: &values,
+                ..Shape::default()
+            },
+        );
+        for (k, label) in [(0, "Key"), (1, "Scale")] {
+            let slot = body.slot(k).unwrap();
+            let name = body.names.iter().find(|n| n.text == label).unwrap();
+            assert!(slot.cell.h <= 26.0, "{label} must use the PickList box");
+            assert!(
+                (slot.cell.y - name.r.y).abs() < 12.0,
+                "{label} belongs beside its box"
+            );
+        }
+        let formant = body.slot(5).unwrap();
+        let range = body.slot(6).unwrap();
+        assert!((formant.cell.y - range.cell.y).abs() < 1.0);
+        let range_name = body.names.iter().find(|n| n.text == "Range").unwrap();
+        assert!((range_name.r.y - range.cell.y).abs() < 12.0);
+        if width >= 500.0 {
+            assert!(
+                formant.cell.x >= body.slot(2).unwrap().cell.x,
+                "wide Formant belongs under the three knobs"
+            );
+        }
+    }
+}
+
+#[test]
+fn pitch_ui_millisecond_value_has_no_unneeded_decimal() {
+    let speed = &PITCH_CORRECTION.params[2];
+    assert_eq!(control::text(speed, speed.default_norm()), "20 ms");
+}
+
+#[test]
+fn pitch_ui_automation_formats_key_amount_and_speed() {
+    use xirius_core::auto::AutoTarget;
+    use xirius_core::id::PluginId;
+    let id = PluginId(123);
+    let label = |key: &str, value: f64| {
+        crate::arrange::value_text(&AutoTarget::Param(id, key.to_string()), value)
+    };
+    assert_eq!(label("key", PITCH_CORRECTION.params[0].to_norm(0.0)), "C");
+    assert_eq!(label("key", PITCH_CORRECTION.params[0].to_norm(2.0)), "D");
+    assert_eq!(
+        label("amount", PITCH_CORRECTION.params[4].to_norm(85.0)),
+        "85 %"
+    );
+    assert_eq!(
+        label("speed", PITCH_CORRECTION.params[2].default_norm()),
+        "20 ms"
+    );
+}
+
+#[test]
+fn pitch_ui_axis_tracks_low_middle_and_high_voice() {
+    use std::time::{Duration, Instant};
+    for (hz, note) in [(110.0, 45_u8), (266.0, 60), (440.0, 69)] {
+        let mut history = super::pitch::History::default();
+        let now = Instant::now();
+        history.feed((hz, hz, i32::from(note), 0.0), now, Duration::ZERO);
+        let lo = history.axis_low();
+        let actual = super::pitch::note_of(hz);
+        assert_eq!(
+            crate::roll::pitch_name(actual),
+            xirius_params::pitch::name(note)
+        );
+        assert!(f32::from(actual) >= lo && f32::from(actual) <= lo + 12.0);
+    }
+}
+
+#[test]
 fn pitch_ui_keyboard_follows_key_and_restores_the_named_scale() {
     let major = 1.0 / 3.0;
     let key = 2_u8; // D
@@ -181,4 +260,46 @@ fn pitch_ui_sender_gets_a_mixer_row_and_receiver_gets_a_mark() {
             .note_source
             .is_some()
     );
+}
+
+#[test]
+fn pitch_ui_power_and_default_preset_follow_the_builtin_window() {
+    use crate::instrument::window::Part;
+    use crate::studio::Studio;
+    use serde_json::json;
+    let mut s = Studio::sample();
+    let track = s
+        .project()
+        .tracks
+        .values()
+        .find(|t| t.name == "Bass")
+        .unwrap()
+        .id;
+    assert!(s.run_command(
+        "plugin.add",
+        json!({"track":track.to_string(),
+        "name":"Pitch Correction","kind":"effect","format":"builtin","uid":"pitch-correction"})
+    ));
+    let id = s.project().tracks[&track].inserts.last().unwrap().id;
+    assert!(s.run_command(
+        "plugin.param.set",
+        json!({"id":id.to_string(),"param":"speed","plain":"85"})
+    ));
+    assert!(s.load_preset(id, "Default"));
+    let project = s.project();
+    let plugin = project.tracks[&track].inserts.last().unwrap();
+    for p in PITCH_CORRECTION.params {
+        assert!(
+            (plugin.params.get(p.id).copied().unwrap_or(p.default_norm()) - p.default_norm()).abs()
+                < 1e-12
+        );
+    }
+    s.show_instrument(track, id);
+    s.instruments.detached_target = Some(id);
+    let g = s.geometry(1600.0, 1000.0);
+    let (x, y) = s.instrument_center(&g, id, Part::Power).unwrap();
+    assert!(s.instrument_down(&g, x, y));
+    assert!(s.project().tracks[&track].inserts.last().unwrap().bypass);
+    assert!(s.undo(&g));
+    assert!(!s.project().tracks[&track].inserts.last().unwrap().bypass);
 }

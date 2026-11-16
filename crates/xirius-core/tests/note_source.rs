@@ -10,6 +10,55 @@ fn run(s: &mut Session, name: &str, args: Value) -> Value {
 }
 
 #[test]
+fn pitch_key_toggle_changes_custom_scale_and_undoes_once() {
+    let mut s = Session::from_project(Project::new("pitch keys"));
+    let vocal = run(&mut s, "track.add.audio", json!({"name":"Vocal"}))["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let plugin = run(
+        &mut s,
+        "plugin.add",
+        json!({"track":vocal,"name":"Pitch Correction"}),
+    )["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    run(
+        &mut s,
+        "plugin.param.set",
+        json!({"id":plugin,"param":"scale","plain":"Major"}),
+    );
+    let before = run(&mut s, "plugin.param.list", json!({"id":plugin}));
+    run(
+        &mut s,
+        "plugin.pitch_key.toggle",
+        json!({"id":plugin,"relative":4}),
+    );
+    let custom = run(&mut s, "plugin.param.list", json!({"id":plugin}));
+    assert_ne!(custom, before);
+    s.undo(1).unwrap();
+    assert_eq!(
+        run(&mut s, "plugin.param.list", json!({"id":plugin})),
+        before
+    );
+    run(
+        &mut s,
+        "plugin.pitch_key.toggle",
+        json!({"id":plugin,"relative":4}),
+    );
+    run(
+        &mut s,
+        "plugin.pitch_key.toggle",
+        json!({"id":plugin,"relative":4}),
+    );
+    assert_eq!(
+        run(&mut s, "plugin.param.list", json!({"id":plugin})),
+        before
+    );
+}
+
+#[test]
 fn note_source_set_enable_remove_each_undo_once() {
     let mut s = Session::from_project(Project::new("notes"));
     let source = run(&mut s, "track.add.instrument", json!({"name":"Melody"}))["id"]

@@ -244,3 +244,24 @@ fn note_source_commands_have_the_same_cli_and_mcp_contract() {
         );
     }
 }
+
+#[test]
+fn pitch_key_toggle_is_available_through_cli_and_mcp() {
+    for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
+        let vocal = endpoint.run("track.add.audio", json!({"name":"Vocal"}))["data"]["id"].clone();
+        let plugin = endpoint.run(
+            "plugin.add",
+            json!({"track":vocal,"name":"Pitch Correction"}),
+        )["data"]["id"]
+            .clone();
+        let before = endpoint.run("plugin.param.list", json!({"id":plugin}))["data"].clone();
+        endpoint.run("plugin.pitch_key.toggle", json!({"id":plugin,"relative":4}));
+        let after = endpoint.run("plugin.param.list", json!({"id":plugin}))["data"].clone();
+        assert_ne!(before, after);
+        endpoint.run("history.undo", json!({}));
+        assert_eq!(
+            endpoint.run("plugin.param.list", json!({"id":plugin}))["data"],
+            before
+        );
+    }
+}

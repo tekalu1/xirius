@@ -1857,3 +1857,12 @@ fn the_main_windows_tree_has_no_channel_editor_marks_and_the_editors_has_them_lo
     let b = tool.node.bounds().unwrap();
     assert_eq!((b.x0 as f32, b.y0 as f32), (r.x, r.y));
 }
+#[test]
+fn note_source_route_has_a_sender_box_wire_and_receiver_port() {
+    let card = crate::studio::Rect::new(250.0, 200.0, 136.0, 30.0);
+    let seen = crate::studio::Rect::new(0.0, 0.0, 640.0, 500.0);
+    let route = super::flow::note_route(card, seen);
+    assert!(route.source.right() < card.x);
+    assert!(route.port.x >= card.x && route.port.x <= card.right());
+    assert!(route.source.y <= route.port.y && route.port.y <= route.source.bottom());
+}
