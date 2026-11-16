@@ -688,3 +688,35 @@ fn yin_reads_sines_glides_vibrato_and_a_harmonic_voice() {
         }
     }
 }
+
+#[test]
+fn weak_fundamental_low_voice_stays_in_its_octave_in_mid_and_low_ranges() {
+    let rate = 48_000.0;
+    let f0 = 110.0;
+    let harmonic_amplitudes = [
+        0.00000539, 0.00009565, 0.00104208, 0.00687188, 0.02748973, 0.06669950, 0.09816848,
+        0.08773204, 0.04821209, 0.01928508, 0.01603367, 0.03348341, 0.06227726, 0.08595962,
+        0.08717300, 0.06492638, 0.03551412, 0.01426748, 0.00420977, 0.00091211, 0.00014507,
+        0.00001724, 0.00000123, 0.00000061, 0.00000047, 0.00000034, 0.00000022, 0.00000051,
+        0.00000016, 0.00000002,
+    ];
+    let signal: Vec<f32> = (0..24_000)
+        .map(|i| {
+            let phase = TAU * f0 * i as f64 / rate;
+            harmonic_amplitudes
+                .iter()
+                .enumerate()
+                .map(|(harmonic, amplitude)| amplitude * (phase * (harmonic + 1) as f64).sin())
+                .sum::<f64>() as f32
+        })
+        .collect();
+    for range in [1.0, 0.0] {
+        let (_, _, view) = configured(rate, 512, &signal, &[("range", range)], &[]);
+        let cents = 1_200.0 * (f64::from(view.0) / f0).log2();
+        assert!(
+            cents.abs() < 30.0,
+            "range {range}, got {} Hz, {cents} cents",
+            view.0
+        );
+    }
+}
