@@ -68,7 +68,9 @@ changed or gone in the person's Xirius folders (listed before and after), and an
 the run's temporary folder fails the run by name (`scripts/leftovers.py`). When an Xirius that is not this
 checkout's runs meanwhile (the installed app, a run in another checkout), what changed in the
 person's Xirius folders is printed as a warning instead; the stand-in and the temporary folder
-always count. A run outside `ci_tests.py` (`cargo nextest run`, `cargo test`) uses the person's
+always count. Each new or written path, and each name left in the temporary folder, is printed
+with the time it was last written in UTC (`(written 2026-11-16T04:19:32Z)`): the tests that the
+run's log shows running at that time are the ones to look at first. A run outside `ci_tests.py` (`cargo nextest run`, `cargo test`) uses the person's
 folders: the tests still write nothing there, but nothing checks it.
 
 ## CI stages

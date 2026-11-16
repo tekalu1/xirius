@@ -8,7 +8,8 @@ on the PC running them is not missed. A test writes in neither: it keeps its fil
 it removes, and gives the programs it starts their folders (`XIRIUS_CRASH_DIR`,
 `XIRIUS_CONFIG_DIR`, ...). After the run, anything in the Xirius folders of the stand-in,
 anything new, changed or gone in the person's Xirius folders (listed before and after), and
-anything left in the run's temporary folder, fails the run by name.
+anything left in the run's temporary folder, fails the run by name, with the time each was
+last written (in UTC) to find in the run's log the tests that were running then.
 
 The programs keep the jobs running in any of their processes in one folder under the temporary
 folder (`xirius_core::running::folder`, `Xirius/jobs`), and leave the folder for the next. The
@@ -24,10 +25,12 @@ Standard library only.
 import ctypes
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 # How many names a failure prints of each kind.
@@ -90,7 +93,7 @@ def stand_in(root, environ=None, platform=None):
 
 def listing(roots):
     """Every file and folder under `roots`: the path, then the size (None for a folder) and the
-    time it was last written. Names only; nothing is opened."""
+    time it was last written, in nanoseconds. Names only; nothing is opened."""
     found = {}
     for root in roots:
         for top, folders, files in os.walk(root):
@@ -101,23 +104,35 @@ def listing(roots):
                 except OSError:
                     continue
                 folder = name in folders
-                found[path] = (None if folder else status.st_size, None if folder else status.st_mtime_ns)
+                found[path] = (None if folder else status.st_size, status.st_mtime_ns)
     return found
 
 
+def written(nanoseconds):
+    """` (written 2026-11-16T04:19:32Z)`: when a path was last written, in UTC to the second, to
+    find in the log of the run the tests that were running then."""
+    moment = datetime.fromtimestamp(nanoseconds // 10**9, tz=timezone.utc)
+    return f" (written {moment.strftime('%Y-%m-%dT%H:%M:%SZ')})"
+
+
 def differences(before, after):
-    """`+` a new path, `~` a file written again, `-` a path gone; a folder whose files changed is
-    not itself a change."""
-    lines = [f"+ {path}" for path in sorted(after.keys() - before.keys())]
-    lines += [f"~ {path}" for path in sorted(before.keys() & after.keys()) if before[path] != after[path]]
+    """`+` a new path, `~` a file written again, each with when it was last written; `-` a path
+    gone. A folder whose files changed is not itself a change."""
+    def again(path):
+        old, new = before[path], after[path]
+        return old != new and not (old[0] is None and new[0] is None)
+
+    lines = [f"+ {path}{written(after[path][1])}" for path in sorted(after.keys() - before.keys())]
+    lines += [f"~ {path}{written(after[path][1])}" for path in sorted(before.keys() & after.keys()) if again(path)]
     lines += [f"- {path}" for path in sorted(before.keys() - after.keys())]
     return lines
 
 
 def left_in(folder, shared=()):
-    """The names directly in `folder`, a folder's with how many paths are under it; a `shared`
-    folder (a path relative to `folder`) and the folders on the way to it count only for what
-    else is in them."""
+    """The names directly in `folder`, a folder's with how many paths are under it, each with when
+    it was last written (a folder: when a name in it last came or went); a `shared` folder (a
+    path relative to `folder`) and the folders on the way to it count only for what else is in
+    them."""
     folder = Path(folder)
     on_the_way = {part for path in shared for part in [Path(path), *Path(path).parents] if part != Path(".")}
 
@@ -125,12 +140,17 @@ def left_in(folder, shared=()):
         found = []
         for entry in sorted(here.iterdir()):
             inner = relative / entry.name
-            if entry.is_dir() and inner in on_the_way:
-                found += walk(entry, inner)
-            elif entry.is_dir():
-                found.append(f"{inner}{os.sep} ({sum(1 for _ in entry.rglob('*'))} inside)")
-            else:
+            try:
+                status = entry.stat()
+            except OSError:
                 found.append(str(inner))
+                continue
+            if stat.S_ISDIR(status.st_mode) and inner in on_the_way:
+                found += walk(entry, inner)
+            elif stat.S_ISDIR(status.st_mode):
+                found.append(f"{inner}{os.sep} ({sum(1 for _ in entry.rglob('*'))} inside){written(status.st_mtime_ns)}")
+            else:
+                found.append(f"{inner}{written(status.st_mtime_ns)}")
         return found
 
     return walk(folder, Path("."))

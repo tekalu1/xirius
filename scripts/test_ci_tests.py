@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -219,6 +220,33 @@ class LeftoverTests(unittest.TestCase):
             self.assertIn("~ " + str(place / "prefs.toml"), failures)
             self.assertIn("xirius-x-1" + os.sep + " (1 inside)", failures)
             self.assertFalse(watch.temporary.exists())
+
+    def test_each_line_names_when_the_path_was_last_written_to_find_the_test_in_the_log(self):
+        written = datetime(2026, 11, 16, 4, 19, 32, tzinfo=timezone.utc).timestamp()
+        stamp = " (written 2026-11-16T04:19:32Z)"
+        with tempfile.TemporaryDirectory() as tmp:
+            place, watch = self.watch(tmp)
+            (place / "gone.json").write_text("x")
+            with watch, contextlib.redirect_stdout(io.StringIO()):
+                made = watch.stand_in_places[0] / "Crashes"
+                made.mkdir(parents=True)
+                new = place / "Crashes" / "1-2.dmp"
+                new.write_text("x")
+                (place / "prefs.toml").write_text("bb")
+                (place / "gone.json").unlink()
+                (watch.temporary / "left").write_text("x")
+                (watch.temporary / "xirius-x-1").mkdir()
+                for path in (made, new, place / "prefs.toml", watch.temporary / "left", watch.temporary / "xirius-x-1"):
+                    os.utime(path, (written, written))
+                failures = watch.finish()
+            self.assertIn("  + " + str(made) + stamp, failures)
+            self.assertIn("  + " + str(new) + stamp, failures)
+            self.assertIn("  ~ " + str(place / "prefs.toml") + stamp, failures)
+            self.assertIn("  - " + str(place / "gone.json"), failures)
+            self.assertIn("  left" + stamp, failures)
+            self.assertIn("  xirius-x-1" + os.sep + " (0 inside)" + stamp, failures)
+            # The folder a new file went into is still not a change of its own.
+            self.assertFalse([line for line in failures if line.startswith("  ~ " + str(place / "Crashes"))])
 
     def test_the_shared_list_of_running_jobs_counts_only_for_what_is_left_in_it(self):
         with tempfile.TemporaryDirectory() as tmp:
