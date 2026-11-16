@@ -1691,11 +1691,12 @@ impl Studio {
                     && def.uid == "pitch-correction"
                 {
                     let key = def.params[0].to_plain(*x.params.get("key").unwrap_or(&0.0)) as u8;
-                    let scale = *x.params.get("scale").unwrap_or(&0.0);
-                    self.device_set(
-                        w.plugin,
-                        1,
-                        crate::device::pitch::toggle_scale(scale, (pitch + 12 - key) % 12),
+                    self.run_command(
+                        "plugin.pitch_key.toggle",
+                        serde_json::json!({
+                            "id": w.plugin.to_string(),
+                            "relative": (pitch + 12 - key) % 12,
+                        }),
                     );
                     return true;
                 }
@@ -2758,7 +2759,12 @@ fn paint_window(
         }
         if def.uid == "pitch-correction" {
             let key = def.params[0].to_plain(shown[0]) as u8;
-            crate::device::pitch::paint_keys(pen, &body.keys, shown[1], key);
+            let target = ins.pitch.get(&plugin.id).and_then(|h| {
+                h.audible(std::time::Instant::now())
+                    .max_by_key(|p| p.at)
+                    .and_then(|p| u8::try_from(p.target).ok())
+            });
+            crate::device::pitch::paint_keys(pen, &body.keys, shown[1], key, target);
         }
         let lit = ins.lit_pads(plugin.id, std::time::Instant::now());
         play::paint_pads(pen, &body.pads, &body.spots, &lit, pad);
@@ -2804,7 +2810,9 @@ fn paint_window(
                 ),
                 Look::Segments => {
                     control::paint_segments(pen, hit, spec, v, focused);
-                    control::paint_name(pen, slot.cell, slot.dial, name);
+                    if !(def.uid == "pitch-correction" && k == 6) {
+                        control::paint_name(pen, slot.cell, slot.dial, name);
+                    }
                 }
                 Look::Toggle => control::paint_toggle(pen, hit, name, v >= 0.5, focused),
                 Look::Dot => control::paint_dot(pen, hit, spec.to_plain(v) >= 0.5, over, focused),
@@ -2814,7 +2822,7 @@ fn paint_window(
                         *x = v;
                     }
                     let label = control::menu_text(def, k, &values);
-                    if matches!(def.uid, "delay" | "drum-kit") {
+                    if matches!(def.uid, "delay" | "drum-kit" | "pitch-correction") {
                         control::paint_box(pen, hit, &label, over, focused);
                     } else {
                         control::paint_choice(pen, hit, &label, over, focused);

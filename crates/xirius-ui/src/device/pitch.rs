@@ -29,6 +29,7 @@ pub struct Point {
 pub struct History {
     points: [Option<Point>; 256],
     next: usize,
+    axis_low: f32,
 }
 
 impl Default for History {
@@ -36,12 +37,23 @@ impl Default for History {
         Self {
             points: [None; 256],
             next: 0,
+            axis_low: 52.0,
         }
     }
 }
 
 impl History {
     pub fn feed(&mut self, view: (f32, f32, i32, f32), now: Instant, latency: Duration) {
+        if view.0 > 0.0 {
+            let note = midi(view.0);
+            if note < self.axis_low + 1.0 || note > self.axis_low + 11.0 {
+                // A new register starts a new trace, so old points cannot jump
+                // when their screen coordinates change.
+                self.points.fill(None);
+                self.next = 0;
+                self.axis_low = (note.round() - 6.0).clamp(0.0, 115.0);
+            }
+        }
         self.points[self.next] = Some(Point {
             at: now + latency,
             input: view.0,
@@ -62,6 +74,10 @@ impl History {
         self.points.fill(None);
         self.next = 0;
     }
+
+    pub fn axis_low(&self) -> f32 {
+        self.axis_low
+    }
 }
 
 pub fn latency(rate: f64, range: f64) -> Duration {
@@ -79,12 +95,16 @@ fn midi(hz: f32) -> f32 {
     69.0 + 12.0 * (hz / 440.0).log2()
 }
 
-fn y_of(r: Rect, note: f32) -> f32 {
-    r.bottom() - (note - 52.0) / 12.0 * r.h
+pub fn note_of(hz: f32) -> u8 {
+    midi(hz).round().clamp(0.0, 127.0) as u8
 }
 
-fn segment(pen: &mut Pen, a: (f32, f32), b: (f32, f32), color: gpui::Hsla) {
-    let mut path = PathBuilder::stroke(px(1.5));
+fn y_of(r: Rect, note: f32, axis_low: f32) -> f32 {
+    (r.bottom() - (note - axis_low) / 12.0 * r.h).clamp(r.y, r.bottom())
+}
+
+fn segment(pen: &mut Pen, a: (f32, f32), b: (f32, f32), color: gpui::Hsla, width: f32) {
+    let mut path = PathBuilder::stroke(px(width));
     path.move_to(point(px(pen.origin.0 + a.0), px(pen.origin.1 + a.1)));
     path.line_to(point(px(pen.origin.0 + b.0), px(pen.origin.1 + b.1)));
     if let Ok(path) = path.build() {
@@ -94,39 +114,55 @@ fn segment(pen: &mut Pen, a: (f32, f32), b: (f32, f32), color: gpui::Hsla) {
 
 pub fn paint_graph(pen: &mut Pen, r: Rect, history: Option<&History>, now: Instant, midi_on: bool) {
     let c = pen.c;
-    let legend = Rect::new(r.right() - 106.0, r.y - 19.0, 32.0, 16.0);
+    let legend = Rect::new(r.right() - 144.0, r.y - 19.0, 32.0, 16.0);
+    pen.fill(Rect::new(legend.x, legend.y + 8.0, 10.0, 1.0), c.ink_blue);
     pen.text(
         "In",
         FontSize::Caption,
         Weight::Regular,
         c.ink_blue,
-        legend,
+        Rect::new(legend.x + 10.0, legend.y, 22.0, 16.0),
         Align::Right,
+    );
+    pen.fill(
+        Rect::new(legend.x + 36.0, legend.y + 7.0, 11.0, 3.0),
+        c.ink_blue,
     );
     pen.text(
         "Out",
         FontSize::Caption,
         Weight::Regular,
-        c.ink_mark,
-        Rect::new(legend.x + 36.0, legend.y, 32.0, 16.0),
+        c.ink_blue,
+        Rect::new(legend.x + 48.0, legend.y, 24.0, 16.0),
         Align::Right,
     );
     if midi_on {
+        pen.fill(
+            Rect::new(legend.x + 76.0, legend.y + 6.0, 11.0, 5.0),
+            c.ink_mark,
+        );
         pen.text(
             "MIDI",
             FontSize::Caption,
             Weight::Regular,
-            c.ink_ai,
-            Rect::new(legend.x + 66.0, legend.y, 40.0, 16.0),
+            c.ink_mark,
+            Rect::new(legend.x + 88.0, legend.y, 40.0, 16.0),
             Align::Right,
         );
     }
     pen.round(r, c.surface_0, Radius::S);
     let plot = Rect::new(r.x + 32.0, r.y + 7.0, r.w - 40.0, r.h - 14.0);
-    for note in 52..=64 {
-        let y = y_of(plot, note as f32);
-        pen.fill(Rect::new(plot.x, y, plot.w, 1.0), c.line[0]);
-        let name = crate::roll::pitch_name(note as u8);
+    let axis_low = history.map_or(52.0, History::axis_low);
+    for row in 0..12 {
+        let top = plot.y + row as f32 * plot.h / 12.0;
+        if row % 2 == 1 {
+            pen.fill(Rect::new(plot.x, top, plot.w, plot.h / 12.0), c.surface_1);
+        }
+    }
+    for offset in 0..=12 {
+        let note = (axis_low as u8).saturating_add(offset);
+        let y = y_of(plot, note as f32, axis_low);
+        let name = crate::roll::pitch_name(note);
         pen.text(
             &name,
             FontSize::Caption,
@@ -156,29 +192,32 @@ pub fn paint_graph(pen: &mut Pen, r: Rect, history: Option<&History>, now: Insta
             let old_x = plot.right() - now.duration_since(prev.at).as_secs_f32() / 4.0 * plot.w;
             segment(
                 pen,
-                (old_x, y_of(plot, midi(prev.input))),
-                (x, y_of(plot, midi(p.input))),
+                (old_x, y_of(plot, midi(prev.input), axis_low)),
+                (x, y_of(plot, midi(p.input), axis_low)),
                 c.ink_blue,
+                1.0,
             );
             segment(
                 pen,
-                (old_x, y_of(plot, midi(prev.output))),
-                (x, y_of(plot, midi(p.output))),
-                c.ink_mark,
+                (old_x, y_of(plot, midi(prev.output), axis_low)),
+                (x, y_of(plot, midi(p.output), axis_low)),
+                c.ink_blue,
+                3.0,
             );
             if midi_on && prev.target >= 0 && p.target >= 0 {
                 segment(
                     pen,
-                    (old_x, y_of(plot, prev.target as f32)),
-                    (x, y_of(plot, p.target as f32)),
-                    c.ink_ai,
+                    (old_x, y_of(plot, prev.target as f32, axis_low)),
+                    (x, y_of(plot, p.target as f32, axis_low)),
+                    c.ink_mark,
+                    5.0,
                 );
             }
         }
         prior = Some(p);
     }
     if let Some(p) = prior {
-        let note = midi(p.input).round().clamp(0.0, 127.0) as u8;
+        let note = note_of(p.input);
         let name = crate::roll::pitch_name(note);
         pen.text(
             &name,
@@ -214,8 +253,12 @@ pub fn body(def: &BuiltinDef, s: &Shape<'_>) -> Body {
     let graph_h = if narrow { 150.0 } else { 190.0 };
     let graph = Rect::new(PAD, PAD + 20.0, w - PAD * 2.0, graph_h);
     let picker_y = graph.bottom() + 38.0;
-    let picker_w = if narrow { 100.0 } else { 112.0 };
-    let key_y = picker_y + 46.0;
+    let key_box_x = PAD + 25.0;
+    let key_box_w = 70.0;
+    let scale_label_x = key_box_x + key_box_w + 12.0;
+    let scale_box_x = scale_label_x + 36.0;
+    let scale_box_w = if narrow { 122.0 } else { 148.0 };
+    let key_y = picker_y + 36.0;
     let keyboard_w = if narrow {
         w - PAD * 2.0
     } else {
@@ -253,19 +296,16 @@ pub fn body(def: &BuiltinDef, s: &Shape<'_>) -> Body {
     let control_y = if narrow { key_y + 68.0 } else { picker_y };
     let knob_x = if narrow { PAD } else { w * 0.62 };
     let knob_w = (w - knob_x - PAD - 16.0) / 3.0;
-    let bottom_y = if narrow {
-        control_y + 76.0
-    } else {
-        key_y + 64.0
-    };
+    let bottom_y = control_y + 76.0;
     let slots = def
         .params
         .iter()
         .enumerate()
         .map(|(k, spec)| {
             let (cell, look) = match k {
-                0 | 1 => (
-                    Rect::new(PAD + k as f32 * (picker_w + 8.0), picker_y, picker_w, 40.0),
+                0 => (Rect::new(key_box_x, picker_y, key_box_w, 26.0), Look::Menu),
+                1 => (
+                    Rect::new(scale_box_x, picker_y, scale_box_w, 26.0),
                     Look::Menu,
                 ),
                 2..=4 => (
@@ -277,16 +317,13 @@ pub fn body(def: &BuiltinDef, s: &Shape<'_>) -> Body {
                     ),
                     Look::Knob,
                 ),
-                5 => (
-                    Rect::new(PAD, bottom_y, (w - PAD * 2.0) / 3.0, 40.0),
-                    Look::Toggle,
-                ),
+                5 => (Rect::new(knob_x, bottom_y, 74.0, 28.0), Look::Toggle),
                 _ => (
                     Rect::new(
-                        PAD + (w - PAD * 2.0) / 3.0,
+                        knob_x + 112.0,
                         bottom_y,
-                        (w - PAD * 2.0) * 2.0 / 3.0,
-                        40.0,
+                        (w - PAD - knob_x - 112.0).max(120.0),
+                        28.0,
                     ),
                     control::look(spec),
                 ),
@@ -303,7 +340,7 @@ pub fn body(def: &BuiltinDef, s: &Shape<'_>) -> Body {
         .collect();
     Body {
         w,
-        h: bottom_y + 48.0,
+        h: bottom_y + 36.0,
         graphs: vec![graph],
         names: vec![
             Name {
@@ -314,15 +351,22 @@ pub fn body(def: &BuiltinDef, s: &Shape<'_>) -> Body {
                 dim: false,
             },
             Name {
-                r: Rect::new(PAD, picker_y - 14.0, picker_w, 14.0),
+                r: Rect::new(PAD, picker_y, 24.0, 26.0),
                 text: "Key",
                 size: FontSize::Small,
                 strong: false,
                 dim: false,
             },
             Name {
-                r: Rect::new(PAD + picker_w + 8.0, picker_y - 14.0, picker_w, 14.0),
+                r: Rect::new(scale_label_x, picker_y, 34.0, 26.0),
                 text: "Scale",
+                size: FontSize::Small,
+                strong: false,
+                dim: false,
+            },
+            Name {
+                r: Rect::new(knob_x + 76.0, bottom_y, 36.0, 28.0),
+                text: "Range",
                 size: FontSize::Small,
                 strong: false,
                 dim: false,
@@ -350,7 +394,7 @@ pub fn toggle_scale(scale: f64, relative: u8) -> f64 {
     }
 }
 
-pub fn paint_keys(pen: &mut Pen, keys: &[Key], scale: f64, root: u8) {
+pub fn paint_keys(pen: &mut Pen, keys: &[Key], scale: f64, root: u8, target: Option<u8>) {
     let labels = [
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
     ];
@@ -366,5 +410,12 @@ pub fn paint_keys(pen: &mut Pen, keys: &[Key], scale: f64, root: u8) {
             key.r,
             Align::Center,
         );
+        if target.is_some_and(|n| n % 12 == key.pitch) {
+            pen.round(
+                Rect::new(key.r.right() - 8.0, key.r.y + 3.0, 4.0, 4.0),
+                if on { pen.c.on_fill } else { pen.c.ink },
+                Radius::Pill,
+            );
+        }
     }
 }

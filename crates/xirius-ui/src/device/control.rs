@@ -198,6 +198,9 @@ pub fn snap(spec: &ParamSpec, norm: f64) -> f64 {
 
 /// A value as it reads (`-12.0 dB`, `1.20 kHz`, `付点`).
 pub fn text(spec: &ParamSpec, norm: f64) -> String {
+    if matches!(spec.id, "speed" | "transition") {
+        return format!("{:.0} ms", spec.to_plain(norm));
+    }
     spec.text(spec.to_plain(norm))
 }
 

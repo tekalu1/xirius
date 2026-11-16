@@ -834,6 +834,9 @@ impl Studio {
             let items = labels
                 .iter()
                 .enumerate()
+                .filter(|(n, _)| {
+                    def.uid != "pitch-correction" || spec.id != "scale" || *n < 3 || at == 3
+                })
                 .map(|(n, label)| {
                     let value = spec.to_norm(n as f64);
                     let mut args =
