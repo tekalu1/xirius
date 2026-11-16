@@ -722,6 +722,22 @@ fn mode_rows(def: &BuiltinDef, b: &mut Body, rx: f32, rw: f32, mut y: f32) -> f3
     y + SEG_H + GAP
 }
 
+fn output_row(b: &mut Body, plugin: Option<&Plugin>, pad: usize, x: f32, w: f32, y: f32) -> f32 {
+    b.names.push(name(
+        Rect::new(x, y + (ROW_H - NAME_H) / 2.0, 68.0, NAME_H),
+        "Output",
+    ));
+    let to = plugin
+        .and_then(|p| p.pad_outputs.get(&pad))
+        .map_or_else(|| "Main".to_string(), ToString::to_string);
+    b.spots.push(Spot::new(
+        Rect::new(x + 74.0, y, (w - 74.0).clamp(72.0, 116.0), ROW_H),
+        Mark::Output,
+        to,
+    ));
+    y + ROW_H + GAP
+}
+
 /// The Drum Kit's body for its files and the pad chosen (`s.pick`) and its layer (`s.layer`):
 /// the banks and the pads at the left, the chosen pad's editor beside them, the voice under
 /// both; at [`KIT_STACK`] or narrower, the pads centred over the editor (the mock's).
@@ -777,6 +793,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         spot.dim = !files.is_empty() && (flag(p, "mute") || (soloed && !flag(p, "solo")));
         if let (Some(&first), Some(x)) = (files.first(), filled) {
             spot.text = stem(&x.samples[first]);
+            spot.output = x.pad_outputs.contains_key(&p);
             if files.len() > 1 {
                 let mode = pad_mode(def, x, p);
                 spot.sub = format!("{} {}", LAYER_TAGS[mode], files.len());
@@ -836,7 +853,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         // one on it does not move it: the plane takes the editor's place (as far as a
         // sample's row, one name and its default values reach), the voice sits under it
         // where it does for a pad with a sample, dim and out of reach.
-        let y = top + ROW_H + GAP;
+        let y = output_row(&mut b, filled, pick, rx, rw, top + ROW_H + GAP);
         let mut at = Body::default();
         let mut ey = mode_rows(def, &mut at, rx, rw, y) + LAYER_H + GAP;
         ey += sample_row(def, s.values, &mut at, (rx, ey), rw, "x") + GAP;
@@ -874,6 +891,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         Rect::new(rx + rw - CHOKE_W, top, CHOKE_W, ROW_H),
     ));
     let mut y = mode_rows(def, &mut b, rx, rw, top + ROW_H + GAP);
+    y = output_row(&mut b, filled, pick, rx, rw, y);
     let layer = s.layer.min(files.len() - 1);
     b.names.push(name(
         Rect::new(rx, y + (LAYER_H - NAME_H) / 2.0, 48.0, NAME_H),
@@ -1808,6 +1826,23 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                     c.ink_strong,
                     Rect::new(r.x + 30.0, r.y, r.w - 36.0, r.h),
                     Align::Left,
+                );
+            }
+            Mark::Output => {
+                pen.round(r, if over { c.surface_3 } else { c.surface_2 }, Radius::S);
+                let label = pen.fit(&s.text, FontSize::Small, Weight::Regular, r.w - 30.0);
+                pen.text(
+                    &label,
+                    FontSize::Small,
+                    Weight::Regular,
+                    c.ink_strong,
+                    Rect::new(r.x + 8.0, r.y, r.w - 30.0, r.h),
+                    Align::Left,
+                );
+                pen.icon(
+                    "chevron-down",
+                    Rect::new(r.right() - 20.0, r.y + (r.h - 14.0) / 2.0, 14.0, 14.0),
+                    c.ink,
                 );
             }
             // The pad's name, its sample's, its note: the mock's `.dk-pn`.

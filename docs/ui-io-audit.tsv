@@ -248,7 +248,7 @@ crates/xirius-ui/src/start/rig.rs	lock	2
 crates/xirius-ui/src/start/rig.rs	set	1
 crates/xirius-ui/src/studio.rs	arrange_run	3
 crates/xirius-ui/src/studio.rs	lock	3
-crates/xirius-ui/src/studio.rs	run_command	3
+crates/xirius-ui/src/studio.rs	run_command	4
 crates/xirius-ui/src/studio.rs	seek	1
 crates/xirius-ui/src/tidy.rs	join	3
 crates/xirius-ui/src/tidy.rs	recv_timeout	1

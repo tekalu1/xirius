@@ -2610,6 +2610,12 @@ fn paint_window(
             }
         });
         let mut body = ins.body(r, plugin, def);
+        if let Some(to) = plugin.pad_outputs.get(&w.pick)
+            && let Some(bus) = studio.project().tracks.get(to)
+            && let Some(row) = body.spots.iter_mut().find(|s| s.mark == Mark::Output)
+        {
+            row.text = bus.name.clone();
+        }
         if let Some(preview) = ins.preview.as_ref().filter(|v| v.plugin == plugin.id) {
             super::kit_drag::ghost(&mut body, preview);
         }

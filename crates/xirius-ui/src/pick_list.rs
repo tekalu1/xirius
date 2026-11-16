@@ -123,6 +123,7 @@ impl PickRow {
             Some(Action::Pick(to))
             | Some(Action::Input(to))
             | Some(Action::Output(to))
+            | Some(Action::PadOutput(to))
             | Some(Action::FolderBus(to))
             | Some(Action::RecQuantize(to))
             | Some(Action::Device(to)) => to.clone(),
@@ -636,6 +637,7 @@ pub fn is(kind: PopupKind) -> bool {
             | PopupKind::SplitMode(..)
             | PopupKind::Input(_)
             | PopupKind::Output(_)
+            | PopupKind::PadOutput(_)
             | PopupKind::AutomationTargets(..)
             | PopupKind::InstMenu(_)
             | PopupKind::FolderBus(_)
@@ -895,6 +897,44 @@ impl Studio {
     pub(crate) fn pick_view(&mut self, kind: PopupKind) -> Option<PickList> {
         match kind {
             PopupKind::Insert(t) => Some(self.insert_pick(t)),
+            PopupKind::PadOutput(id) => {
+                let p = self.project();
+                let w = self.instruments.open.iter().find(|w| w.plugin == id)?;
+                let plugin = p
+                    .tracks
+                    .get(&w.track)?
+                    .inserts
+                    .iter()
+                    .find(|x| x.id == id)?;
+                let current = plugin.pad_outputs.get(&w.pick).map(ToString::to_string);
+                let mut rows = vec![
+                    PickRow::new("Main")
+                        .on(current.is_none())
+                        .act(Action::PadOutput("Main".into())),
+                ];
+                rows.extend(
+                    p.tracks
+                        .values()
+                        .filter(|t| t.kind == xirius_core::model::TrackKind::Bus)
+                        .map(|t| {
+                            let to = t.id.to_string();
+                            PickRow::new(&t.name)
+                                .icon("bus")
+                                .on(current.as_deref() == Some(to.as_str()))
+                                .act(Action::PadOutput(to))
+                        }),
+                );
+                let mut list = PickList::of(rows);
+                list.groups.push(PickGroup::new(
+                    "",
+                    vec![
+                        PickRow::new("New Bus")
+                            .icon("plus")
+                            .act(Action::PadOutput("new".into())),
+                    ],
+                ));
+                Some(list)
+            }
             PopupKind::Instrument(_) | PopupKind::Layer(_) => Some(self.instrument_pick()),
             PopupKind::AraPlugin => Some(self.ara_pick_list()),
             PopupKind::KeySources(plugin) => {

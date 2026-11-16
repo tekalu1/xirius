@@ -196,3 +196,9 @@ fixture は完了を待ってから画面を検査する。集計の `run` 1件�
 `context/browser.rs`・`studio.rs` で減った `run_command` と `instrument/window.rs` で
 増えた 1 件は、プリセット一覧・ファイルの読み込みを独立窓の経路に集めた結果であり、
 いずれも既存の守られた UI dispatcher と所有者への引渡しである。
+
+### Drum Kit のパッドの出力先（PLG-069、2026-11-16）
+
+Output の選択は `studio.rs` の `run_command` から曲の所有者へ渡す。
+バスの作成とパッドの行き先の変更は一つの命令で行い、画面からファイルを読まない。
+追加した `run_command` 一件を `ui-io-audit.tsv` に反映した。

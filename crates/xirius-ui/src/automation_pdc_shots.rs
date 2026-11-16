@@ -88,6 +88,7 @@ fn prepare(s: &mut Studio, _: u8) {
             t.automation = vec![lane];
             if t.name == "Vocal" {
                 t.inserts.push(Plugin {
+                    pad_outputs: Default::default(),
                     samples: Vec::new(),
                     id,
                     name: "Test Latency".into(),

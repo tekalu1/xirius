@@ -14,6 +14,7 @@ use crate::browser::RailTab;
 use crate::context::{Act, Item};
 use crate::device::layout::Mark;
 use crate::device::{play, sampler};
+use crate::popup::PopupKind;
 use crate::studio::{FileRequest, Geometry, Rect, Studio};
 
 /// The file the sample's row of the window `w` shows: the zone chosen, or the chosen
@@ -111,6 +112,7 @@ impl Studio {
                     (def.uid == "drum-kit").then_some(w.pick.min(PADS - 1)),
                 ));
             }
+            Mark::Output => self.open_popup(PopupKind::PadOutput(id), spot.r),
             Mark::Name => self.sample_menu(i, spot.r.x, spot.r.bottom()),
             Mark::Drop | Mark::Title | Mark::Pad(_) => {}
         }

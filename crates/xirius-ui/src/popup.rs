@@ -53,6 +53,8 @@ pub enum PopupKind {
     Versions,
     Color(TrackId),
     Output(TrackId),
+    /// A Drum Kit pad's song-level output.
+    PadOutput(PluginId),
     /// The input device of an audio track (REC-017).
     Input(TrackId),
     /// A plugin for a new insert row of the track (MIX-016).
@@ -168,6 +170,8 @@ pub enum Action {
     Color(Option<usize>),
     /// `track.output.set`: `default`, `master` or a bus id.
     Output(String),
+    /// `plugin.pad_output.set`: Main, a bus id, or new.
+    PadOutput(String),
     /// `track.input.set`: channels of the input (`In 1+2`), or `none` for the default.
     Input(String),
     View(View),

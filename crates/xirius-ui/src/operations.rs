@@ -212,6 +212,7 @@ pub fn of_action(action: &Action) -> &'static str {
         Action::OpenAsSong => "version.open_as_song",
         Action::Color(_) => "track.color.set",
         Action::Output(_) => "track.output.set",
+        Action::PadOutput(_) => "plugin.pad_output.set",
         Action::Input(_) => "track.input.set",
         Action::View(_) => "browser.view.set",
         Action::Pick(_) => "pick.choose",

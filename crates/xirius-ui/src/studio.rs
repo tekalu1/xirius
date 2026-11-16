@@ -2564,6 +2564,35 @@ impl Studio {
                 }
                 self.popup = None;
             }
+            Action::PadOutput(to) => {
+                if let PopupKind::PadOutput(id) = p.kind {
+                    let pads = self.instruments.pad_order(id);
+                    let active = self
+                        .instruments
+                        .open
+                        .iter()
+                        .find(|w| w.plugin == id)
+                        .map(|w| w.pick);
+                    if let Some(active) = active {
+                        let names: Vec<_> = pads
+                            .iter()
+                            .map(|&n| serde_json::json!({ "pad": xirius_params::PAD_NAMES[n] }))
+                            .collect();
+                        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher.
+                        self.run_command(
+                            "plugin.pad_output.set",
+                            serde_json::json!({
+                                "id": id.to_string(),
+                                "pads": names,
+                                "active": xirius_params::PAD_NAMES[active],
+                                "to": to,
+                            }),
+                        );
+                    }
+                }
+                self.popup = None;
+                self.rebuild(g);
+            }
             Action::Input(to) => {
                 self.popup = None;
                 if let PopupKind::Input(t) = p.kind {

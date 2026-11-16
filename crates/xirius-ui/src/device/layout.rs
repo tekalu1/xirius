@@ -112,6 +112,8 @@ pub enum Mark {
     /// The plane a sample is dropped on, and its button opening the files.
     Drop,
     Browse,
+    /// The chosen pad's output destination (PLG-069).
+    Output,
     /// The chosen pad's name over its controls, and what a pad says (drawn, take no press).
     Title,
     Pad(usize),
@@ -143,6 +145,8 @@ pub struct Spot {
     pub dim: bool,
     /// A pad or a bank files dragged over would fill (UI-334).
     pub ghost: bool,
+    /// The pad uses a bus output instead of Main.
+    pub output: bool,
 }
 
 impl Spot {
@@ -157,6 +161,7 @@ impl Spot {
             note: None,
             dim: false,
             ghost: false,
+            output: false,
         }
     }
 }

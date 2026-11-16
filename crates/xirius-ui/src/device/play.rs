@@ -703,7 +703,12 @@ pub fn paint_pads(pen: &mut Pen, pads: &[Key], spots: &[Spot], lit: &[u8], hot: 
         );
         let r = k.r;
         if !s.text.is_empty() {
-            let t = Rect::new(r.x + 6.0, r.y + r.h / 2.0 - 8.0, r.w - 12.0, 14.0);
+            let t = Rect::new(
+                r.x + 6.0,
+                r.y + r.h / 2.0 - 8.0,
+                r.w - if s.output { 28.0 } else { 12.0 },
+                14.0,
+            );
             let name = pen.fit(&s.text, FontSize::Micro, Weight::Semibold, t.w);
             pen.text(
                 &name,
@@ -713,6 +718,13 @@ pub fn paint_pads(pen: &mut Pen, pads: &[Key], spots: &[Spot], lit: &[u8], hot: 
                 t,
                 Align::Left,
             );
+            if s.output {
+                pen.icon(
+                    "output",
+                    Rect::new(r.right() - 19.0, t.y, 12.0, 12.0),
+                    strong,
+                );
+            }
         }
         if !s.sub.is_empty() {
             let t = Rect::new(r.x + 6.0, r.bottom() - 18.0, r.w / 2.0, 14.0);
