@@ -118,6 +118,9 @@ pub struct Song {
     /// Where `plugin.rescan` looks and the list it keeps; a song in this one's place scans
     /// the same.
     scan: ScanOptions,
+    /// The list a test's song keeps in its folder instead of the person's ([`test_scan`]).
+    #[cfg(test)]
+    test_cache: Option<PathBuf>,
     /// The user's settings, answered by the session's `prefs.*` / `keymap.*` /
     /// `mousemap.*` commands. In memory until [`Song::load_settings`].
     settings: xirius_prefs::Shared,
@@ -1030,9 +1033,24 @@ impl Song {
     ) -> Song {
         let registry = xirius_session::commands::shared_registry();
         let mut session = Session::with_registry(built.project().clone(), registry.clone());
+        // A test's song keeps its places, presets and app files in a folder of its own, removed
+        // with it, so a test never reads or writes the person's, nor another test's.
+        #[cfg(test)]
+        let test_folder = crate::shot::TestFolder::new("xirius-ui-song-");
+        #[cfg(test)]
+        let test_dir = |name: &str| Some(test_folder.path().join(name));
+        #[cfg(not(test))]
+        let test_dir = |_: &str| None::<PathBuf>;
+        #[cfg(test)]
+        let (test_cache, session_scan) = match test_scan(&scan, test_folder.path()) {
+            Some(own) => (Some(own.cache.clone()), own),
+            None => (None, scan.clone()),
+        };
+        #[cfg(not(test))]
+        let session_scan = scan.clone();
         let config = ExtConfig {
             output: OutputMode::None,
-            scan: scan.clone(),
+            scan: session_scan,
             catalog: None,
         };
         // The record button records on the screen's own player, which opens
@@ -1046,14 +1064,6 @@ impl Song {
                 )),
             )
         });
-        // A test's song keeps its places, presets and app files in a folder of its own, removed
-        // with it, so a test never reads or writes the person's, nor another test's.
-        #[cfg(test)]
-        let test_folder = crate::shot::TestFolder::new("xirius-ui-song-");
-        #[cfg(test)]
-        let test_dir = |name: &str| Some(test_folder.path().join(name));
-        #[cfg(not(test))]
-        let test_dir = |_: &str| None::<PathBuf>;
         let places_file = test_dir("places").map(|p| p.join("browser.json"));
         let extras = ExtExtras {
             places_file: places_file.clone(),
@@ -1091,6 +1101,8 @@ impl Song {
             windowed,
             session,
             scan,
+            #[cfg(test)]
+            test_cache,
             settings,
             io,
             draft: false,
@@ -1145,6 +1157,10 @@ impl Song {
     }
 
     pub fn plugin_cache(&self) -> &Path {
+        #[cfg(test)]
+        if let Some(cache) = &self.test_cache {
+            return cache;
+        }
         &self.scan.cache
     }
 
@@ -1349,6 +1365,12 @@ fn app_ext(settings: xirius_prefs::Shared, root: Option<PathBuf>) -> xirius_sess
 
 impl Drop for Song {
     fn drop(&mut self) {
+        // A scan this song started writes its list in the test's folder as it ends: the folder
+        // goes only after that.
+        #[cfg(test)]
+        if self.test_cache.is_some() {
+            self.scan_ended();
+        }
         if self.windowed {
             let session = std::mem::replace(&mut self.session, Session::new(""));
             #[cfg(test)]
@@ -1366,6 +1388,53 @@ impl Drop for Song {
             retiring(job, dir);
             #[cfg(not(test))]
             drop(job);
+        }
+    }
+}
+
+/// The scan options of a test's song started with those every song has
+/// ([`crate::mixer::scan::options`]): its list in `folder` instead of the person's, and no folder
+/// to look in instead of the ones the PC's plugins are installed in, so a test neither writes the
+/// person's list nor opens the plugins of the PC it runs on. `None` when the test named its own
+/// list (in its options or in `XIRIUS_PLUGIN_CACHE`) and its own folders.
+#[cfg(test)]
+fn test_scan(scan: &ScanOptions, folder: &Path) -> Option<ScanOptions> {
+    let mut own = scan.clone();
+    let person_list = std::env::var_os("XIRIUS_PLUGIN_CACHE").is_none()
+        && scan.cache == xirius_plugins::default_cache_path();
+    if person_list {
+        own.cache = folder.join("plugins").join("plugins.json");
+    }
+    let installed = scan.dirs == xirius_plugins::standard_dirs();
+    if installed {
+        own.dirs.clear();
+    }
+    (person_list || installed).then_some(own)
+}
+
+#[cfg(test)]
+impl Song {
+    /// Stops the scan this song started, if it runs, and waits (at most 30 s) for its end: the
+    /// scan writes its list as it ends, after the stop too.
+    fn scan_ended(&mut self) {
+        let status = |session: &mut Session| {
+            session
+                .run_value("plugin.scan.status", json!({}), &RunOptions::human())
+                .map(|r| r.data)
+                .unwrap_or_default()
+        };
+        let st = status(&mut self.session);
+        if st["state"] != "running" {
+            return;
+        }
+        let _ = self.session.run_value(
+            "export.cancel",
+            json!({ "job": st["job"] }),
+            &RunOptions::human(),
+        );
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while status(&mut self.session)["state"] == "running" && std::time::Instant::now() < end {
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
 }

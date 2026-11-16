@@ -1513,6 +1513,20 @@ mod tests {
         assert!(s.typed(&g, "enter", None));
         // The footer row ran: the scan started or its error is shown.
         assert!(s.mixer.scan.running() != before || s.error.is_some());
+        // The scan keeps its list in the test's folder, not the person's, and the test ends
+        // with the scan, not while it may still write.
+        let cache = s.song.plugin_cache().to_owned();
+        assert!(cache.starts_with(s.song.test_folder()), "{cache:?}");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while s.mixer.scan.running() {
+            s.tick();
+            assert!(std::time::Instant::now() < deadline, "the scan never ended");
+            std::thread::yield_now();
+        }
+        if s.error.is_none() {
+            assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
+            assert!(cache.exists(), "the scan wrote its list");
+        }
     }
 
     /// Every list menu is opened on the same part (UI-320): the search box,
