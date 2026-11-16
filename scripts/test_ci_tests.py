@@ -278,6 +278,46 @@ class LeftoverTests(unittest.TestCase):
                 (watch.temporary / "left").write_text("x")
                 self.assertEqual(len(watch.finish()), 2)
 
+    def test_a_name_made_directly_in_the_checkouts_target_fails_by_name_but_the_builds_do_not(self):
+        written = datetime(2026, 11, 16, 4, 19, 32, tzinfo=timezone.utc).timestamp()
+        stamp = " (written 2026-11-16T04:19:32Z)"
+        with tempfile.TemporaryDirectory() as tmp:
+            place, watch = self.watch(tmp)
+            target = watch.checkout / "target"
+            (target / "debug").mkdir(parents=True)
+            (target / "ctx-audio-old").mkdir()
+            with watch, contextlib.redirect_stdout(io.StringIO()):
+                (target / "ctx2-reveal-1").mkdir()
+                (target / "ctx2-reveal-1" / "song.xirius").write_text("x")
+                (target / "pdc.wav").write_text("x")
+                for own in ("nextest", "tmp", "release"):
+                    (target / own).mkdir()
+                (target / ".rustc_info.json").write_text("{}")
+                (target / "debug" / "xirius-test-crash-records").mkdir()
+                (target / "ctx-audio-old" / "tone.wav").write_text("x")
+                for path in (target / "ctx2-reveal-1", target / "pdc.wav"):
+                    os.utime(path, (written, written))
+                failures = watch.finish()
+            self.assertIn("  ctx2-reveal-1" + os.sep + stamp, failures)
+            self.assertIn("  pdc.wav" + stamp, failures)
+            self.assertEqual(len([line for line in failures if line.startswith("  ")]), 2, failures)
+            self.assertIn(str(target), failures[0])
+
+    def test_a_checkout_with_no_target_before_the_run_counts_only_the_names_made_besides_the_builds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            place, watch = self.watch(tmp)
+            target = watch.checkout / "target"
+            with watch:
+                # The archive a shard runs is unpacked into the checkout during the run.
+                (target / "debug" / "deps").mkdir(parents=True)
+                (target / "nextest").mkdir()
+                self.assertEqual(watch.finish(), [])
+            place, watch = self.watch(tmp)
+            with watch, contextlib.redirect_stdout(io.StringIO()):
+                (target / "export-actions-ui-1").mkdir()
+                failures = "\n".join(watch.finish())
+            self.assertIn("export-actions-ui-1" + os.sep, failures)
+
     def test_a_watch_that_cannot_start_removes_its_temporary_folder(self):
         with tempfile.TemporaryDirectory() as tmp:
             place, watch = self.watch(tmp)

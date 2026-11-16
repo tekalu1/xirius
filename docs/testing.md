@@ -71,7 +71,10 @@ as on a PC where Xirius never ran: `LOCALAPPDATA` and `APPDATA` on Windows; `HOM
 there is not missed because the same file was already on the PC (an empty `Crashes`, a lock
 file, a plugin list). Anything in the Xirius folders of that stand-in after the run, anything new,
 changed or gone in the person's Xirius folders (listed before and after), and anything left in
-the run's temporary folder fails the run by name (`scripts/leftovers.py`). When an Xirius that is not this
+the run's temporary folder fails the run by name (`scripts/leftovers.py`). So does a name new
+directly in the checkout's `target/` after the run, other than what cargo and nextest keep there
+(`debug`, `release`, `doc`, `package`, `tmp`, `nextest` and cargo's own files): a test that
+works under `target/` removes what it made there. When an Xirius that is not this
 checkout's runs meanwhile (the installed app, a run in another checkout), what changed in the
 person's Xirius folders is printed as a warning instead; the stand-in and the temporary folder
 always count. Each new or written path, and each name left in the temporary folder, is printed

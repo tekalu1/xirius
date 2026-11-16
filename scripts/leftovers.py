@@ -11,6 +11,9 @@ anything new, changed or gone in the person's Xirius folders (listed before and 
 anything left in the run's temporary folder, fails the run by name, with the time each was
 last written (in UTC) to find in the run's log the tests that were running then.
 
+A test also makes nothing directly in the checkout's `target/` besides what the build and its
+tools keep there (`TARGET_OWN`): the names new there after the run fail it too.
+
 The programs keep the jobs running in any of their processes in one folder under the temporary
 folder (`xirius_core::running::folder`, `Xirius/jobs`), and leave the folder for the next. The
 watch makes it before the run, so it counts only for what is left in it.
@@ -39,6 +42,13 @@ SHOWN = 40
 # The folders under the run's temporary folder the programs share between their processes and
 # leave (`xirius_core::running::folder`); made before the run, they count only for what is in them.
 SHARED = (Path("Xirius") / "jobs",)
+
+# What cargo and nextest keep directly in the checkout's `target/`: the builds (with the crash
+# records and plugin copies the tests keep under `debug/`, docs/testing.md), the folder cargo
+# gives the tests (`CARGO_TARGET_TMPDIR`), nextest's files and cargo's own. Any other name a run
+# makes there fails it.
+TARGET_OWN = frozenset({"debug", "release", "doc", "package", "tmp", "nextest", "CACHEDIR.TAG",
+                        ".rustc_info.json", ".future-incompat-report.json"})
 
 
 def user_places(environ=None, platform=None):
@@ -113,6 +123,30 @@ def written(nanoseconds):
     find in the log of the run the tests that were running then."""
     moment = datetime.fromtimestamp(nanoseconds // 10**9, tz=timezone.utc)
     return f" (written {moment.strftime('%Y-%m-%dT%H:%M:%SZ')})"
+
+
+def names_in(folder):
+    """The names directly in `folder`, each with whether it is a folder and the time it was last
+    written, in nanoseconds; none when there is no such folder."""
+    found = {}
+    try:
+        entries = list(os.scandir(folder))
+    except OSError:
+        return found
+    for entry in entries:
+        try:
+            found[entry.name] = (entry.is_dir(), entry.stat().st_mtime_ns)
+        except OSError:
+            continue
+    return found
+
+
+def made_in_target(before, after):
+    """The names new in the checkout's `target/` (`names_in` before and after the run) that the
+    build and its tools do not keep there, a folder's with a separator, each with when it was last
+    written."""
+    return [f"{name}{os.sep if after[name][0] else ''}{written(after[name][1])}"
+            for name in sorted(after.keys() - before.keys()) if name not in TARGET_OWN]
 
 
 def differences(before, after):
@@ -233,6 +267,7 @@ class Watch:
 
     def __init__(self, checkout, environment, places=None, every=2.0):
         self.checkout = Path(checkout)
+        self.target = self.checkout / "target"
         self.places = user_places() if places is None else places
         self.temporary = Path(tempfile.mkdtemp(prefix="xirius-test-run-"))
         self.stand_in = Path(tempfile.mkdtemp(prefix="xirius-test-places-"))
@@ -252,6 +287,7 @@ class Watch:
         self._stop = threading.Event()
         self._thread = None
         self.before = {}
+        self.target_before = {}
 
     def _remove(self):
         shutil.rmtree(self.temporary, ignore_errors=True)
@@ -267,6 +303,7 @@ class Watch:
     def __enter__(self):
         try:
             self.before = listing(self.places)
+            self.target_before = names_in(self.target)
             self._look()
         except BaseException:
             self._remove()
@@ -285,6 +322,7 @@ class Watch:
         changed = differences(self.before, listing(self.places))
         made = differences({}, listing(self.stand_in_places))
         left = left_in(self.temporary, SHARED)
+        target = made_in_target(self.target_before, names_in(self.target))
         self._remove()
         failures = []
         if made:
@@ -309,6 +347,11 @@ class Watch:
             failures += ["  " + path for path in left[:SHOWN]]
             if len(left) > SHOWN:
                 failures.append(f"  ... and {len(left) - SHOWN} more")
+        if target:
+            failures.append(f"the tests made names directly in the checkout's target folder ({self.target}):")
+            failures += ["  " + name for name in target[:SHOWN]]
+            if len(target) > SHOWN:
+                failures.append(f"  ... and {len(target) - SHOWN} more")
         return failures
 
     def __exit__(self, kind, *_):
