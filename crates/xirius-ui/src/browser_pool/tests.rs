@@ -15,10 +15,19 @@ use crate::tools::Mods;
 
 mod cleanup;
 
+/// The fields drop in order: the studio and its song first, then the folder.
 struct Song {
     s: Studio,
     g: Geometry,
-    root: tempfile::TempDir,
+    root: crate::shot::TestFolder,
+}
+
+impl Drop for Song {
+    /// The waveforms of the files brought in are written in the song's folder on threads of
+    /// their own: they end before the folder goes.
+    fn drop(&mut self) {
+        xirius_session::peaks::wait();
+    }
 }
 
 impl Song {
@@ -54,10 +63,7 @@ impl Song {
 
 /// The song of [`make_song`], open on the song-files tab, whose recycle bin is `bin` beside it.
 fn song(tag: &str) -> Song {
-    let root = tempfile::Builder::new()
-        .prefix(&format!("xirius-ui-pool-{tag}-"))
-        .tempdir()
-        .unwrap();
+    let root = crate::shot::TestFolder::new(&format!("xirius-ui-pool-{tag}-"));
     let dir = make_song(root.path());
     let bin = root.path().join("bin");
     let trash: xirius_session::cleanup::Trash = Arc::new(move |p: &Path| {
