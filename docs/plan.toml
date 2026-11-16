@@ -6132,7 +6132,7 @@ title = "試験は利用者の Xirius の置き場（クラッシュの記録・
 area = "ARC"
 phase = "v1"
 source = "mockups/rev4-spec.md § 確かめ方"
-done_when = "python scripts/ci_tests.py を 2 回流して、どちらも %LOCALAPPDATA%/Xirius・%APPDATA%/Xirius（macOS は ~/Library の Application Support・Caches・Logs の Xirius）に増えた・変わった・消えた物が無く、実行の一時フォルダーに残った物が無い。プラグインのホストを起こす試験（落とす試験に限らない）は XIRIUS_CRASH_DIR を自分のフォルダーに向け、子の xirius にも渡す。場所の一覧・プラグインの一覧を読み書きする試験は XIRIUS_BROWSER_FILE・XIRIUS_PLUGIN_CACHE か試験の Song で自分のフォルダーを使う。試験のフォルダーは失敗しても消える。ci_tests.py は試験を、利用者の置き場の変数（Windows は LOCALAPPDATA・APPDATA、macOS は HOME で CARGO_HOME・RUSTUP_HOME は元のまま、ほかは XDG_CONFIG_HOME・XDG_CACHE_HOME）を実行ごとの空のフォルダーに向けて流し、そこに出来た物も名前を出して失敗する。本物の置き場も終わりに前と比べ、残った物の名前を出して失敗する（別の Xirius が動いている間は、本物の置き場の差を警告にとどめる。scripts/test_ci_tests.py）。製品の動き（試験でないとき）は変わらない"
+done_when = "python scripts/ci_tests.py を 2 回流して、どちらも %LOCALAPPDATA%/Xirius・%APPDATA%/Xirius（macOS は ~/Library の Application Support・Caches・Logs の Xirius）に増えた・変わった・消えた物が無く、実行の一時フォルダーに残った物が無い。プラグインのホストを起こす試験（落とす試験に限らない）は XIRIUS_CRASH_DIR を自分のフォルダーに向け、子の xirius にも渡す。場所の一覧・プラグインの一覧を読み書きする試験は XIRIUS_BROWSER_FILE・XIRIUS_PLUGIN_CACHE か試験の Song で自分のフォルダーを使う。試験のフォルダーは失敗しても消える。試験のフォルダーは、その下で書く裏の仕事（閉じた曲の片付けと履歴、最近の曲の一覧、書き出しの記録とロック、波形）が終わるのを待ってから消し、消せなければ試験を落とす（xirius-ui は shot::TestFolder と shot::settle、台本が使うフォルダーは shot::TestFolder::lent）。ci_tests.py は試験を、利用者の置き場の変数（Windows は LOCALAPPDATA・APPDATA、macOS は HOME で CARGO_HOME・RUSTUP_HOME は元のまま、ほかは XDG_CONFIG_HOME・XDG_CACHE_HOME）を実行ごとの空のフォルダーに向けて流し、そこに出来た物も名前を出して失敗する。本物の置き場も終わりに前と比べ、残った物の名前を出して失敗する（別の Xirius が動いている間は、本物の置き場の差を警告にとどめる。scripts/test_ci_tests.py）。製品の動き（試験でないとき）は変わらない"
 status = "done"
 
 [[item]]
