@@ -46,7 +46,12 @@ impl Drop for Dir {
         // An import asks for the file's peaks, which a thread of their own writes in the song's
         // `Peaks/`; one still writing there would leave the folder behind.
         xirius_session::peaks::wait();
-        let _ = std::fs::remove_dir_all(&self.0);
+        if let Err(e) = std::fs::remove_dir_all(&self.0)
+            && self.0.exists()
+            && !std::thread::panicking()
+        {
+            panic!("{} is left: {e}", self.0.display());
+        }
     }
 }
 
@@ -139,6 +144,22 @@ fn voice(s: &mut Session, name: &str, pitch: i64) -> String {
         json!({ "clip": c, "at": 0, "pitch": pitch, "length": 1920, "velocity": 100 }),
     );
     t
+}
+
+/// Waits until `job` has ended on disk too: a job reads as ended before it writes its last record
+/// and lets go of its lock (`<job>.lock` in the song's `exports/`), the last it does in the song's
+/// folder, and a folder removed meanwhile is left behind.
+fn ended_on_disk(song: &Path, job: &str) {
+    let lock = Store::of_song(song).dir().join(format!("{job}.lock"));
+    let start = std::time::Instant::now();
+    while lock.exists() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "{job} still holds {}",
+            lock.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 /// The record of `job` as `export.status` lists it.
@@ -646,6 +667,7 @@ fn an_update_in_the_background_keeps_the_files_not_written_again() {
         assert!(start.elapsed() < std::time::Duration::from_secs(60), "{v}");
         std::thread::sleep(std::time::Duration::from_millis(5));
     };
+    ended_on_disk(&dir.path().join("song"), &job);
     assert_eq!(v["state"], "done", "{v}");
     assert_eq!(v["stale"], false, "{v}");
     assert_eq!(stem_files(&v), files);

@@ -44,7 +44,12 @@ impl Dir {
 
 impl Drop for Dir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        if let Err(e) = std::fs::remove_dir_all(&self.0)
+            && self.0.exists()
+            && !std::thread::panicking()
+        {
+            panic!("{} is left: {e}", self.0.display());
+        }
     }
 }
 
@@ -164,6 +169,22 @@ fn file_names(dir: &Path) -> Vec<String> {
         .unwrap_or_default();
     v.sort();
     v
+}
+
+/// Waits until `job` has ended on disk too: a job reads as ended before it writes its last record
+/// and lets go of its lock (`<job>.lock` in the song's `exports/`), the last it does in the song's
+/// folder, and a folder removed meanwhile is left behind.
+fn ended_on_disk(song: &Path, job: &str) {
+    let lock = Store::of_song(song).dir().join(format!("{job}.lock"));
+    let start = Instant::now();
+    while lock.exists() {
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "{job} still holds {}",
+            lock.display()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// Polls `export.status --job` until the job is no longer running.
@@ -820,6 +841,7 @@ fn another_session_cancels_a_running_export_through_the_song_folder() {
     assert!(r.message.contains("別のプロセス"), "{}", r.message);
 
     let v = wait_job(&mut a, &job);
+    ended_on_disk(&dir.path().join("song"), &job);
     assert_eq!(v["state"], "cancelled", "{v}");
     let start = Instant::now();
     while run(&mut b, "export.status", json!({ "job": job })).data["state"] == "running" {
