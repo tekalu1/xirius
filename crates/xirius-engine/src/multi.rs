@@ -187,6 +187,14 @@ impl MultiProc {
         self.layers.len()
     }
 
+    /// The routed pad of a layer bypasses its inserts but reaches the multi's output in time.
+    pub(crate) fn pad_delays(&self) -> Vec<u32> {
+        self.layers
+            .iter()
+            .map(|l| self.latency.saturating_sub(l.instrument.latency()))
+            .collect()
+    }
+
     /// Each layer's node id and shared values, and those of the splitters in the layers' chains.
     pub fn cells(&self, out: &mut Vec<(u64, Arc<BranchCell>)>) {
         for l in &self.layers {
@@ -403,7 +411,7 @@ impl Processor for MultiProc {
     fn process(&mut self, io: &mut AudioIo<'_>, events: &[NoteEvent]) {
         let n = io.frames();
         self.route(events);
-        for l in &mut self.layers {
+        for (layer, l) in self.layers.iter_mut().enumerate() {
             let (gain, pan, mute) = l.cell.get();
             l.gain.target = gain;
             l.pan.target = pan;
@@ -411,11 +419,40 @@ impl Processor for MultiProc {
             let (bl, br) = (&mut l.l[..n], &mut l.r[..n]);
             bl.fill(0.0);
             br.fill(0.0);
-            l.instrument.process(&mut AudioIo::new(bl, br), &l.events);
+            if let Some(routes) = io.pad_routes.as_deref_mut() {
+                for route in routes {
+                    std::mem::swap(&mut route.left, &mut route.saved_left);
+                    std::mem::swap(&mut route.right, &mut route.saved_right);
+                    route.clear(n);
+                }
+            }
+            l.instrument.process(
+                &mut AudioIo {
+                    left: bl,
+                    right: br,
+                    key: None,
+                    pad_routes: io.pad_routes.as_deref_mut(),
+                    route_owner: 0,
+                },
+                &l.events,
+            );
             for p in &mut l.inserts {
                 p.process(&mut AudioIo::new(bl, br), &[]);
             }
             l.delay.apply(bl, br);
+            if let Some(routes) = io.pad_routes.as_deref_mut() {
+                for route in routes {
+                    if let Some(delay) = route.layer_delays.get_mut(layer) {
+                        delay.apply(&mut route.left[..n], &mut route.right[..n]);
+                    }
+                    for i in 0..n {
+                        let g = l.gain.at(i, n) * l.on.at(i, n);
+                        let (pl, pr) = pan_gains(l.pan.at(i, n));
+                        route.left[i] = route.saved_left[i] + route.left[i] * g * pl;
+                        route.right[i] = route.saved_right[i] + route.right[i] * g * pr;
+                    }
+                }
+            }
         }
         io.clear();
         for l in &mut self.layers {

@@ -734,6 +734,7 @@ mod tests {
         let pid = PluginId(p.alloc());
         let insert = Plugin {
             samples: Vec::new(),
+            pad_outputs: Default::default(),
             id: pid,
             name: "Gain".into(),
             kind: PluginKind::Effect,

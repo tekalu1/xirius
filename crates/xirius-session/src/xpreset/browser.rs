@@ -569,6 +569,7 @@ fn as_track(value: &Value) -> CmdResult<TrackPreset> {
         let (p, _) = DevicePreset::parse(value, None)?;
         let d = p.device;
         let x = Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(1),
             name: d.name,
             kind: d.kind,

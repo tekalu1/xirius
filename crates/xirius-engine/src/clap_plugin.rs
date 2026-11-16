@@ -154,6 +154,8 @@ mod tests {
                 left: &mut l,
                 right: &mut r,
                 key: None,
+                pad_routes: None,
+                route_owner: 0,
             },
             &[on],
         );

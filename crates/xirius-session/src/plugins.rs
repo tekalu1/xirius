@@ -3695,6 +3695,7 @@ mod tests {
     #[test]
     fn process_policy_precedes_first_load_for_new_song_and_preset_and_preload() {
         let base = Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(9),
             name: "Renamed fixture".into(),
             kind: PluginKind::Instrument,
@@ -3766,6 +3767,7 @@ mod tests {
         let plugin = Plugin {
             id,
             name: "Fixture".into(),
+            pad_outputs: Default::default(),
             kind: PluginKind::Effect,
             format: "vst3".into(),
             uid: "not-installed".into(),
@@ -3809,6 +3811,7 @@ mod tests {
                 applied: Plugin {
                     id,
                     name: "Fixture".into(),
+                    pad_outputs: Default::default(),
                     kind: PluginKind::Effect,
                     format: "vst3".into(),
                     uid: "fixture".into(),
@@ -3845,6 +3848,7 @@ mod tests {
             model::{Project, Track, TrackKind},
         };
         let plugin = Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(42),
             name: "Fixture".into(),
             kind: PluginKind::Effect,
@@ -3923,6 +3927,7 @@ mod tests {
             model::{Project, Track, TrackKind},
         };
         let plugin = Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(42),
             name: "Fixture".into(),
             kind: PluginKind::Effect,
@@ -4010,6 +4015,7 @@ mod tests {
     #[test]
     fn one_intent_rule_preserves_reset_replacement_and_changed_parameter_aliases() {
         let old = Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(42),
             name: "Fixture".into(),
             kind: PluginKind::Effect,
@@ -4112,6 +4118,7 @@ mod tests {
         w.finalize().unwrap();
 
         let mk = |samples: Vec<String>| Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(9),
             name: "Sampler".into(),
             kind: PluginKind::Instrument,
@@ -4145,6 +4152,8 @@ mod tests {
             left: &mut left,
             right: &mut right,
             key: None,
+            pad_routes: None,
+            route_owner: 0,
         };
         p.process(
             &mut io,
@@ -4175,6 +4184,7 @@ mod tests {
             .tempdir()
             .unwrap();
         let mk = |samples: Vec<String>| Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(9),
             name: "Sampler".into(),
             kind: PluginKind::Instrument,
@@ -4224,6 +4234,8 @@ mod tests {
                 left: &mut left,
                 right: &mut right,
                 key: None,
+                pad_routes: None,
+                route_owner: 0,
             },
             &[],
         );
@@ -4244,6 +4256,7 @@ mod tests {
             .tempdir()
             .unwrap();
         let mk = |samples: Vec<String>| Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(9),
             name: "Sampler".into(),
             kind: PluginKind::Instrument,
@@ -4293,6 +4306,8 @@ mod tests {
                 left: &mut left,
                 right: &mut right,
                 key: None,
+                pad_routes: None,
+                route_owner: 0,
             },
             &[],
         );
@@ -4337,6 +4352,7 @@ mod tests {
         wav("short.wav", 480);
         wav("long.wav", 48_000);
         let mk = |samples: &str, normalize: Option<f64>| Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(9),
             name: "Sampler".into(),
             kind: PluginKind::Instrument,
@@ -4372,6 +4388,8 @@ mod tests {
                     left: &mut left,
                     right: &mut right,
                     key: None,
+                    pad_routes: None,
+                    route_owner: 0,
                 },
                 notes,
             );
@@ -4425,6 +4443,7 @@ mod tests {
             .tempdir()
             .unwrap();
         let mk = |samples: Vec<String>| Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(9),
             name: "Sampler".into(),
             kind: PluginKind::Instrument,
@@ -4466,6 +4485,7 @@ mod tests {
             .tempdir()
             .unwrap();
         let mk = |samples: &str, normalize: Option<f64>| Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(9),
             name: "Sampler".into(),
             kind: PluginKind::Instrument,
@@ -4500,6 +4520,8 @@ mod tests {
                     left: &mut left,
                     right: &mut right,
                     key: None,
+                    pad_routes: None,
+                    route_owner: 0,
                 },
                 &[],
             );

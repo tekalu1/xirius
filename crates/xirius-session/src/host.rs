@@ -1893,13 +1893,24 @@ impl SessionHost {
                 report,
                 |gain| Command::TrackGain { track: i, gain },
                 |pan| Command::TrackPan { track: i, pan },
-                |mute| Command::TrackMute { track: i, mute },
+                |mute| Command::TrackMainMute { track: i, mute },
                 |send, level| Command::SendLevel {
                     track: i,
                     send,
                     level,
                 },
             );
+            if new.pad_mute != cur.pad_mute
+                && tally(
+                    report,
+                    self.send(Command::TrackPadMute {
+                        track: i,
+                        mute: new.pad_mute,
+                    }),
+                )
+            {
+                cur.pad_mute = new.pad_mute;
+            }
             self.mix.tracks[i] = cur;
         }
         for i in 0..mix.buses.len() {
@@ -2517,6 +2528,7 @@ mod tests {
 
     fn keyed(id: u64, sources: Vec<KeySource>) -> Plugin {
         Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(id),
             name: "g".into(),
             kind: PluginKind::Effect,

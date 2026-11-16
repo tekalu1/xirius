@@ -249,6 +249,8 @@ mod tests {
                 left: &mut l,
                 right: &mut r,
                 key: None,
+                pad_routes: None,
+                route_owner: 0,
             },
             &[
                 ev(3, 64, 127),

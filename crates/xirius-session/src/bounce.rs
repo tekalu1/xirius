@@ -350,10 +350,13 @@ fn clips(p: &Project, args: &Args) -> CmdResult<Work> {
         if let Some(x) = t.clips.first_mut() {
             x.muted = false;
         }
+        let select = std::iter::once(Select::Track(tid))
+            .chain(pad_bus_stems(t))
+            .collect();
         work.pieces.push((
             Piece {
                 song,
-                select: vec![Select::Track(tid)],
+                select,
                 from: c.start,
                 to: c.start + c.length,
                 tail: TAIL,
@@ -384,6 +387,20 @@ fn bounceable(p: &Project, id: TrackId) -> CmdResult<&Track> {
     }
 }
 
+fn pad_bus_stems(t: &Track) -> Vec<Select> {
+    let mut buses: Vec<_> = t
+        .inserts
+        .iter()
+        .flat_map(|plugin| plugin.pad_outputs.values().copied())
+        .collect();
+    buses.sort();
+    buses.dedup();
+    buses
+        .into_iter()
+        .map(|bus| Select::TrackBus(t.id, bus))
+        .collect()
+}
+
 fn tracks(p: &Project, args: &Args) -> CmdResult<Work> {
     let ids = args.require_ids::<TrackId>("トラック")?;
     let mut work = Work::new(format!(
@@ -401,7 +418,9 @@ fn tracks(p: &Project, args: &Args) -> CmdResult<Work> {
         work.pieces.push((
             Piece {
                 song: pre_fader(p, *id, |_| true),
-                select: vec![Select::Track(*id)],
+                select: std::iter::once(Select::Track(*id))
+                    .chain(pad_bus_stems(t))
+                    .collect(),
                 from,
                 to,
                 tail: TAIL,
@@ -442,6 +461,15 @@ fn freeze(p: &Project, args: &Args) -> CmdResult<Work> {
         }
         if t.frozen.is_some() {
             continue;
+        }
+        if t.inserts
+            .iter()
+            .any(|plugin| !plugin.pad_outputs.is_empty())
+        {
+            return Err(CmdError::invalid(format!(
+                "「{}」はパッドをバスへ出力しているため、フリーズできません",
+                t.name
+            )));
         }
         if t.midi_out.is_some() && t.kind == TrackKind::Instrument {
             return Err(CmdError::invalid(format!(
@@ -527,7 +555,9 @@ fn range(p: &Project, args: &Args) -> CmdResult<Work> {
             work.pieces.push((
                 Piece {
                     song: pre_fader(p, *id, within),
-                    select: vec![Select::Track(*id)],
+                    select: std::iter::once(Select::Track(*id))
+                        .chain(pad_bus_stems(t))
+                        .collect(),
                     from,
                     to,
                     tail,
@@ -554,7 +584,13 @@ fn range(p: &Project, args: &Args) -> CmdResult<Work> {
         work.pieces.push((
             Piece {
                 song,
-                select: ids.iter().map(|id| Select::Track(*id)).collect(),
+                select: ids
+                    .iter()
+                    .flat_map(|id| {
+                        let t = p.track(*id).expect("checked");
+                        std::iter::once(Select::Track(*id)).chain(pad_bus_stems(t))
+                    })
+                    .collect(),
                 from,
                 to,
                 tail,

@@ -50,6 +50,55 @@ pub struct AudioIo<'a> {
     /// this insert (ENG-078). `None` (everywhere but the key's insert): the
     /// processor takes its own signal as its key.
     pub key: Option<(&'a [f32], &'a [f32])>,
+    /// Pad signals taken before the channel inserts. Only a routed kit uses these.
+    pub pad_routes: Option<&'a mut [PadRoute]>,
+    /// The instrument plug-in currently producing the block.
+    pub route_owner: u64,
+}
+
+/// A preallocated block for one pad's direct bus output.
+pub struct PadRoute {
+    pub plugin: u64,
+    pub pad: usize,
+    pub bus: usize,
+    pub left: Vec<f32>,
+    pub right: Vec<f32>,
+    pub(crate) saved_left: Vec<f32>,
+    pub(crate) saved_right: Vec<f32>,
+    pub(crate) layer_delays: Vec<crate::split::Line>,
+}
+
+impl PadRoute {
+    pub fn new(plugin: u64, pad: usize, bus: usize, frames: usize) -> Self {
+        Self::with_layers(plugin, pad, bus, frames, &[])
+    }
+
+    pub(crate) fn with_layers(
+        plugin: u64,
+        pad: usize,
+        bus: usize,
+        frames: usize,
+        delays: &[u32],
+    ) -> Self {
+        Self {
+            plugin,
+            pad,
+            bus,
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+            saved_left: vec![0.0; frames],
+            saved_right: vec![0.0; frames],
+            layer_delays: delays
+                .iter()
+                .map(|&d| crate::split::Line::new(d, frames))
+                .collect(),
+        }
+    }
+
+    pub fn clear(&mut self, frames: usize) {
+        self.left[..frames].fill(0.0);
+        self.right[..frames].fill(0.0);
+    }
 }
 
 impl AudioIo<'_> {
@@ -70,6 +119,8 @@ impl<'a> AudioIo<'a> {
             left,
             right,
             key: None,
+            pad_routes: None,
+            route_owner: 0,
         }
     }
 }

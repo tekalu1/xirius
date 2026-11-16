@@ -17,6 +17,8 @@ pub enum Select {
     All,
     Track(TrackId),
     Bus(TrackId),
+    /// Only one source track's contribution to a bus, for bouncing that track.
+    TrackBus(TrackId, TrackId),
 }
 
 /// The bus that catches whatever a stem would otherwise send somewhere else. It is muted.
@@ -103,6 +105,11 @@ pub fn bus_targets(p: &Project, id: TrackId) -> Vec<TrackId> {
     }
     v.extend(t.sends.iter().map(|s| s.to));
     v.extend(
+        t.inserts
+            .iter()
+            .flat_map(|plugin| plugin.pad_outputs.values().copied()),
+    );
+    v.extend(
         p.key_edges()
             .into_iter()
             .filter_map(|(from, to)| (from == id).then_some(to)),
@@ -116,6 +123,18 @@ pub fn bus_targets(p: &Project, id: TrackId) -> Vec<TrackId> {
 /// and a soloed channel does not pull the sources it is keyed by. A channel
 /// hidden by solo is silent — its sidechain keys stop too (ENG-078).
 fn audio_targets(p: &Project, id: TrackId) -> Vec<TrackId> {
+    let mut v = main_audio_targets(p, id);
+    if let Some(t) = p.tracks.get(&id) {
+        v.extend(
+            t.inserts
+                .iter()
+                .flat_map(|plugin| plugin.pad_outputs.values().copied()),
+        );
+    }
+    v
+}
+
+fn main_audio_targets(p: &Project, id: TrackId) -> Vec<TrackId> {
     let Some(t) = p.tracks.get(&id) else {
         return Vec::new();
     };
@@ -160,6 +179,13 @@ pub fn keyed_in_solo(p: &Project) -> HashSet<TrackId> {
 /// The soloed channels, what stays audible with them, and of those the triggers kept only
 /// for the keys they give what is heard.
 fn solo_reach(p: &Project) -> (Vec<TrackId>, HashSet<TrackId>, HashSet<TrackId>) {
+    solo_reach_with(p, audio_targets)
+}
+
+fn solo_reach_with(
+    p: &Project,
+    targets: fn(&Project, TrackId) -> Vec<TrackId>,
+) -> (Vec<TrackId>, HashSet<TrackId>, HashSet<TrackId>) {
     let soloed: Vec<TrackId> = p
         .tracks
         .values()
@@ -172,10 +198,10 @@ fn solo_reach(p: &Project) -> (Vec<TrackId>, HashSet<TrackId>, HashSet<TrackId>)
         let mut down: Vec<TrackId> = soloed.clone();
         while let Some(n) = down.pop() {
             if audible.insert(n) {
-                down.extend(audio_targets(p, n));
+                down.extend(targets(p, n));
             }
         }
-        let reverse = audio_reverse_edges(p);
+        let reverse = reverse_of(p, targets);
         let mut up: Vec<TrackId> = soloed
             .iter()
             .copied()
@@ -209,10 +235,6 @@ fn solo_reach(p: &Project) -> (Vec<TrackId>, HashSet<TrackId>, HashSet<TrackId>)
 
 fn reverse_edges(p: &Project) -> HashMap<TrackId, Vec<TrackId>> {
     reverse_of(p, bus_targets)
-}
-
-fn audio_reverse_edges(p: &Project) -> HashMap<TrackId, Vec<TrackId>> {
-    reverse_of(p, audio_targets)
 }
 
 fn reverse_of(
@@ -258,6 +280,7 @@ impl Scope {
         let up = match select {
             Select::All => None,
             Select::Track(id) | Select::Bus(id) => Some(feeding(p, id)),
+            Select::TrackBus(track, bus) => Some([track, bus].into_iter().collect()),
         };
         // A stem still needs the guide track's notes even when that track's audio is excluded.
         let note_sources = p
@@ -289,6 +312,7 @@ impl Scope {
         match self.select {
             Select::All => None,
             Select::Track(id) | Select::Bus(id) => Some(id),
+            Select::TrackBus(_, bus) => Some(bus),
         }
     }
 }
@@ -477,6 +501,8 @@ pub struct StripMix {
     pub gain: f32,
     pub pan: f32,
     pub mute: bool,
+    /// Mute of the pad routes before they reach their buses.
+    pub pad_mute: bool,
     pub sends: Vec<f32>,
     /// The keyed inserts' on flags and source levels, in insert order.
     pub keys: Vec<KeyMix>,
@@ -503,6 +529,17 @@ impl Mix {
             p.tracks.values().map(|t| (t.id, t.mute)).collect()
         } else {
             silenced(p)
+        };
+        let has_pad_routes = p.tracks.values().any(|t| {
+            t.inserts
+                .iter()
+                .any(|plugin| !plugin.pad_outputs.is_empty())
+        });
+        let main_audible = if scope.is_stem() || !has_pad_routes {
+            None
+        } else {
+            let (soloed, audible, _) = solo_reach_with(p, main_audio_targets);
+            (!soloed.is_empty()).then_some(audible)
         };
         // A trigger a solo keeps for its keys is not heard through its sends (MIX-049).
         let keyed = if scope.is_stem() {
@@ -547,7 +584,16 @@ impl Mix {
             StripMix {
                 gain: db_to_gain(t.volume_db),
                 pan: t.pan as f32,
-                mute: silent[id] || !scope.includes(*id),
+                mute: silent[id]
+                    || !scope.includes(*id)
+                    || (t
+                        .inserts
+                        .iter()
+                        .any(|plugin| !plugin.pad_outputs.is_empty())
+                        && main_audible
+                            .as_ref()
+                            .is_some_and(|audible| !audible.contains(id))),
+                pad_mute: silent[id] || !scope.includes(*id),
                 sends: wiring(p, g, scope, t)
                     .sends
                     .iter()
@@ -562,6 +608,7 @@ impl Mix {
                 gain: 1.0,
                 pan: 0.0,
                 mute: true,
+                pad_mute: true,
                 sends: Vec::new(),
                 keys: Vec::new(),
             });

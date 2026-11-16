@@ -289,6 +289,7 @@ impl Processor for Instrument {
         for event in events {
             self.take(0, *event);
         }
+        io.route_owner = self.id;
         self.inner.process(io, &self.pending);
         self.pending.clear();
         self.pressed.publish(

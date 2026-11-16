@@ -440,6 +440,27 @@ impl Builder {
                 Box::new(Silence)
             };
             let mut spec = TrackSpec::new(t.name.clone(), source);
+            if included && !unavailable && t.frozen.is_none() {
+                spec.pad_outputs = shape
+                    .inserts
+                    .iter()
+                    .filter(|plugin| {
+                        plugin.runs() && plugin.builtin().is_some_and(|def| def.uid == "drum-kit")
+                    })
+                    .flat_map(|plugin| {
+                        plugin.pad_outputs.iter().filter_map(|(&pad, &bus)| {
+                            let destination = if scope.includes(bus) {
+                                graph.bus_index(bus)
+                            } else if scope.is_stem() {
+                                Some(graph.buses.len())
+                            } else {
+                                None
+                            }?;
+                            Some((plugin.id.0, pad, destination))
+                        })
+                    })
+                    .collect();
+            }
             spec.live = crate::automation::realtime(t);
             if !unavailable {
                 // A layer's plug-ins play inside the multi-instrument (ENG-075).
@@ -468,6 +489,7 @@ impl Builder {
             spec.gain = strip.gain;
             spec.pan = strip.pan;
             spec.mute = strip.mute;
+            spec.pad_mute = Some(strip.pad_mute);
             spec.sends = sends_for(&shape.sends, &strip.sends);
             spec.output = shape.output;
             spec.midi = shape.midi.as_ref().map(|m| {
@@ -1387,6 +1409,7 @@ mod retry_tests {
         Arc::make_mut(p.tracks.get_mut(&TrackId(1)).unwrap())
             .inserts
             .push(Plugin {
+                pad_outputs: Default::default(),
                 id: PluginId(10),
                 name: "Compressor".into(),
                 kind: PluginKind::Effect,

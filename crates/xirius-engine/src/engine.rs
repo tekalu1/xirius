@@ -43,6 +43,14 @@ pub enum Command {
         track: usize,
         mute: bool,
     },
+    TrackMainMute {
+        track: usize,
+        mute: bool,
+    },
+    TrackPadMute {
+        track: usize,
+        mute: bool,
+    },
     SendLevel {
         track: usize,
         send: usize,
@@ -429,6 +437,8 @@ impl AudioEngine {
             Command::TrackLive { track, live } => plan.set_track_live(track, live),
             Command::TrackPan { track, pan } => plan.set_track_pan(track, pan),
             Command::TrackMute { track, mute } => plan.set_track_mute(track, mute),
+            Command::TrackMainMute { track, mute } => plan.set_track_main_mute(track, mute),
+            Command::TrackPadMute { track, mute } => plan.set_track_pad_mute(track, mute),
             Command::SendLevel { track, send, level } => plan.set_send_level(track, send, level),
             Command::BusGain { bus, gain } => plan.set_bus_gain(bus, gain),
             Command::BusPan { bus, pan } => plan.set_bus_pan(bus, pan),

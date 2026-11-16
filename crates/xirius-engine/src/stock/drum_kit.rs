@@ -273,13 +273,23 @@ impl DrumKit {
             };
             let shape = self.shapes[v.pad].with_mix(self.heard[v.pad]);
             let mut vol = vol;
+            let mut route = io.pad_routes.as_deref_mut().and_then(|routes| {
+                routes
+                    .iter_mut()
+                    .find(|r| r.plugin == io.route_owner && r.pad == v.pad)
+            });
             for i in from..to {
                 let Some((l, r)) = v.tick(slot, &shape, shape.speed) else {
                     break;
                 };
                 vol += dvol;
-                io.left[i] += (l * vol) as f32;
-                io.right[i] += (r * vol) as f32;
+                if let Some(route) = route.as_deref_mut() {
+                    route.left[i] += (l * vol) as f32;
+                    route.right[i] += (r * vol) as f32;
+                } else {
+                    io.left[i] += (l * vol) as f32;
+                    io.right[i] += (r * vol) as f32;
+                }
             }
         }
     }

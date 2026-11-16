@@ -70,6 +70,8 @@ pub fn render_keyed(
             left: &mut l[at..at + n],
             right: &mut r[at..at + n],
             key: key.map(|(kl, kr)| (&kl[at..at + n], &kr[at..at + n])),
+            pad_routes: None,
+            route_owner: 0,
         };
         p.process(&mut io, &events);
         at += n;

@@ -965,7 +965,7 @@ fn render_file(
         path: path.to_path_buf(),
         strip: match select {
             Select::All => None,
-            Select::Track(id) | Select::Bus(id) => Some(id),
+            Select::Track(id) | Select::Bus(id) | Select::TrackBus(_, id) => Some(id),
         },
         frames,
         sample_rate: r.rate,

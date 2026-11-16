@@ -248,6 +248,8 @@ mod tests {
                 left: &mut l,
                 right: &mut r,
                 key: None,
+                pad_routes: None,
+                route_owner: 0,
             },
             events,
         );
@@ -309,6 +311,8 @@ mod tests {
                 left: &mut l,
                 right: &mut r,
                 key: None,
+                pad_routes: None,
+                route_owner: 0,
             },
             &[ev(0, 1, 100), ev(5, 1, 80)],
         );

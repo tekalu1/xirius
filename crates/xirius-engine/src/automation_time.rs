@@ -36,6 +36,9 @@ pub fn arrivals(tracks: &[Route], buses: &[Route]) -> (Vec<u32>, u32) {
         for &b in &t.sends {
             reach(Output::Bus(b), t.latency, &mut arrive, &mut master);
         }
+        for &(b, source) in &t.pad_outputs {
+            reach(Output::Bus(b), source, &mut arrive, &mut master);
+        }
     }
     for (i, b) in buses.iter().enumerate() {
         let late = arrive[i] + b.latency;

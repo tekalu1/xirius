@@ -54,8 +54,12 @@ pub struct TrackSpec {
     /// -1.0 (left) ..= 1.0 (right).
     pub pan: f32,
     pub mute: bool,
+    /// Mute of the direct pad routes; `None` follows the strip mute.
+    pub pad_mute: Option<bool>,
     pub sends: Vec<SendSpec>,
     pub output: Output,
+    /// (instrument plug-in, pad index, bus index), built from the song's pad routes.
+    pub pad_outputs: Vec<(u64, usize, usize)>,
     /// Played while the transport runs.
     pub timeline: Timeline,
     /// Guide notes retained from an instrument's clips while its sound is frozen.
@@ -130,8 +134,10 @@ impl TrackSpec {
             gain: 1.0,
             pan: 0.0,
             mute: false,
+            pad_mute: None,
             sends: Vec::new(),
             output: Output::Master,
+            pad_outputs: Vec::new(),
             timeline: Timeline::default(),
             note_timeline: None,
             midi: None,
@@ -334,6 +340,8 @@ pub struct Route {
     pub output: Output,
     /// The bus of each send, in order.
     pub sends: Vec<usize>,
+    /// Direct pad outputs: destination and source latency.
+    pub pad_outputs: Vec<(usize, u32)>,
 }
 
 /// The compensation delays of one node's connections.
@@ -341,6 +349,7 @@ pub struct Route {
 pub struct Compensation {
     pub output: u32,
     pub sends: Vec<u32>,
+    pub pad_outputs: Vec<u32>,
 }
 
 /// Delays for every connection so that all the paths meeting at a bus or the master arrive
@@ -360,6 +369,11 @@ pub fn compensate(
     let delays = |r: &Route, late: u32| Compensation {
         output: at(r.output, late),
         sends: r.sends.iter().map(|&b| arrive[b] - late).collect(),
+        pad_outputs: r
+            .pad_outputs
+            .iter()
+            .map(|&(b, source)| arrive[b] - source)
+            .collect(),
     };
     let track_delays = tracks.iter().map(|t| delays(t, t.latency)).collect();
     let bus_delays = buses
@@ -399,11 +413,30 @@ impl Delay {
             dest.add_from(src, n, level);
             return;
         }
+        self.add_slices(dest, &src.l, &src.r, n, level);
+    }
+
+    fn add_slices(
+        &mut self,
+        dest: &mut Stereo,
+        left: &[f32],
+        right: &[f32],
+        n: usize,
+        level: &Smoothed,
+    ) {
+        if self.frames == 0 {
+            for i in 0..n {
+                let g = level.at(i, n);
+                dest.l[i] += left[i] * g;
+                dest.r[i] += right[i] * g;
+            }
+            return;
+        }
         let mask = self.l.len() - 1;
         for i in 0..n {
             let w = (self.pos + i) & mask;
-            self.l[w] = src.l[i];
-            self.r[w] = src.r[i];
+            self.l[w] = left[i];
+            self.r[w] = right[i];
             let r = w.wrapping_sub(self.frames) & mask;
             let g = level.at(i, n);
             dest.l[i] += self.l[r] * g;
@@ -435,6 +468,7 @@ impl Delay {
 struct NodeDelays {
     output: Delay,
     sends: Vec<Delay>,
+    pad_outputs: Vec<Delay>,
 }
 
 impl NodeDelays {
@@ -442,6 +476,11 @@ impl NodeDelays {
         NodeDelays {
             output: Delay::new(c.output, max_block),
             sends: c.sends.iter().map(|&d| Delay::new(d, max_block)).collect(),
+            pad_outputs: c
+                .pad_outputs
+                .iter()
+                .map(|&d| Delay::new(d, max_block))
+                .collect(),
         }
     }
 }
@@ -508,6 +547,8 @@ impl Stereo {
             left: &mut self.l[..n],
             right: &mut self.r[..n],
             key: None,
+            pad_routes: None,
+            route_owner: 0,
         }
     }
 
@@ -605,12 +646,14 @@ pub struct TrackNode {
     chain: Option<Box<Chain>>,
     prefetch: Option<Box<Prefetch<Chain>>>,
     strip: Strip,
+    pad_mute: Smoothed,
     /// The values of the chain's splitter branches, also while a prefetch worker has the chain.
     branches: crate::split::Cells,
     sends: Vec<SendNode>,
     output: Output,
     /// The chain's block, which the fader, pan and sends go on from.
     buf: Stereo,
+    pad_routes: Vec<crate::processor::PadRoute>,
 }
 
 /// A keyed insert's input (ENG-078): the summed key for the block, swapped in
@@ -723,7 +766,7 @@ struct Chain {
 
 impl Chained for Chain {
     fn render_ahead(&mut self, pos: u64, left: &mut [f32], right: &mut [f32]) {
-        Plan::render_chain(self, false, left, right, Some(pos));
+        Plan::render_chain(self, false, left, right, Some(pos), None);
     }
 }
 
@@ -1009,6 +1052,7 @@ impl Plan {
                             Output::Bus(b) => Some(b),
                             Output::Master | Output::Keys => None,
                         })
+                        .chain(t.pad_outputs.iter().map(|&(_, _, b)| b))
                         .find(|&b| b >= bus_count);
                     if let Some(bus) = bad_bus {
                         return Err(PlanError::UnknownBus { track: i, bus });
@@ -1029,11 +1073,17 @@ impl Plan {
                         latency: t.source.latency() + latency_of(&t.inserts),
                         output: t.output,
                         sends: t.sends.iter().map(|s| s.bus).collect(),
+                        pad_outputs: t
+                            .pad_outputs
+                            .iter()
+                            .map(|&(_, _, b)| (b, t.source.latency()))
+                            .collect(),
                     });
                     let pure = t.source.timeline_only() && t.inserts.is_empty();
                     // Only a track with state to keep ahead is lent out; a pure timeline has its
                     // own cache, and a MIDI track makes no audio.
                     let prefetch = (t.prefetch
+                        && t.pad_outputs.is_empty()
                         && !keyed
                         && !pure
                         && t.midi.is_none()
@@ -1041,12 +1091,18 @@ impl Plan {
                         .then(|| Prefetch::new(n))
                         .flatten()
                         .map(Box::new);
+                    let layer_delays = t.source.multi().map(|m| m.pad_delays()).unwrap_or_default();
                     tracks.push(Some(Box::new(TrackNode {
                         unavailable: t.unavailable,
                         live: t.live,
                         name: t.name,
                         prefetch,
                         strip: Strip::new(t.gain, t.pan, t.mute),
+                        pad_mute: Smoothed::new(if t.pad_mute.unwrap_or(t.mute) {
+                            0.0
+                        } else {
+                            1.0
+                        }),
                         branches: crate::split::Cells::of_track(&*t.source, &t.inserts),
                         sends: t
                             .sends
@@ -1059,6 +1115,19 @@ impl Plan {
                             .collect(),
                         output: t.output,
                         buf: Stereo::new(n),
+                        pad_routes: t
+                            .pad_outputs
+                            .iter()
+                            .map(|&(plugin, pad, bus)| {
+                                crate::processor::PadRoute::with_layers(
+                                    plugin,
+                                    pad,
+                                    bus,
+                                    n,
+                                    &layer_delays,
+                                )
+                            })
+                            .collect(),
                         chain: Some(Box::new(Chain {
                             ahead: pure.then(|| Box::new(crate::anticipation::Ahead::new(n))),
                             source: t.source,
@@ -1145,6 +1214,7 @@ impl Plan {
                 latency: latency_of(&b.inserts),
                 output: b.output,
                 sends: sends_of(&b.sends),
+                pad_outputs: Vec::new(),
             })
             .collect();
 
@@ -1169,6 +1239,10 @@ impl Plan {
                 feeds[b].insert(i);
             }
             for &b in &r.sends {
+                deps[track_count + b].insert(i);
+                feeds[b].insert(i);
+            }
+            for &(b, _) in &r.pad_outputs {
                 deps[track_count + b].insert(i);
                 feeds[b].insert(i);
             }
@@ -1590,6 +1664,19 @@ impl Plan {
     pub fn set_track_mute(&mut self, track: usize, mute: bool) {
         if let Some(Some(t)) = self.tracks.get_mut(track) {
             t.strip.mute.target = if mute { 0.0 } else { 1.0 };
+            t.pad_mute.target = if mute { 0.0 } else { 1.0 };
+        }
+    }
+
+    pub fn set_track_main_mute(&mut self, track: usize, mute: bool) {
+        if let Some(Some(t)) = self.tracks.get_mut(track) {
+            t.strip.mute.target = if mute { 0.0 } else { 1.0 };
+        }
+    }
+
+    pub fn set_track_pad_mute(&mut self, track: usize, mute: bool) {
+        if let Some(Some(t)) = self.tracks.get_mut(track) {
+            t.pad_mute.target = if mute { 0.0 } else { 1.0 };
         }
     }
 
@@ -1908,6 +1995,15 @@ impl Plan {
                         self.pre.r[k] = t.buf.r[k] * m;
                     }
                 }
+                for (route, delay) in t.pad_routes.iter().zip(&mut delays.pad_outputs) {
+                    delay.add_slices(
+                        &mut self.buses[route.bus].buf,
+                        &route.left,
+                        &route.right,
+                        n,
+                        &t.pad_mute,
+                    );
+                }
                 t.strip.apply(&mut t.buf, n);
                 for (s, d) in t.sends.iter_mut().zip(&mut delays.sends) {
                     let src = if s.pre_fader { &self.pre } else { &t.buf };
@@ -2080,12 +2176,16 @@ impl Plan {
             chain,
             prefetch,
             buf,
+            pad_routes,
             ..
         } = t;
+        for route in pad_routes.iter_mut() {
+            route.clear(n);
+        }
         let (left, right) = (&mut buf.l[..n], &mut buf.r[..n]);
         let Some(p) = prefetch.as_deref_mut() else {
             if let Some(c) = chain.as_mut() {
-                Self::render_chain(c, *live, left, right, pos);
+                Self::render_chain(c, *live, left, right, pos, Some(pad_routes));
             }
             return;
         };
@@ -2102,7 +2202,7 @@ impl Plan {
                     }
                 }
                 let Some(c) = chain.as_mut() else { return };
-                Self::render_chain(c, false, left, right, Some(pos));
+                Self::render_chain(c, false, left, right, Some(pos), Some(pad_routes));
                 // The disk streams of a clip fill between callbacks: they stay on this thread.
                 if c.timeline.streams().is_empty()
                     && let Some(c) = chain.take()
@@ -2116,7 +2216,7 @@ impl Plan {
                     *chain = Some(c);
                 }
                 if let Some(c) = chain.as_mut() {
-                    Self::render_chain(c, *live, left, right, pos);
+                    Self::render_chain(c, *live, left, right, pos, Some(pad_routes));
                 }
             }
         }
@@ -2130,6 +2230,7 @@ impl Plan {
         left: &mut [f32],
         right: &mut [f32],
         pos: Option<u64>,
+        pad_routes: Option<&mut [crate::processor::PadRoute]>,
     ) {
         left.fill(0.0);
         right.fill(0.0);
@@ -2149,6 +2250,8 @@ impl Plan {
                 left: &mut left[..n],
                 right: &mut right[..n],
                 key: None,
+                pad_routes,
+                route_owner: 0,
             },
             &c.events,
         );
@@ -2168,6 +2271,8 @@ impl Plan {
                     left: &mut left[..n],
                     right: &mut right[..n],
                     key: io_key,
+                    pad_routes: None,
+                    route_owner: 0,
                 },
                 &[],
             );
