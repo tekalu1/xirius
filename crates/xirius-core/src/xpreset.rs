@@ -500,6 +500,7 @@ mod tests {
 
     fn plugin(format: &str, uid: &str) -> Plugin {
         Plugin {
+            pad_outputs: Default::default(),
             samples: Vec::new(),
             id: PluginId(1),
             name: "EQ".into(),

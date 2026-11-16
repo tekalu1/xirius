@@ -37,6 +37,15 @@ pub(super) fn defs() -> Vec<CommandDef> {
                         .filter(|s| !s.trim().is_empty())
                         .ok_or_else(|| CmdError::invalid("file がありません"))?;
                     let t = p.track_mut(id)?;
+                    if t.inserts
+                        .iter()
+                        .any(|plugin| !plugin.pad_outputs.is_empty())
+                    {
+                        return Err(CmdError::invalid(format!(
+                            "「{}」はパッドをバスへ出力しているため、フリーズできません",
+                            t.name
+                        )));
+                    }
                     if !t.has_clips() {
                         return Err(CmdError::invalid(format!(
                             "「{}」はフリーズできません",

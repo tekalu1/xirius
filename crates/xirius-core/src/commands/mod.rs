@@ -59,6 +59,7 @@ mod note;
 mod note_source;
 mod note_value;
 pub(crate) mod overlap;
+mod pad_output;
 mod prefs;
 pub use prefs::{ALT_TOOLS, ROLL_ALT_TOOLS};
 mod draw_shape;
@@ -97,6 +98,7 @@ pub fn all() -> Vec<CommandDef> {
     v.extend(sidechain::defs());
     v.extend(note_source::defs());
     v.extend(samples::defs());
+    v.extend(pad_output::defs());
     v.extend(control::defs());
     v.extend(insert::defs());
     v.extend(group::defs());

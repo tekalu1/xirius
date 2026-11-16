@@ -493,6 +493,7 @@ fn replace_instrument(
 /// start at their defaults.
 fn plugin_of(dev: &PresetDevice, name: &str, id: PluginId) -> Plugin {
     let mut x = Plugin {
+        pad_outputs: Default::default(),
         samples: dev.samples.clone().unwrap_or_default(),
         id,
         name: dev.name.clone(),

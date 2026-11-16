@@ -4795,6 +4795,26 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
+## `plugin.pad_output.set`
+
+パッドの出力先を設定
+
+ドラムキットのパッドの出力先を Main、バス、または新しいバスに設定します。
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `active` | — | `{"type":"string"}` | 新しいバスの名前に使うパッド。省略時は最後のパッド |
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `id` | 必須 | `{"type":"string"}` | ドラムキット（plugin の ID） |
+| `pads` | 必須 | `{"items":{"type":"object"},"type":"array"}` | 出力先を変えるパッド [{pad}] |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `to` | 必須 | `{"type":"string"}` | Main、バスの ID、または new |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
 ## `plugin.param.list`
 
 パラメーターの一覧

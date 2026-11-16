@@ -179,6 +179,9 @@ pub struct Plugin {
     /// save's gathering reach them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub samples: Vec<String>,
+    /// Pad routes belong to this song. An absent pad plays through the kit track.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pad_outputs: BTreeMap<usize, TrackId>,
     /// Which process the plugin runs in (PLG-022).
     #[serde(default, skip_serializing_if = "PluginIsolation::is_default")]
     pub isolation: PluginIsolation,
@@ -1412,9 +1415,10 @@ impl Project {
                             && (t.output == Some(Output::Bus(b))
                                 || t.sends.iter().any(|s| s.to == b)
                                 || t.inserts.iter().any(|x| {
-                                    x.sidechain
-                                        .as_ref()
-                                        .is_some_and(|sc| sc.sources.iter().any(|s| s.track == b))
+                                    x.pad_outputs.values().any(|to| *to == b)
+                                        || x.sidechain.as_ref().is_some_and(|sc| {
+                                            sc.sources.iter().any(|s| s.track == b)
+                                        })
                                 }))
                     })
             };
@@ -1485,6 +1489,9 @@ impl Project {
             }
             for s in &t.sends {
                 e.push(s.to);
+            }
+            for x in &t.inserts {
+                e.extend(x.pad_outputs.values().copied());
             }
         }
         // A sidechain key is signal flow like a send (MIX-047): a channel's
@@ -1643,7 +1650,11 @@ impl Project {
         self.detach(Node::Track(id));
         self.tracks.remove(&id);
         for t in self.tracks.values_mut() {
-            let refs = t.output == Some(Output::Bus(id)) || t.sends.iter().any(|s| s.to == id);
+            let refs = t.output == Some(Output::Bus(id))
+                || t.sends.iter().any(|s| s.to == id)
+                || t.inserts
+                    .iter()
+                    .any(|x| x.pad_outputs.values().any(|to| *to == id));
             let notes = t
                 .inserts
                 .iter()
@@ -1659,6 +1670,7 @@ impl Project {
                     if x.note_source.is_some_and(|s| s.track == id) {
                         x.note_source = None;
                     }
+                    x.pad_outputs.retain(|_, to| *to != id);
                 }
                 if t.output == Some(Output::Bus(id)) {
                     t.output = Some(Output::Master);

@@ -174,7 +174,7 @@ pub fn kit_groups(names: &[String], layers: bool) -> Vec<KitGroup> {
 
 /// A file name's base and its layer: `kick_v2.wav` is (`kick`, velocity 2), `hat-rr1.wav`
 /// (`hat`, round robin 1).
-fn layer_of(name: &str) -> (String, Option<(bool, u32)>) {
+pub(super) fn layer_of(name: &str) -> (String, Option<(bool, u32)>) {
     let leaf = name.rsplit(['/', '\\']).next().unwrap_or(name);
     let stem = leaf.rsplit_once('.').map_or(leaf, |(s, _)| s);
     let Some(cut) = stem.rfind(['_', '-', ' ']) else {

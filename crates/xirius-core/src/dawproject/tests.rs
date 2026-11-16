@@ -44,6 +44,7 @@ fn tm(p: &mut Project, id: TrackId) -> &mut Track {
 fn builtin(p: &mut Project, uid: &str) -> Plugin {
     let def = xirius_params::find(uid).unwrap();
     Plugin {
+        pad_outputs: Default::default(),
         id: PluginId(p.alloc()),
         name: def.name.into(),
         kind: PluginKind::Effect,
@@ -718,6 +719,7 @@ fn what_a_dawproject_cannot_carry_is_listed_on_export() {
     {
         let t = tm(&mut p, keys);
         t.inserts.push(Plugin {
+            pad_outputs: Default::default(),
             id: pid,
             name: "Old Synth".into(),
             kind: PluginKind::Effect,
@@ -955,6 +957,7 @@ fn plugin(p: &mut Project, format: &str, uid: &str, name: &str, kind: PluginKind
         },
     };
     Plugin {
+        pad_outputs: Default::default(),
         id: PluginId(p.alloc()),
         name: name.into(),
         kind,

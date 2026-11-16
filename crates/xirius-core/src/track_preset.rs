@@ -539,6 +539,7 @@ pub(crate) fn parse_plugin(n: usize, v: &Value, rows: &mut Vec<Adjust>) -> Optio
         }
     };
     Some(Plugin {
+        pad_outputs: Default::default(),
         samples,
         id: PluginId(0),
         name,
@@ -635,6 +636,7 @@ mod tests {
     #[test]
     fn a_plugins_samples_round_trip_through_a_preset() {
         let x = Plugin {
+            pad_outputs: Default::default(),
             id: PluginId(0),
             name: "Sampler".into(),
             kind: PluginKind::Instrument,

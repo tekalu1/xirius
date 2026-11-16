@@ -267,6 +267,7 @@ impl Chain {
             x.id = PluginId(devices.len() as u64 + 1);
             x.sidechain = None;
             x.note_source = None;
+            x.pad_outputs.clear();
             plugins.insert(id, x.id);
             devices.push(x);
         }
