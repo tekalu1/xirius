@@ -97,6 +97,11 @@ cleanup・グルーヴ・通知・外部監視・クラッシュ記録・更新�
 再確認し、この表と注釈を直してから集計を取り直す。Rust 全体の型付き呼び出しグラフを
 証明するものではないため、実入口のゲートと共通ヘルパーの実行拒否も併用する。
 
+UI-359 のノート送信元では、機器のタイトルバーの入切が `instrument/window.rs` から
+`plugin.note_source.enable` を 1 回呼び、送信元の一覧が `mixer/keys.rs` から
+`plugin.note_source.set` / `remove` を 1 回呼ぶ。どちらも既存の `run_command` による
+所有者への委譲であり、画面の描画中には呼ばない。この 2 箇所の増分を集計に反映した。
+
 | 入口からの経路 | 再監査で確認・修正した境界 | 固定した競合・継続 |
 |---|---|---|
 | `ai_job` → Session / SessionExt → places | 全 MCP コマンドの実行は所有者へ渡す。通常 UI の places 7 コマンドも分類する | read/write を止めた実 MCP 入口。Browser 保存との両順序、同じ項目の変更と別項目の差分統合 |
