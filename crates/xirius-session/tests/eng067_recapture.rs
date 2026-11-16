@@ -13,6 +13,9 @@ use xirius_engine::server::{PluginLink, PluginServer, find_host};
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{host::HostConfig, host::SessionHost, plugins::Isolation};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 /// How long the test plugin takes to be made, so a new mix stays pending a while.
 const OPEN: Duration = Duration::from_millis(900);
 const PID: PluginId = PluginId(1);
@@ -65,6 +68,7 @@ fn playing(server: &PluginServer, link: &PluginLink) -> (u32, u32) {
 
 #[test]
 fn the_state_the_old_window_leaves_when_it_closes_is_not_the_new_instances() {
+    let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("opening in hosts needs the plugin host binary");
         return;

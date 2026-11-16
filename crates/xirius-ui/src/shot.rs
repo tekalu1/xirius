@@ -163,10 +163,10 @@ pub(crate) fn fixture_run_id() -> &'static str {
     })
 }
 
-/// The crash records of the plugin hosts a test takes down on purpose, in a folder of the
-/// test's own instead of the person's `Crashes` (`XIRIUS_CRASH_DIR`, read by each host as it
-/// starts). Made before the test starts a host; removed when dropped, once the hosts still
-/// closing have let go of their own records.
+/// The crash records of the plugin hosts a test starts, in a folder of the test's own instead
+/// of the person's `Crashes` (`XIRIUS_CRASH_DIR`, read by each host as it starts): a host makes
+/// its records whether it goes down or not. Made before the test starts a thread or a host;
+/// removed when dropped, once the hosts still closing have let go of their own records.
 #[cfg(test)]
 pub(crate) struct CrashRecords(std::path::PathBuf);
 

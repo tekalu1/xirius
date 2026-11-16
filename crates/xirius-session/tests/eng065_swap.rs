@@ -11,6 +11,9 @@ use xirius_engine::server::find_host;
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{host::HostConfig, host::SessionHost, plugins::Isolation};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 /// How long the test plugin takes to be made (in each host).
 const OPEN: Duration = Duration::from_millis(900);
 
@@ -37,6 +40,7 @@ fn track(i: u64, uid: &str) -> Arc<Track> {
 
 #[test]
 fn a_new_mix_is_built_without_holding_the_caller_and_swapped_in_when_ready() {
+    let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("opening in hosts needs the plugin host binary");
         return;

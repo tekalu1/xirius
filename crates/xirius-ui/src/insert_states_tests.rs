@@ -160,6 +160,7 @@ impl Hold {
 
 #[test]
 fn a_drag_carries_what_the_plugin_holds_now_and_an_undo_brings_back_what_it_replaced() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,
@@ -231,6 +232,7 @@ fn a_copy_from_plugins_in_this_process_leaves_the_song_too() {
 }
 
 fn copy_leaves_the_song(mode: &str) {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,
@@ -275,6 +277,7 @@ fn copy_leaves_the_song(mode: &str) {
 
 #[test]
 fn a_paste_that_would_be_refused_asks_nothing_and_leaves_no_step() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s, vocal, from, ..
     } = song("dedicated");
@@ -301,6 +304,7 @@ fn a_paste_that_would_be_refused_asks_nothing_and_leaves_no_step() {
 
 #[test]
 fn closing_the_window_puts_a_waiting_paste_in_before_asking_to_save() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,
@@ -325,6 +329,7 @@ fn closing_the_window_puts_a_waiting_paste_in_before_asking_to_save() {
 
 #[test]
 fn a_paste_waiting_when_the_song_is_replaced_does_not_run_in_the_next_one() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,
@@ -345,6 +350,7 @@ fn a_paste_waiting_when_the_song_is_replaced_does_not_run_in_the_next_one() {
 
 #[test]
 fn ctrl_c_on_the_heading_copies_what_the_plugin_holds_now() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,
@@ -377,6 +383,7 @@ fn ctrl_c_on_the_heading_copies_what_the_plugin_holds_now() {
 
 #[test]
 fn a_wait_cut_short_still_reads_the_plugins_in_this_process() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,
@@ -468,6 +475,7 @@ fn has_track(s: &Studio, name: &str) -> bool {
 
 #[test]
 fn a_macro_copies_what_the_plugin_holds_now_before_its_next_step() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,
@@ -505,6 +513,7 @@ fn a_macro_copies_what_the_plugin_holds_now_before_its_next_step() {
 
 #[test]
 fn a_macro_pastes_what_the_plugin_holds_now_before_its_next_step() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,
@@ -553,6 +562,7 @@ fn a_macro_pastes_what_the_plugin_holds_now_before_its_next_step() {
 
 #[test]
 fn a_macro_paste_that_cannot_run_after_its_wait_is_said_and_stops_the_macro() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,
@@ -587,6 +597,7 @@ fn a_macro_paste_that_cannot_run_after_its_wait_is_said_and_stops_the_macro() {
 
 #[test]
 fn input_held_for_a_paste_whose_song_is_replaced_is_dropped_with_it() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,
@@ -611,6 +622,7 @@ fn input_held_for_a_paste_whose_song_is_replaced_is_dropped_with_it() {
 
 #[test]
 fn leaving_for_a_new_song_puts_a_waiting_paste_in_this_one_first() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,
@@ -644,6 +656,7 @@ fn leaving_for_a_new_song_puts_a_waiting_paste_in_this_one_first() {
 /// while a macro waits for its paste must not end the macro's undo step.
 #[test]
 fn a_macro_stays_one_undo_step_while_the_screen_reads_presets_during_its_wait() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,

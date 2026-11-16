@@ -147,6 +147,7 @@ fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
 
 #[test]
 fn the_first_press_after_later_does_not_stall_the_window_and_the_held_key_sounds_when_it_is_in() {
+    let _records = crate::shot::CrashRecords::new();
     let slow = Slow::on();
     let (mut s, keys, _) = song(&slow);
     later(&mut s, &slow);
@@ -177,6 +178,7 @@ fn the_first_press_after_later_does_not_stall_the_window_and_the_held_key_sounds
 
 #[test]
 fn a_key_let_go_of_before_its_instrument_is_in_never_sounds() {
+    let _records = crate::shot::CrashRecords::new();
     let slow = Slow::on();
     let (mut s, keys, _) = song(&slow);
     later(&mut s, &slow);
@@ -205,6 +207,7 @@ fn a_key_let_go_of_before_its_instrument_is_in_never_sounds() {
 
 #[test]
 fn a_pc_key_waits_for_its_instrument_the_same_way() {
+    let _records = crate::shot::CrashRecords::new();
     let slow = Slow::on();
     let (mut s, keys, _) = song(&slow);
     later(&mut s, &slow);
@@ -260,6 +263,7 @@ fn playing(s: &mut Studio, keys: TrackId, slow: &Slow) {
 
 #[test]
 fn a_swap_shows_the_spinner_and_playback_goes_on() {
+    let _records = crate::shot::CrashRecords::new();
     let slow = Slow::on();
     let (mut s, keys, id) = song(&slow);
     later(&mut s, &slow);
@@ -331,6 +335,7 @@ fn a_swap_shows_the_spinner_and_playback_goes_on() {
 
 #[test]
 fn a_key_gives_up_after_the_wait_when_the_swap_does_not_come() {
+    let _records = crate::shot::CrashRecords::new();
     let slow = Slow::on();
     let (mut s, keys, id) = song(&slow);
     later(&mut s, &slow);
@@ -370,6 +375,7 @@ fn a_key_gives_up_after_the_wait_when_the_swap_does_not_come() {
 /// host here.)
 #[test]
 fn a_plugin_is_answered_for_once_its_host_has_opened_it() {
+    let _records = crate::shot::CrashRecords::new();
     let slow = Slow::on();
     let (mut s, keys, id) = song(&slow);
     later(&mut s, &slow);

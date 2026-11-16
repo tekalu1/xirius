@@ -10,8 +10,12 @@ use xirius_engine::server::find_host;
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{host::HostConfig, plugins::Isolation, starting::Starting};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 #[test]
 fn a_plug_in_in_a_host_tells_the_steps_of_its_switch() {
+    let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("opening in hosts needs the plugin host binary");
         return;

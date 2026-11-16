@@ -10,6 +10,9 @@ use xirius_engine::server::{PluginLink, PluginServer, find_host};
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{host::HostConfig, host::SessionHost, plugins::Isolation};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 /// How long the test plugin takes to be made, so a new mix stays pending a while.
 const OPEN: Duration = Duration::from_millis(900);
 const PID: PluginId = PluginId(1);
@@ -64,6 +67,7 @@ fn answered(link: &PluginLink, answers: u64) {
 
 #[test]
 fn a_new_instance_that_cannot_be_opened_leaves_the_one_heard_as_it_is() {
+    let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("opening in hosts needs the plugin host binary");
         return;

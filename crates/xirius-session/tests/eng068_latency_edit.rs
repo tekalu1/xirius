@@ -21,6 +21,9 @@ use xirius_session::commands::{self, shared_registry};
 use xirius_session::host::{HostConfig, SessionHost, collect_plugin_states};
 use xirius_session::plugins::Isolation;
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 fn run(s: &mut Session, name: &str, args: Value) -> RunResult {
     let Value::Object(raw) = args else {
         unreachable!()
@@ -51,17 +54,20 @@ fn delay(server: &PluginServer, link: &PluginLink) -> u32 {
 
 #[test]
 fn a_latency_moved_in_the_window_is_compensated_when_the_edit_is_taken_at_once() {
+    let _records = CrashRecords::new();
     move_in_window(None, false);
 }
 
 #[test]
 fn the_new_instance_has_the_value_moved_in_the_window_over_the_one_the_song_had() {
+    let _records = CrashRecords::new();
     // The song opens it with delay 192; the window moves it to 128.
     move_in_window(Some(0.75), false);
 }
 
 #[test]
 fn the_windowed_owner_rebuilds_with_the_latency_moved_in_the_editor() {
+    let _records = CrashRecords::new();
     move_in_window(Some(0.75), true);
 }
 

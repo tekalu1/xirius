@@ -75,6 +75,7 @@ mod tests {
     use crate::mixer::MixerHit;
     #[test]
     fn a_real_fixture_exit_opens_only_the_name_and_two_actions_from_its_insert_row() {
+        let _records = crate::shot::CrashRecords::new();
         let mut s = Studio::sample();
         crate::plugin_reload_shots::prepare(&mut s, 0);
         assert!(s.toggle_play());

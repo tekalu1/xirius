@@ -9,6 +9,9 @@ use xirius_engine::server::{PluginLink, PluginServer, RemotePlugin, RemoteSpec};
 use xirius_engine::wire::PROTOCOL;
 use xirius_engine::{ProcessSetup, Processor, RenderMode};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 const SWITCH: &str = "XIRIUS_PLUGIN_HOST_PROTOCOL";
 
 fn server() -> PluginServer {
@@ -47,6 +50,7 @@ fn open_error(server: &PluginServer) -> Option<String> {
 
 #[test]
 fn a_host_of_another_version_is_refused_with_a_clear_error() {
+    let _records = CrashRecords::new();
     claim(None);
     server().start().expect("the host of this build");
 

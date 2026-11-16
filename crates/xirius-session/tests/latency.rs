@@ -16,8 +16,12 @@ use xirius_session::{
     plugins::Isolation,
 };
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 #[test]
 fn a_latency_notification_rebuilds_pdc_while_the_transport_keeps_playing() {
+    let _records = CrashRecords::new();
     xirius_test_vst3::fixture_marker();
     let deps = std::env::current_exe()
         .unwrap()

@@ -76,6 +76,7 @@ mod tests {
 
     #[test]
     fn the_fixture_exits_from_its_processor_and_reload_restores_shared_and_dedicated_instances() {
+        let _records = crate::shot::CrashRecords::new();
         for shared in [true, false] {
             let mut s = Studio::sample();
             if shared {

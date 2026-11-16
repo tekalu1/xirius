@@ -10,6 +10,9 @@ use xirius_engine::server::{PluginLink, PluginServer, find_host};
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{host::HostConfig, host::SessionHost, plugins::Isolation};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 /// How long the test plugin takes to be made, so a new mix stays pending a while.
 const OPEN: Duration = Duration::from_millis(900);
 /// The test plugin's parameter that sets its delay (0..1 is 0..256 samples).
@@ -96,6 +99,7 @@ fn expect_state(server: &PluginServer, link: &PluginLink, want: (u32, u32)) {
 
 #[test]
 fn a_value_put_into_the_playing_plugin_while_a_new_mix_opens_stays_and_goes_on_to_the_new_one() {
+    let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("opening in hosts needs the plugin host binary");
         return;

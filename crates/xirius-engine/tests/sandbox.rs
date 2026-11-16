@@ -26,6 +26,9 @@ use xirius_engine::{
 };
 use xirius_vst3::{Module, Plugin, default_vst3_dir};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 const RATE: f64 = 48_000.0;
 const BLOCK: usize = 256;
 /// `L` in real time.
@@ -49,36 +52,6 @@ fn installed(name: &str) -> Option<PathBuf> {
     } else {
         eprintln!("skipped: {} is not installed", p.display());
         None
-    }
-}
-
-/// A folder for the crash records of the hosts a test takes down on purpose (`XIRIUS_CRASH_DIR`,
-/// read by each host as it starts), instead of the person's `Crashes`. Removed when dropped, once
-/// the hosts still closing have let go of their own records.
-struct CrashRecords(tempfile::TempDir);
-
-impl CrashRecords {
-    fn new() -> CrashRecords {
-        let dir = tempfile::Builder::new()
-            .prefix("xirius-crash-records-")
-            .tempdir()
-            .unwrap();
-        // SAFETY: nextest runs each test in a process of its own (docs/testing.md), and this is
-        // set before the test starts a thread.
-        unsafe { std::env::set_var("XIRIUS_CRASH_DIR", dir.path()) };
-        CrashRecords(dir)
-    }
-}
-
-impl Drop for CrashRecords {
-    fn drop(&mut self) {
-        let end = Instant::now() + Duration::from_secs(10);
-        while std::fs::remove_dir_all(self.0.path()).is_err()
-            && self.0.path().exists()
-            && Instant::now() < end
-        {
-            std::thread::sleep(Duration::from_millis(50));
-        }
     }
 }
 
@@ -122,6 +95,7 @@ fn local(bundle: &Path, params: &[(u32, f64)]) -> Vst3Processor {
 
 #[test]
 fn automation_sent_before_a_block_matches_the_same_process() {
+    let _records = CrashRecords::new();
     let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
         return;
     };
@@ -175,6 +149,7 @@ fn automation_sent_before_a_block_matches_the_same_process() {
 
 #[test]
 fn automation_keeps_its_offsets_inside_the_input_block() {
+    let _records = CrashRecords::new();
     use xirius_vst3::ParamChange;
     let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
         return;
@@ -384,6 +359,7 @@ fn assert_continuous(x: &[f32], from: usize) {
 
 #[test]
 fn offline_the_remote_plugin_matches_the_plugin_in_process_faster_than_real_time() {
+    let _records = CrashRecords::new();
     let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
         return;
     };
@@ -440,6 +416,7 @@ fn offline_the_remote_plugin_matches_the_plugin_in_process_faster_than_real_time
 /// sample: the same sine with the opposite sign through the plugin in-process cancels it.
 #[test]
 fn delay_compensation_lines_the_remote_plugin_up_to_the_sample() {
+    let _records = CrashRecords::new();
     let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
         return;
     };
@@ -526,6 +503,7 @@ fn offline_a_crash_leaves_the_dry_signal_playing() {
 /// dry, and a restart brings the edited state back. In real time it is played at the pace of a
 /// device, which a busy machine cannot keep up with: that one runs with `--ignored`.
 fn a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_back(mode: RenderMode) {
+    let _records = CrashRecords::new();
     let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
         return;
     };
@@ -639,6 +617,7 @@ fn in_real_time_a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_bac
 
 #[test]
 fn a_hung_host_is_killed_and_bypassed() {
+    let _records = CrashRecords::new();
     let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
         return;
     };
@@ -694,6 +673,7 @@ fn a_host_that_goes_down_is_put_on_the_plugin_that_took_it_down() {
 
 #[test]
 fn a_plugin_that_cannot_load_is_bypassed() {
+    let _records = CrashRecords::new();
     let server = server();
     let (plugin, link) = remote(&server, "C:/nowhere/missing.vst3".into(), &[]);
     let (mut audio, latency) = engine_for(
@@ -711,6 +691,7 @@ fn a_plugin_that_cannot_load_is_bypassed() {
 
 #[test]
 fn a_state_set_by_the_song_is_not_reported_back() {
+    let _records = CrashRecords::new();
     let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
         return;
     };
@@ -745,6 +726,7 @@ fn a_state_set_by_the_song_is_not_reported_back() {
 /// same plugin's in-process one.
 #[test]
 fn a_remote_instrument_plays_its_notes_on_the_frame() {
+    let _records = CrashRecords::new();
     let Some(bundle) = installed("Vital.vst3") else {
         return;
     };

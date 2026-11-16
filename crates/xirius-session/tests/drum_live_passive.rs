@@ -10,6 +10,9 @@ use xirius_session::{
     plugins::Isolation,
 };
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 fn run(s: &mut Session, name: &str, args: Value) -> Value {
     commands::run(
         s,
@@ -163,6 +166,7 @@ fn check(other_capture: bool) {
 
 #[test]
 fn retained_editor_mailbox_survives_empty_and_selective_graph_capture() {
+    let _records = CrashRecords::new();
     xirius_test_vst3::fixture_marker();
     for other_capture in [false, true] {
         std::thread::spawn(move || check(other_capture))

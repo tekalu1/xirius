@@ -12,6 +12,9 @@ use xirius_engine::server::find_host;
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{host::HostConfig, plugins::Isolation, starting::Starting};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 /// A private factory gate keeps even the bad class unanswered until the caller returns.
 struct Held(std::path::PathBuf);
 impl Drop for Held {
@@ -41,6 +44,7 @@ fn plugin(id: u64, uid: &str) -> Plugin {
 
 #[test]
 fn the_player_does_not_wait_for_the_hosts_and_what_they_say_comes_later() {
+    let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("opening in hosts needs the plugin host binary");
         return;

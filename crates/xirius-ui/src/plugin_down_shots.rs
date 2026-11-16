@@ -112,6 +112,7 @@ mod tests {
 
     #[test]
     fn a_plugin_that_went_down_leaves_the_song_playing_and_editable_without_a_word() {
+        let _records = crate::shot::CrashRecords::new();
         let mut s = Studio::sample();
         crate::plugin_reload_shots::prepare(&mut s, 0);
         assert!(s.toggle_play());

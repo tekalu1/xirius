@@ -21,6 +21,9 @@ use xirius_session::host::{
 };
 use xirius_session::plugins::Isolation;
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 /// "Latency" 0.5 is a delay of 128, which the fixture saves as 4 little-endian bytes.
 const EDITED: [u8; 4] = 128u32.to_le_bytes();
 
@@ -50,6 +53,7 @@ fn state_of(s: &Session) -> Option<Vec<u8>> {
 #[cfg(feature = "test-io")]
 #[test]
 fn graph_and_save_captures_complete_independently_when_a_third_request_is_cancelled() {
+    let _records = CrashRecords::new();
     use std::sync::{Condvar, Mutex, mpsc};
     struct Release(Arc<(Mutex<bool>, Condvar)>);
     impl Drop for Release {
@@ -277,6 +281,7 @@ fn a_silent_patch_change_in_a_plugin_in_the_app_reaches_the_song_when_it_is_aske
 
 #[test]
 fn a_silent_patch_change_in_a_plugin_in_the_host_process_reaches_the_song_when_it_is_asked() {
+    let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("skipped: xirius-plugin-host is not built");
         return;
@@ -286,6 +291,7 @@ fn a_silent_patch_change_in_a_plugin_in_the_host_process_reaches_the_song_when_i
 
 #[test]
 fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
+    let _records = CrashRecords::new();
     let exe = find_host().expect("build xirius-plugin-host for the remote regression");
     let (mut s, catalog) = song(PluginIsolation::Shared);
     let track = s
@@ -432,6 +438,7 @@ fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
 
 #[test]
 fn a_plugin_that_was_never_created_keeps_its_saved_state_after_silent_continuation() {
+    let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("skipped: xirius-plugin-host is not built");
         return;

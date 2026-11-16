@@ -22,6 +22,9 @@ use xirius_session::host::{HostConfig, SessionHost, collect_plugin_states};
 use xirius_session::plugins::Isolation;
 use xirius_vst3::PluginState;
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 const GUARD: Duration = Duration::from_secs(60);
 const PLUGIN: PluginId = PluginId(500);
 const TRACK: TrackId = TrackId(100);
@@ -165,6 +168,7 @@ fn settles_at(host: &mut SessionHost, audio: &mut AudioEngine, level: f32) {
 
 #[test]
 fn a_clap_plugin_plays_with_its_state_and_an_edit_comes_into_the_song() {
+    let _records = CrashRecords::new();
     let (_dir, clap, wav) = files("session_clap");
     let entries = probe(&clap).unwrap();
     assert_eq!(entries.len(), 1);
@@ -238,6 +242,7 @@ fn kick(host: &SessionHost) -> Option<String> {
 
 #[test]
 fn edt_134_the_names_a_clap_plugin_gives_its_keys_reach_the_loader_and_follow_its_state() {
+    let _records = CrashRecords::new();
     let (_dir, clap, wav) = files("session_clap_names");
     let catalog = Arc::new(Catalog {
         entries: probe(&clap).unwrap(),

@@ -264,6 +264,7 @@ mod tests {
     use crate::mixer::MixerHit;
     #[test]
     fn native_text_stays_in_the_editor_and_frame_space_toggles_local_and_host_playback() {
+        let _records = crate::shot::CrashRecords::new();
         for mode in [0, 1] {
             let mut s = Studio::sample();
             stage(&mut s, mode);

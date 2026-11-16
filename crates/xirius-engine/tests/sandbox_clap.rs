@@ -13,6 +13,9 @@ use xirius_engine::server::{
 };
 use xirius_engine::{AudioEngine, MixSpec, Plan, ProcessSetup, RenderMode, TrackSlot, TrackSpec};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 const RATE: f64 = 48_000.0;
 const BLOCK: usize = 256;
 const SINE_RMS: f64 = 0.353_553;
@@ -130,6 +133,7 @@ fn level(rms: f64) -> f64 {
 
 #[test]
 fn a_clap_plugin_plays_in_the_host_with_its_parameters() {
+    let _records = CrashRecords::new();
     let server = PluginServer::new(Some(env!("CARGO_BIN_EXE_xirius-plugin-host").into()));
     let (plugin, link) = remote(&server, bundle("params"), &[("Gain", 0.5)]);
     let (mut audio, latency) = engine_for(plugin);
@@ -145,6 +149,7 @@ fn a_clap_plugin_plays_in_the_host_with_its_parameters() {
 
 #[test]
 fn an_edit_in_a_clap_plugin_comes_back_with_its_state_after_a_restart() {
+    let _records = CrashRecords::new();
     let server = PluginServer::new(Some(env!("CARGO_BIN_EXE_xirius-plugin-host").into()));
     let (plugin, link) = remote(&server, bundle("state"), &[]);
     let (mut audio, _) = engine_for(plugin);

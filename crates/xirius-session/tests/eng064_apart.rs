@@ -10,12 +10,16 @@ use xirius_engine::server::find_host;
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{host::HostConfig, plugins::Isolation, starting::Starting};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 /// How long the test plugin takes to be made (in each host).
 const OPEN: Duration = Duration::from_millis(700);
 const PLUGINS: u64 = 4;
 
 #[test]
 fn plugins_in_hosts_of_their_own_open_at_once() {
+    let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("opening in hosts needs the plugin host binary");
         return;

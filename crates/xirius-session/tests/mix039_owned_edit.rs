@@ -17,6 +17,9 @@ use xirius_session::commands::{self, shared_registry};
 use xirius_session::host::{HostConfig, SessionHost, collect_plugin_states};
 use xirius_session::plugins::Isolation;
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 fn run(s: &mut Session, name: &str, args: Value) -> RunResult {
     let Value::Object(raw) = args else {
         unreachable!()
@@ -47,6 +50,7 @@ fn delay(server: &PluginServer, link: &PluginLink) -> u32 {
 
 #[test]
 fn a_value_a_macro_holds_moved_in_the_window_goes_back_to_the_macro_in_the_plugin() {
+    let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("opening in hosts needs the plugin host binary");
         return;

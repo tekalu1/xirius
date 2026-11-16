@@ -93,6 +93,7 @@ mod tests {
 
     #[test]
     fn restart_restores_the_live_fixture_value_and_remove_empties_the_slot_in_one_undo() {
+        let _records = crate::shot::CrashRecords::new();
         let mut s = Studio::sample();
         crate::plugin_reload_shots::prepare(&mut s, 0);
         assert!(s.toggle_play());

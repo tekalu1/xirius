@@ -24,6 +24,9 @@ use xirius_plugins::{Catalog, probe};
 use xirius_session::host::{HostConfig, SessionHost, SyncReport};
 use xirius_session::plugins::Isolation;
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 /// How long the test plugin takes to be made, so a new mix stays pending a while.
 const OPEN: Duration = Duration::from_millis(900);
 const PID: PluginId = PluginId(1);
@@ -202,6 +205,7 @@ fn close_window(hwnd: isize) {
 
 #[test]
 fn a_plugin_moved_between_processes_is_the_one_that_plays_until_the_new_mix_does() {
+    let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("opening in hosts needs the plugin host binary");
         return;

@@ -16,8 +16,12 @@ use xirius_session::{
     plugins::Isolation,
 };
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 #[test]
 fn a_plugin_in_its_own_process_reads_as_the_time_it_took_there() {
+    let _records = CrashRecords::new();
     xirius_test_vst3::fixture_marker();
     let deps = std::env::current_exe()
         .unwrap()
