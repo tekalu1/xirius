@@ -443,14 +443,39 @@ impl Drop for Audition {
         let _ = self.tx.send(Msg::Close);
         let _ = self.voice.send(Call::Close);
         // The lead owns at most three readers. It reaps them after uncancellable OS
-        // calls return; closing a window never waits for those calls.
+        // calls return; closing a window never waits for those calls (a test can,
+        // `wait_closed`).
         if !self.threads.is_empty() {
-            drop(self.threads.remove(0));
+            let lead = self.threads.remove(0);
+            #[cfg(any(test, feature = "test-io"))]
+            lock(&CLOSED).push((std::thread::current().id(), lead));
+            #[cfg(not(any(test, feature = "test-io")))]
+            drop(lead);
         }
         for t in self.threads.drain(..) {
             let _ = t.join();
         }
     }
+}
+
+/// The leads of the players closed, with the thread that closed each, for [`wait_closed`].
+#[cfg(any(test, feature = "test-io"))]
+static CLOSED: Mutex<Vec<(std::thread::ThreadId, JoinHandle<()>)>> = Mutex::new(Vec::new());
+
+/// Waits (at most `wait`) for the readers of the players this thread closed to end: they keep
+/// the peaks of the files they read, and a test removes the folder of those only after them.
+#[cfg(any(test, feature = "test-io"))]
+pub fn wait_closed(wait: Duration) {
+    let me = std::thread::current().id();
+    let end = Instant::now() + wait;
+    while lock(&CLOSED)
+        .iter()
+        .any(|(by, lead)| *by == me && !lead.is_finished())
+        && Instant::now() < end
+    {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    lock(&CLOSED).retain(|(by, lead)| *by != me && !lead.is_finished());
 }
 
 // ---- the lead: the asks, the readers and what is kept --------------------------------------

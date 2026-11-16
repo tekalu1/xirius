@@ -392,16 +392,29 @@ fn review_shared_preview_releases_before_exclusive_output_opens() {
     }
 }
 
-/// A place of WAV and MIDI files in a folder of the test's own, which goes when the guard is
-/// dropped (also when the test fails).
-fn place(name: &str) -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::Builder::new()
-        .prefix(&format!("xirius-ui-audition-{name}-"))
-        .tempdir()
-        .unwrap();
-    let top = dir.path().join("素材");
+/// A place of WAV and MIDI files in a folder of the test's own ([`folder`]).
+fn place(name: &str) -> (Folder, PathBuf) {
+    let dir = folder(name);
+    let top = dir.0.path().join("素材");
     crate::import_shots::make_place(&top);
     (dir, top)
+}
+
+/// A folder of the test's own, which goes when the guard is dropped (also when the test fails):
+/// the player is closed first, and the folder goes once its readers, which keep the peaks of
+/// the files they read, have ended.
+fn folder(name: &str) -> Folder {
+    Folder(crate::shot::TestFolder::new(&format!(
+        "xirius-ui-audition-{name}-"
+    )))
+}
+
+struct Folder(crate::shot::TestFolder);
+
+impl Drop for Folder {
+    fn drop(&mut self) {
+        close();
+    }
 }
 
 /// How long a wait for the player may take before the test gives up: far over what it needs,
@@ -619,11 +632,8 @@ fn pressing_the_row_hands_the_file_over_without_waiting_for_the_look() {
 
 #[test]
 fn the_rows_next_to_the_chosen_one_are_read_ahead() {
-    let dir = tempfile::Builder::new()
-        .prefix("xirius-ui-audition-ahead-")
-        .tempdir()
-        .unwrap();
-    let top = dir.path().join("並び");
+    let dir = folder("ahead");
+    let top = dir.0.path().join("並び");
     let tone: Vec<f32> = (0..4800).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
     let names = ["a", "b", "c", "d", "e", "f", "g"];
     for n in names {
