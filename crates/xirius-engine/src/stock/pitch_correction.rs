@@ -1,6 +1,6 @@
 //! Real-time monophonic pitch correction (PLG-076).
 //!
-//! Algorithms implemented from the papers, with no implementation code copied:
+//! References:
 //! A. de Cheveigné and H. Kawahara, "YIN, a fundamental frequency estimator for
 //! speech and music", Journal of the Acoustical Society of America 111(4),
 //! 1917–1930 (2002), DOI 10.1121/1.1458024.
@@ -189,8 +189,7 @@ impl PitchCorrection {
             }
         }
         let mut lag = chosen?;
-        // An octave candidate with substantially better periodicity is a detection
-        // correction. It never changes the target-note boundaries.
+        // An octave candidate with substantially better periodicity corrects detection.
         let twice = lag * 2;
         if twice <= max_lag && self.diff[twice] < self.diff[lag] * 0.65 {
             lag = twice;
