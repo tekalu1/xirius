@@ -242,7 +242,7 @@ mod menu_io_tests {
 
     #[test]
     fn a_scan_running_when_a_song_is_opened_goes_on_and_nothing_fails() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-scan-opened-");
         let song = root.path().join("song");
         crate::song::Song::empty().save_as(&song).unwrap();
         let mut s = windowed(root.path());
@@ -279,7 +279,7 @@ mod menu_io_tests {
 
     #[test]
     fn a_scan_running_through_one_song_after_another_goes_on_and_nothing_fails() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-scan-songs-");
         let song = root.path().join("song");
         crate::song::Song::empty().save_as(&song).unwrap();
         let (mut s, first) = scanning(root.path());
@@ -305,7 +305,7 @@ mod menu_io_tests {
     /// scan ends with the list as it was: not asked again over the one let go.
     #[test]
     fn a_scan_whose_job_went_with_the_song_ends_and_nothing_fails() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-scan-lost-job-");
         let (mut s, _) = scanning(root.path());
         s.new_song_sync();
         s.poll_plugin_scan();
@@ -320,6 +320,12 @@ mod menu_io_tests {
         assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert!(s.mixer.catalog.is_some());
+        // The scan let go of still writes its list into the folder as it ends (with no plugin
+        // folders, always): it is in place, and nothing more is written, before the folder goes.
+        while !root.path().join("catalog.json").exists() {
+            assert!(Instant::now() < deadline, "the scan never wrote its list");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[test]
