@@ -1458,18 +1458,22 @@ fn plugin_row(
     // The gauge takes the place before the close; the name is cut short of it.
     let heavy = s.perf.heavy.is_heavy(p.id) && !frozen && !p.deactivated;
     let mut name = name_part(row, l, chip.is_some(), level, heavy, mute);
-    let key_mark = keyed.map(|on| {
-        let mut end = lp.right();
-        if level > 0.0 {
-            end -= level + CHIP_GAP;
-        }
-        if mute {
-            end = end.min(mute_part(row, l).x - SUB_PAD);
-        }
-        let r = key_mark_part(row, end);
-        name.w = name.w.min((r.x - CHIP_GAP - name.x).max(0.0));
-        (r, on)
-    });
+    let note_mark = p.note_source.as_ref().map(|s| s.on);
+    let key_mark = keyed
+        .map(|on| (on, false))
+        .or_else(|| note_mark.map(|on| (on, true)))
+        .map(|(on, notes)| {
+            let mut end = lp.right();
+            if level > 0.0 {
+                end -= level + CHIP_GAP;
+            }
+            if mute {
+                end = end.min(mute_part(row, l).x - SUB_PAD);
+            }
+            let r = key_mark_part(row, end);
+            name.w = name.w.min((r.x - CHIP_GAP - name.x).max(0.0));
+            (r, on, notes)
+        });
     // The blue of an open plug-in falls under 4.5:1 on the ping's tint (light theme): while
     // the row is pinged its name is strong (UI-309).
     let off = p.bypass || p.deactivated;
@@ -1551,11 +1555,11 @@ fn plugin_row(
             locked,
         );
     }
-    if let Some((r, on)) = key_mark {
+    if let Some((r, on, notes)) = key_mark {
         let ink = if chosen {
             c.primary.1
         } else if on {
-            c.ink_mark
+            if notes { c.ink_ai } else { c.ink_mark }
         } else {
             c.ink
         };

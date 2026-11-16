@@ -278,6 +278,7 @@ fn paint_strip(
         pen.icon("send", section_icon(list_row(list, 0)), c.ink);
         let off = studio.mixer.offset(t, List::Sends);
         let keyed = super::keys::key_sends(p, t);
+        let notes = super::keys::note_sends(p, t);
         let lit = studio.mixer_partners();
         for i in 0..s.rows.sends {
             let k = off + i;
@@ -324,7 +325,26 @@ fn paint_strip(
                     level,
                     (hot, lit.sends.contains(&(t, key.id)), keys),
                 );
-            } else if k == track.sends.len() + keyed.len() {
+            } else if let Some((owner, _, on)) = k
+                .checked_sub(track.sends.len() + keyed.len())
+                .and_then(|j| notes.get(j))
+            {
+                pen.round(row, c.surface_2, Radius::S);
+                let (mark, _, nm, _) = super::keys::key_parts(row);
+                pen.icon("sc", mark, if *on { c.ink_ai } else { c.ink });
+                if let Some(receiver) = p.tracks.get(owner) {
+                    pen.mask(nm, |pen| {
+                        pen.text(
+                            receiver.shown_name(),
+                            FontSize::Caption,
+                            Weight::Regular,
+                            c.ink_strong,
+                            nm,
+                            Align::Left,
+                        );
+                    });
+                }
+            } else if k == track.sends.len() + keyed.len() + notes.len() {
                 add_row(pen, row, hover == Some(MixerHit::AddSend(t)));
             }
         }

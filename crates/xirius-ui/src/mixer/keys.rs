@@ -60,6 +60,21 @@ pub fn key_sends(p: &Project, t: TrackId) -> Vec<KeySend> {
     out
 }
 
+/// The receiving channels that take `t` as a note source (UI-359).
+pub fn note_sends(p: &Project, t: TrackId) -> Vec<(TrackId, PluginId, bool)> {
+    let mut out = Vec::new();
+    for owner in super::strip_order(p) {
+        if let Some(track) = p.tracks.get(&owner) {
+            for x in &track.inserts {
+                if let Some(source) = x.note_source.filter(|s| s.track == t) {
+                    out.push((owner, x.id, source.on));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The key send `id` of `t`.
 pub fn key_send(p: &Project, t: TrackId, id: SendId) -> Option<KeySend> {
     key_sends(p, t).into_iter().find(|k| k.id == id)
@@ -336,6 +351,33 @@ impl Studio {
         part: KeyPart,
     ) -> bool {
         let p = self.project();
+        if let Some(x) = p
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .find(|x| x.id == plugin)
+            && x.takes_notes()
+        {
+            if part != KeyPart::Send {
+                return false;
+            }
+            let picked = x.note_source.as_ref().is_some_and(|s| s.track == t);
+            let (name, args) = if picked {
+                (
+                    "plugin.note_source.remove",
+                    json!({ "id": plugin.to_string() }),
+                )
+            } else {
+                (
+                    "plugin.note_source.set",
+                    json!({ "id": plugin.to_string(), "from": t.to_string() }),
+                )
+            };
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+            self.run_command(name, args);
+            self.refresh_popup();
+            return true;
+        }
         let mode = source(&p, plugin, t).map(|s| s.mode);
         let sending = mode.as_ref().and_then(KeyMode::send);
         let base = json!({ "id": plugin.to_string(), "from": t.to_string() });

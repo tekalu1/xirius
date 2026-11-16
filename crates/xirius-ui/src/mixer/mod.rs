@@ -257,7 +257,10 @@ impl Rows {
                     if t.id.is_master() {
                         1
                     } else {
-                        t.sends.len() + keys::key_count(p, t.id) + 1
+                        t.sends.len()
+                            + keys::key_count(p, t.id)
+                            + keys::note_sends(p, t.id).len()
+                            + 1
                     }
                 })
                 .max()
@@ -842,7 +845,9 @@ pub(crate) fn split_at(
 fn list_max(p: &Project, track: &Track, list: List, rows: Rows) -> usize {
     let n = match list {
         List::Inserts => track.inserts.len() + crate::instrument::gap(track),
-        List::Sends => track.sends.len() + keys::key_count(p, track.id),
+        List::Sends => {
+            track.sends.len() + keys::key_count(p, track.id) + keys::note_sends(p, track.id).len()
+        }
         // The layout holds a flow's scroll to what is hidden; here only a bound.
         List::Flow => return flow::lines(track, &flow::Folds::default(), true).len(),
     };
@@ -1309,7 +1314,9 @@ impl Studio {
                     MixerHit::KeyLevel(t, key.id)
                 }
                 (None, Some(key)) => MixerHit::KeySend(t, key.id),
-                (None, None) if k == n + keyed.len() => MixerHit::AddSend(t),
+                (None, None) if k == n + keyed.len() + keys::note_sends(&p, t).len() => {
+                    MixerHit::AddSend(t)
+                }
                 (None, None) => MixerHit::Strip(t),
             }
         } else if on(s.output) {
@@ -1371,7 +1378,9 @@ impl Studio {
             MixerHit::SendPre(_, id) => send_row(send(id)?).map(|r| send_parts(r).2),
             MixerHit::KeySend(_, id) => key(id),
             MixerHit::KeyLevel(_, id) => key(id).map(|r| keys::key_parts(r).3),
-            MixerHit::AddSend(_) => send_row(track.sends.len() + keyed.len()),
+            MixerHit::AddSend(_) => {
+                send_row(track.sends.len() + keyed.len() + keys::note_sends(&p, t).len())
+            }
             MixerHit::Output(_) => s.output,
             MixerHit::Input(_) => s
                 .input
