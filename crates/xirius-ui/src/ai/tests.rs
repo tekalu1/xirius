@@ -105,12 +105,8 @@ fn why(v: &Value) -> &str {
 
 #[test]
 fn each_level_answers_the_ai_over_mcp_and_says_why() {
-    let dir_tmp = tempfile::Builder::new()
-        .prefix("xirius-ui-ai-levels-")
-        .tempdir()
-        .unwrap();
+    let dir_tmp = crate::shot::TestFolder::new("xirius-ui-ai-levels-");
     let dir = dir_tmp.path().join("ui-ai-levels");
-    let _ = std::fs::remove_dir_all(&dir);
     let (mut s, g) = studio();
     s.song.session_mut().save_as(&dir).unwrap();
     let mut wire = Wire::new();
@@ -184,7 +180,6 @@ fn each_level_answers_the_ai_over_mcp_and_says_why() {
     let view = s.ai_view();
     assert_eq!(view.level, AiPermission::Save);
     assert!(!view.last.unwrap().refused);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ---- marks, history, undo (AI-005, AI-006, AI-030, EDT-005, EDT-010) ------------------

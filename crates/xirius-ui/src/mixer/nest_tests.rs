@@ -172,11 +172,11 @@ fn enter_on_a_picked_nested_splitter_opens_it_as_the_press_does() {
 
 #[test]
 fn a_song_opened_again_starts_its_nested_splitters_shut() {
+    let dir = crate::shot::TestFolder::new("xirius-ui-nest-reopen-");
     let (mut s, g) = studio();
     let (t, [outer, inner, _]) = nest(&mut s);
     fold(&mut s, &g, t, inner);
     assert!(s.mixer.folds.knows(inner));
-    let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("nest");
     s.song.save_as(&path).unwrap();
     assert!(s.request_open_file(crate::studio::FileRequest::Open, &path));

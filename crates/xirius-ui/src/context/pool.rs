@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn windowed_cleanup_menu_enables_after_the_read_without_reopening() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::shot::TestFolder::new("xirius-ui-pool-cleanup-menu-");
         let dir = crate::pool_shots::make_song(temp.path());
         let mut s = Studio::sample();
         s.song.open(&dir).unwrap();

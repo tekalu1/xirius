@@ -41,7 +41,7 @@ fn every_entry_returns_before_worker_io_and_blocks_input_before_the_veil() {
         "command",
         "version",
     ] {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::shot::TestFolder::new("xirius-ui-open-entries-");
         let old = tmp.path().join("old");
         let target = tmp.path().join("target");
         let mut s = Studio::new(Song::empty());
@@ -160,7 +160,7 @@ fn progress_is_throttled_independently_from_the_veil_and_freezes_on_cancel() {
 }
 #[test]
 fn stale_ready_is_aborted_before_adoption() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::shot::TestFolder::new("xirius-ui-open-stale-ready-");
     let target = tmp.path().join("target");
     let mut song = Song::empty();
     song.save_as(&target).unwrap();
@@ -189,7 +189,7 @@ fn closing_is_a_confirmation_and_disconnects_without_waiting_for_a_session() {
 #[test]
 fn connected_mcp_answers_only_after_adoption_and_rejects_edits_while_blocked() {
     use xirius_mcp::Host;
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::shot::TestFolder::new("xirius-ui-open-mcp-adopt-");
     let target = tmp.path().join("target");
     let mut song = Song::empty();
     song.save_as(&target).unwrap();
@@ -307,7 +307,7 @@ fn dawproject_cancel_cleans_only_its_exclusive_directory() {
 
 #[test]
 fn stale_final_success_is_disposed_on_the_worker_and_not_installed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::shot::TestFolder::new("xirius-ui-open-stale-final-");
     let olddir = tmp.path().join("old");
     let next = tmp.path().join("new");
     let mut s = Studio::new(Song::empty());
@@ -433,7 +433,7 @@ fn mcp_new_song_is_deferred_and_read_only_dry_run_does_not_replace() {
 
 #[test]
 fn esc_during_retirement_has_no_cancel_control_or_cancellation_promise() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::shot::TestFolder::new("xirius-ui-open-esc-retire-");
     let old = tmp.path().join("old");
     let next = tmp.path().join("next");
     let mut s = Studio::new(Song::empty());
@@ -483,7 +483,7 @@ fn esc_during_retirement_has_no_cancel_control_or_cancellation_promise() {
 /// screen stays, and nothing is said (UI-350).
 #[test]
 fn a_startup_without_a_crash_stays_on_the_start_screen() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::shot::TestFolder::new("xirius-ui-open-startup-");
     let path = tmp.path().join("song");
     let root = tmp.path().join("keep");
     let mut seed = Song::empty();
@@ -507,7 +507,7 @@ fn close_and_quit_during_publication_or_retirement_do_not_promise_cancellation()
     use crate::keep::{Keep, LastOpen};
     for publication in [true, false] {
         for quit in [true, false] {
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = crate::shot::TestFolder::new("xirius-ui-open-close-quit-");
             let (mut s, version) = version_source(tmp.path());
             let old = s.song.record_dir().unwrap();
             let destination = tmp.path().join("copy");
@@ -602,7 +602,7 @@ fn zero_reads_are_omitted_only_for_lock_and_writer_waits() {
 /// chosen; a new song ends the start screen (UI-350).
 #[test]
 fn a_cancelled_open_comes_back_to_the_start_screen_with_its_row() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::shot::TestFolder::new("xirius-ui-open-cancelled-");
     let root = tmp.path().join("keep");
     let keep = crate::keep::Keep::at(root.clone());
     let mut paths = Vec::new();
@@ -744,7 +744,7 @@ fn connected_mcp_rejects_another_operator_without_losing_the_request() {
 #[test]
 fn approved_version_creation_is_cancellable_without_io_on_the_window_thread() {
     use xirius_core::session::{Confirm, RunOptions};
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::shot::TestFolder::new("xirius-ui-open-version-cancel-");
     let (mut s, version) = version_source(tmp.path());
     s.song
         .session_mut()
@@ -830,7 +830,7 @@ fn approved_version_creation_is_cancellable_without_io_on_the_window_thread() {
 #[test]
 fn version_command_json_and_current_song_match_standalone_and_approved_execution() {
     use xirius_core::session::{Confirm, RunOptions};
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::shot::TestFolder::new("xirius-ui-open-version-json-");
     let (mut s, version) = version_source(tmp.path());
     let mut cli = xirius_core::Session::open(s.song.dir().unwrap()).unwrap();
     let old = s.project();
@@ -950,7 +950,7 @@ fn dawproject_command_json_matches_the_standalone_runner() {
 #[test]
 fn song_open_command_keeps_the_regular_response_envelope() {
     use xirius_core::session::RunOptions;
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::shot::TestFolder::new("xirius-ui-open-song-open-");
     let path = tmp.path().join("target");
     let mut target = Song::empty();
     target.save_as(&path).unwrap();

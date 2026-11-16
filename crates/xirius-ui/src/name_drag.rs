@@ -452,6 +452,7 @@ mod tests {
 
     #[test]
     fn the_order_the_mixer_takes_is_kept_when_the_song_is_opened_again() {
+        let tmp = crate::shot::TestFolder::new("xirius-ui-order-");
         let (mut s, g) = mix();
         let names = order(&s);
         let first = track(&s, &names[0]);
@@ -467,7 +468,6 @@ mod tests {
         drag_to(&mut s, &g, first, at);
         let moved = order(&s);
         assert_ne!(moved, names);
-        let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("order");
         s.command(|song| song.save_as(&dir));
         assert!(s.error.is_none(), "{:?}", s.error);

@@ -95,7 +95,7 @@ fn unrecoverable_receiver_error_detaches_and_blocks_the_presentation() {
 #[test]
 fn song_and_studio_entrances_have_no_caller_store_io() {
     for entrance in ["song", "same", "version", "studio", "studio-version"] {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::shot::TestFolder::new("xirius-ui-load-entrances-");
         let source = tmp.path().join("source");
         let target = tmp.path().join("target");
         let version_dir = tmp.path().join("version");

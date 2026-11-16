@@ -518,9 +518,10 @@ fn ui_334_layers_choose_the_wave_and_files_dropped_on_a_pad_go_there() {
     assert!(!s.window_drop(&g, -1.0, -1.0, &files));
 }
 
-/// Empty files named `names` in a folder of their own.
-fn wavs(names: &[&str]) -> (tempfile::TempDir, Vec<PathBuf>) {
-    let dir = tempfile::tempdir().unwrap();
+/// Empty files named `names` in a folder of their own. A song saved there and made windowed
+/// closes on a background job, so the folder waits for it.
+fn wavs(names: &[&str]) -> (crate::shot::TestFolder, Vec<PathBuf>) {
+    let dir = crate::shot::TestFolder::new("xirius-ui-sampler-wavs-");
     let files = names
         .iter()
         .map(|n| {

@@ -532,10 +532,7 @@ fn file_at(s: &Studio, g: &Geometry, name: &str) -> (f32, f32) {
 #[test]
 fn a_stale_stem_is_written_again_alone_from_its_own_row() {
     use crate::export::Act as X;
-    let dir_tmp = tempfile::Builder::new()
-        .prefix("xirius-ctx-export-file-")
-        .tempdir()
-        .unwrap();
+    let dir_tmp = crate::shot::TestFolder::new("xirius-ctx-export-file-");
     let dir = dir_tmp.path().join("song");
     let bin = dir_tmp.path().join("bin");
     let mut s = Studio::new(crate::song::Song::sample_with_trash(bin_in(dir_tmp.path())));
@@ -639,15 +636,11 @@ fn a_stale_stem_is_written_again_alone_from_its_own_row() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(binned, vec![card.kids[0].file.clone()], "only the old one");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn a_files_rows_listen_show_and_bring_in_that_file() {
-    let dir_tmp = tempfile::Builder::new()
-        .prefix("xirius-ctx-export-rows-")
-        .tempdir()
-        .unwrap();
+    let dir_tmp = crate::shot::TestFolder::new("xirius-ctx-export-rows-");
     let dir = dir_tmp.path().join("song");
     let mut s = Studio::new(crate::song::Song::sample_with_trash(bin_in(dir_tmp.path())));
     s.command(|song| song.save_as(&dir));
@@ -686,5 +679,6 @@ fn a_files_rows_listen_show_and_bring_in_that_file() {
         .map(|t| t.name.clone())
         .collect();
     assert_eq!(added.len(), 1, "that file alone: {added:?}");
-    let _ = std::fs::remove_dir_all(&dir);
+    // The file brought in has its peaks made in the song's folder: it goes after them.
+    xirius_session::peaks::wait();
 }

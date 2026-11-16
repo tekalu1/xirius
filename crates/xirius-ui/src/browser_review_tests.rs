@@ -56,7 +56,7 @@ fn wav(file: &Path) {
 #[test]
 fn full_read_queue_keeps_all_waveforms_listing_and_the_final_preference_snapshot() {
     let _serial = IO_GATES.lock().unwrap_or_else(|e| e.into_inner());
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::shot::TestFolder::new("xirius-ui-review-full-queue-");
     let prefs = tmp.path().join("prefs.json");
     let mut browser = Browser::new();
     browser.start_prefs(prefs.clone());

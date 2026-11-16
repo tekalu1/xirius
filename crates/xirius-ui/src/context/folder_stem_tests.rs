@@ -76,12 +76,8 @@ fn the_single_file_row_opens_the_panel_with_the_folders_bus_and_leaves_the_song_
 
 #[test]
 fn go_writes_one_file_named_after_the_folder_and_unticking_the_bus_drops_it() {
-    let dir_tmp = tempfile::Builder::new()
-        .prefix("xirius-ctx-foldstem-")
-        .tempdir()
-        .unwrap();
+    let dir_tmp = crate::shot::TestFolder::new("xirius-ctx-foldstem-");
     let dir = dir_tmp.path().join("ctx-foldstem");
-    let _ = std::fs::remove_dir_all(&dir);
     let (mut s, g) = studio();
     s.command(|song| song.save_as(&dir));
     assert!(s.error.is_none(), "{:?}", s.error);
@@ -115,5 +111,4 @@ fn go_writes_one_file_named_after_the_folder_and_unticking_the_bus_drops_it() {
         .collect();
     assert_eq!(files.len(), 1, "{files:?}");
     assert!(files[0].ends_with("_Rhythm.wav"), "{files:?}");
-    let _ = std::fs::remove_dir_all(&dir);
 }

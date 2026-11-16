@@ -8,12 +8,10 @@ use xirius_prefs::{Chord, Os, Settings};
 use super::*;
 use crate::studio::Hit;
 
-/// A folder of its own for each test, empty; removed when dropped (also when the test fails).
-fn temp(name: &str) -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix(&format!("xirius-ui-settings-{name}-"))
-        .tempdir()
-        .unwrap()
+/// A folder of its own for each test, empty; removed when dropped (also when the test fails),
+/// after what a windowed song still writes there.
+fn temp(name: &str) -> crate::shot::TestFolder {
+    crate::shot::TestFolder::new(&format!("xirius-ui-settings-{name}-"))
 }
 
 /// A window's studio that keeps its settings in `dir`, as a launch does.

@@ -62,7 +62,7 @@ fn recording_directory_creation_is_writer_owned_and_stop_keeps_responding() {
 
 #[test]
 fn a_live_material_update_keeps_recording_and_mix_commands_responsive() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-prep-live-");
     let wav = root.path().join("source.wav");
     let base = root.path().join("base.wav");
     xirius_session::export::write_wav(&wav, &[0.0; 2048], &[0.0; 2048], 22_050, 16).unwrap();
@@ -178,6 +178,8 @@ fn a_live_material_update_keeps_recording_and_mix_commands_responsive() {
     assert!(s.error.is_none(), "{:?}", s.error);
     assert!(s.transport.take.is_none());
     s.transport.reset();
+    // The imported files' peaks go in the song's folder: it goes after them.
+    xirius_session::peaks::wait();
 }
 
 struct HeldOutput {
@@ -273,7 +275,7 @@ fn a_window_rec_waits_for_input_on_a_worker_and_stop_cancels_the_pending_rec() {
 
 #[test]
 fn cancellation_wins_over_an_already_completed_unclaimed_player_and_retires_it_off_ui() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-prep-cancel-won-");
     let mut s = Studio::new(Song::empty());
     s.song.save_as(&root.path().join("song")).unwrap();
     s.transport.mode = OutputMode::Device;
@@ -341,7 +343,7 @@ impl SharedStream for HeldOutput {
 
 #[test]
 fn zero_tracks_and_retiring_output_never_hold_the_ui_or_reopen_before_stop_completes() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-prep-zero-");
     let mut s = Studio::new(Song::empty());
     s.song.save_as(&root.path().join("song")).unwrap();
     s.transport.mode = OutputMode::Device;
@@ -494,7 +496,7 @@ fn wait_failed(s: &mut Studio, count: usize) {
 
 #[test]
 fn a_window_on_demand_silent_start_blocks_before_its_first_frame_without_decoding_on_ui() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-prep-silent-");
     let wav = root.path().join("source.wav");
     xirius_session::export::write_wav(&wav, &[0.0; 2048], &[0.0; 2048], 22_050, 16).unwrap();
     let mut s = Studio::new(Song::empty());
@@ -554,7 +556,7 @@ fn a_window_on_demand_silent_start_blocks_before_its_first_frame_without_decodin
 
 #[test]
 fn retry_discards_a_material_failure_that_returns_after_the_new_player_is_ready() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-prep-retry-");
     let wav = root.path().join("source.wav");
     xirius_session::export::write_wav(&wav, &[0.0; 2048], &[0.0; 2048], 48_000, 16).unwrap();
     let mut s = Studio::new(Song::empty());
@@ -600,6 +602,7 @@ fn retry_discards_a_material_failure_that_returns_after_the_new_player_is_ready(
     assert!(!s.poll_preparing());
     assert!(s.error.is_none());
     assert!(s.transport.host().unwrap().unavailable_tracks().is_empty());
+    xirius_session::peaks::wait();
 }
 
 #[test]
@@ -975,7 +978,7 @@ fn native_material_gates_keep_preparation_input_and_cancel_responsive_until_clea
         "prepare_prime",
         "prepare_graph",
     ] {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-prep-gates-");
         let wav = root.path().join("source.wav");
         let large = op == "prepare_prime";
         let audio = vec![0.1; if large { 4_200_000 } else { 2048 }];

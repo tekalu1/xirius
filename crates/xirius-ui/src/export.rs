@@ -3314,12 +3314,8 @@ mod tests {
 
     #[test]
     fn changing_the_song_drops_what_was_worked_out_for_the_cards_of_the_old_one() {
-        let dir_tmp = tempfile::Builder::new()
-            .prefix("xirius-export-base-")
-            .tempdir()
-            .unwrap();
+        let dir_tmp = crate::shot::TestFolder::new("xirius-export-base-");
         let dir = dir_tmp.path().join("export-base");
-        let _ = std::fs::remove_dir_all(&dir);
         let mut s = Studio::sample();
         s.command(|song| song.save_as(&dir));
         assert!(s.error.is_none(), "{:?}", s.error);
@@ -3327,6 +3323,13 @@ mod tests {
         s.open_export(Rect::new(1500.0, -40.0, 28.0, 28.0));
         act(&mut s, &g, Act::Go);
         assert!(until(&mut s, 30, |s| view(s).cards[0].state != State::Running));
+        // The job writes how it ended and lets go of its lock after the card shows it done.
+        let records = dir.join(xirius_session::jobs::FOLDER);
+        assert!(until(&mut s, 30, |_| !std::fs::read_dir(&records)
+            .is_ok_and(|d| d.flatten().any(|e| e
+                .path()
+                .extension()
+                .is_some_and(|x| x == "lock")))));
         assert_eq!(view(&s).cards[0].stale, Some(false));
         assert!(
             s.export.stale.lock().unwrap().song.is_some(),
@@ -3348,7 +3351,6 @@ mod tests {
         s.popup = None;
         s.open_export(Rect::new(1500.0, -40.0, 28.0, 28.0));
         assert!(view(&s).cards.is_empty(), "the new song has no exports");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
