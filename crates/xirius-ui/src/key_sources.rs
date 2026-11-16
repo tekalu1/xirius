@@ -113,6 +113,23 @@ pub fn list(
         .tracks
         .values()
         .find_map(|t| Some((t.id, t.inserts.iter().find(|x| x.id == plugin)?)))?;
+    if x.takes_notes() {
+        let rows = crate::mixer::strip_order(p)
+            .into_iter()
+            .filter_map(|id| {
+                let t = p.tracks.get(&id)?;
+                (t.kind == TrackKind::Instrument).then(|| {
+                    PickRow::new(t.shown_name())
+                        .act(Action::KeySource(plugin, id, KeyPart::Send))
+                        .on(x.note_source.as_ref().is_some_and(|s| s.track == id))
+                })
+            })
+            .collect();
+        let mut out = PickList::of(Vec::new()).named("見つかりません");
+        out.groups.clear();
+        out.groups.push(PickGroup::new("トラック", rows));
+        return Some(out);
+    }
     let sources = x
         .sidechain
         .as_ref()

@@ -78,6 +78,54 @@ fn open(s: &Studio) -> Option<PopupKind> {
 }
 
 #[test]
+fn ui_359_note_source_list_only_has_instruments_and_selection_is_one_undo_step() {
+    let mut s = Studio::sample();
+    let g = s.geometry(1600.0, 1000.0);
+    let keys = track(&s, "Keys");
+    let pitch = builtin(&mut s, keys, "pitch-correction");
+    let list = s.pick_view(PopupKind::KeySources(pitch)).unwrap();
+    assert_eq!(list.groups.len(), 1);
+    assert_eq!(list.groups[0].heading, "トラック");
+    assert!(list.groups[0].rows.iter().any(|r| r.label == "Keys"));
+    assert!(list.groups[0].rows.iter().all(|r| {
+        let Action::KeySource(_, id, _) = r.act.clone().unwrap() else {
+            return false;
+        };
+        s.project().tracks[&id].kind == TrackKind::Instrument
+    }));
+    assert!(s.key_source_action(pitch, keys, KeyPart::Send));
+    assert_eq!(
+        s.project().tracks[&keys]
+            .inserts
+            .last()
+            .unwrap()
+            .note_source
+            .unwrap()
+            .track,
+        keys
+    );
+    assert!(s.undo(&g));
+    assert!(
+        s.project().tracks[&keys]
+            .inserts
+            .last()
+            .unwrap()
+            .note_source
+            .is_none()
+    );
+    assert!(s.key_source_action(pitch, keys, KeyPart::Send));
+    assert!(s.key_source_action(pitch, keys, KeyPart::Send));
+    assert!(
+        s.project().tracks[&keys]
+            .inserts
+            .last()
+            .unwrap()
+            .note_source
+            .is_none()
+    );
+}
+
+#[test]
 fn with_no_source_the_seat_opens_the_list_and_with_one_turns_the_key() {
     let (mut s, g, drums, _, comp) = studio();
     seat_press(&mut s, &g, comp, Part::Sidechain);
