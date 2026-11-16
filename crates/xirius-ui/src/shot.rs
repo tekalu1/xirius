@@ -302,12 +302,14 @@ pub(crate) fn script_dir(own: impl FnOnce() -> std::path::PathBuf) -> std::path:
 }
 
 /// Waits for the work a test started that may still write under `folder`: the songs closed there
-/// being put away on their threads (`song::wait_retired`), the recent-song lists kept there
-/// (`recent_worker::wait_settled`), work marked [`Using`] it, and the browser's places read and
-/// written there (`browser_prefs_io::wait_read`, `browser_prefs_save::wait_written`).
+/// being put away on their threads (`song::wait_retired`), the cleanups of the songs closed
+/// there (`tidy::wait_ended`), the recent-song lists kept there (`recent_worker::wait_settled`),
+/// work marked [`Using`] it, and the browser's places read and written there
+/// (`browser_prefs_io::wait_read`, `browser_prefs_save::wait_written`).
 #[cfg(test)]
 pub(crate) fn settle(folder: &std::path::Path) {
     crate::song::wait_retired(folder);
+    crate::tidy::wait_ended(folder);
     crate::recent_worker::wait_settled(folder);
     wait_unused(folder);
     crate::browser_prefs_io::wait_read(folder);

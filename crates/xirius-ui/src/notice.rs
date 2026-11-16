@@ -465,24 +465,20 @@ mod tests {
     use super::*;
     use crate::studio::FileRequest;
 
-    struct Scratch(PathBuf);
+    /// A folder of the test's own, in a [`crate::shot::TestFolder`]: it goes after the work
+    /// still writing there has ended, and the test fails when it cannot.
+    struct Scratch(PathBuf, crate::shot::TestFolder);
 
     impl Scratch {
         fn new(name: &str) -> Scratch {
-            let p = std::env::temp_dir().join(format!(
-                "xirius-notice-{name}-{}-{:?}",
-                std::process::id(),
-                std::thread::current().id()
-            ));
-            let _ = std::fs::remove_dir_all(&p);
-            std::fs::create_dir_all(&p).unwrap();
-            Scratch(p)
+            let folder = crate::shot::TestFolder::new(&format!("xirius-notice-{name}-"));
+            Scratch(folder.path().to_path_buf(), folder)
         }
     }
 
     impl Drop for Scratch {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            self.1.remove();
         }
     }
 

@@ -44,9 +44,13 @@ impl Tidy {
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
         let halt = stop.clone();
+        #[cfg(test)]
+        let alive = running(&dir);
         let thread = std::thread::Builder::new()
             .name("xirius-cleanup".into())
             .spawn(move || {
+                #[cfg(test)]
+                let _alive = alive;
                 // The recycle bin runs the shell's extensions, as on the screen's thread before.
                 let _apartment = xirius_session::os::apartment();
                 let got = closed
@@ -110,6 +114,41 @@ impl Tidy {
             // design-lint: allow(ui-blocking-io) PRJ-031: normal poll checks is_finished before this join; shutdown waits only on its worker.
             let _ = t.join();
         }
+    }
+}
+
+/// The cleanups still running on their threads, by the closed song's folder (tests only).
+#[cfg(test)]
+static RUNNING: std::sync::Mutex<Vec<(PathBuf, std::sync::Weak<()>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Counts a cleanup of the song in `dir` as running until what it returns is dropped.
+#[cfg(test)]
+fn running(dir: &Path) -> Arc<()> {
+    let alive = Arc::new(());
+    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    RUNNING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((dir, Arc::downgrade(&alive)));
+    alive
+}
+
+/// Waits (at most 30 s) until no cleanup of a song under `folder` still runs: a test removes its
+/// folder only after the cleanups that look at it have ended, also those its studio stopped and
+/// no longer waits for.
+#[cfg(test)]
+pub(crate) fn wait_ended(folder: &Path) {
+    let folder = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    let end = Instant::now() + Duration::from_secs(30);
+    loop {
+        let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+        running.retain(|(_, alive)| alive.strong_count() > 0);
+        if !running.iter().any(|(dir, _)| dir.starts_with(&folder)) || Instant::now() > end {
+            return;
+        }
+        drop(running);
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 

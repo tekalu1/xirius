@@ -2584,28 +2584,20 @@ mod tests {
         s.transport_key("enter");
     }
 
-    /// A folder of its own under the temp folder, gone when dropped.
-    struct Scratch(PathBuf);
+    /// A folder of the test's own, not made yet, in a [`crate::shot::TestFolder`]: it goes after
+    /// the work still writing there has ended, and the test fails when it cannot.
+    struct Scratch(PathBuf, crate::shot::TestFolder);
 
     impl Scratch {
         fn new(name: &str) -> Scratch {
-            let dir = std::env::temp_dir().join(format!(
-                "xirius-ui-{name}-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            Scratch(dir)
+            let folder = crate::shot::TestFolder::new(&format!("xirius-ui-{name}-"));
+            Scratch(folder.path().join(format!("xirius-ui-{name}")), folder)
         }
     }
 
     impl Drop for Scratch {
         fn drop(&mut self) {
-            crate::song::wait_retired(&self.0);
-            let _ = std::fs::remove_dir_all(&self.0);
+            self.1.remove();
         }
     }
 

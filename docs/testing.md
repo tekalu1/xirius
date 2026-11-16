@@ -45,7 +45,7 @@ A test writes nothing to the person's Xirius folders (`%LOCALAPPDATA%\Xirius` an
 `%APPDATA%\Xirius` on Windows; `~/Library/Application Support/Xirius`, `~/Library/Caches/Xirius`
 and `~/Library/Logs/Xirius` on macOS) and leaves nothing in the temporary folder. It keeps its
 files in a folder it removes also when it fails (`tempfile::TempDir`, or `shot::TestFolder` in
-the UI crate, which waits for a closed song's history, for the recent-song lists kept in it, for
+the UI crate, which waits for a closed song's history and cleanup, for the recent-song lists kept in it, for
 work on other threads that still writes in it, and for files a program that is ending still
 holds, and fails the test when it cannot remove the folder; a shot script a UI test plays can keep
 its files in the test's folder, `shot::TestFolder::lent`), and names the folders of what it starts: a test that starts a plugin host
