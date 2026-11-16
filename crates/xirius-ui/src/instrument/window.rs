@@ -1691,6 +1691,7 @@ impl Studio {
                     && def.uid == "pitch-correction"
                 {
                     let key = def.params[0].to_plain(*x.params.get("key").unwrap_or(&0.0)) as u8;
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred to the song owner.
                     self.run_command(
                         "plugin.pitch_key.toggle",
                         serde_json::json!({

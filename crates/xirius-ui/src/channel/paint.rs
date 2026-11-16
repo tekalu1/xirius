@@ -478,6 +478,7 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow, se
         _ => None,
     };
     for card in f.cards.iter().filter(|c| meets(c.rect, seen)) {
+        paint_card(pen, s, w, t, card, dragged == Some(card.pick));
         if let Some(plugin) = plugin_of(t, card.pick)
             && let Some(source) = plugin.note_source
             && let Some(sender) = s.project().tracks.get(&source.track)
@@ -521,9 +522,12 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow, se
                 pen.fill(Rect::new(x, y, 4.0_f32.min(route.port.x - x), 1.5), ink);
                 x += 7.0;
             }
-            pen.round(route.port, ink, Radius::Pill);
+            pen.round(
+                Rect::new(route.port.x, route.port.y, 10.0, 10.0),
+                ink,
+                Radius::Pill,
+            );
         }
-        paint_card(pen, s, w, t, card, dragged == Some(card.pick));
     }
     for (i, gap) in f.gaps.iter().enumerate() {
         if !meets(gap.button, seen) || !gap_shown(s, w, t, f, gap) {
