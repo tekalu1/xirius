@@ -128,6 +128,9 @@ python scripts/update_sign.py verify `
 アプリの「変わったこと」は、この本文の `- `（または `* `）で始まる行を上から 8 行まで読みます。
 `docs/release-notes/TEMPLATE.md` を写してください。本文のファイルが無い版は、`release.yml` が
 作らずに落ちます。
+UTF-8 で読めない本文・U+FFFD のある本文・文字が `?` に化けた本文（`??` の続く行や `?` だけの行）も、
+`python scripts/release.py --tag v<版> --check-tag` と `release.yml` が止めます。保存した後に
+これを流して確かめてください。
 
 ## 6. 出す（タグの push から公開まで自動）
 

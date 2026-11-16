@@ -70,6 +70,56 @@ class VersionTests(unittest.TestCase):
         self.assertEqual(rel.lame_sha256(), "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e")
 
 
+class NotesTests(unittest.TestCase):
+    """The release notes are the release's body and what the update panel reads."""
+
+    def test_every_release_note_reads_as_written(self):
+        notes = sorted(rel.NOTES.glob("*.md"))
+        self.assertIn(rel.NOTES / f"{rel.workspace_version()}.md", notes)
+        for path in notes:
+            self.assertIsNone(rel.check_notes(path))
+
+    def test_notes_with_lost_text_are_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "1.0.0.md"
+            self.assertIn("missing", rel.check_notes(path))
+            good = "# Xirius 1.0.0\n\n- 書き出しが速くなりました。Faster? Yes.\n"
+            path.write_text(good, encoding="utf-8", newline="\n")
+            self.assertIsNone(rel.check_notes(path))
+            path.write_bytes(good.encode("cp932"))
+            self.assertIn("not UTF-8", rel.check_notes(path))
+            for lost in [
+                "- Drum Kit ????????????Output\n",
+                "Windows 10?11?x64??\n",
+                "?\n",
+                "- ?\n",
+                "- 書き出し�が\n",
+            ]:
+                path.write_text(good + lost, encoding="utf-8", newline="\n")
+                self.assertRegex(rel.check_notes(path), r"^1\.0\.0\.md:4 ", lost)
+
+    def test_the_tag_is_not_released_with_lost_notes(self):
+        import contextlib
+        import io
+
+        version = rel.workspace_version()
+        with tempfile.TemporaryDirectory() as tmp:
+            notes, rel.NOTES = rel.NOTES, Path(tmp)
+            path = Path(tmp) / f"{version}.md"
+            err = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                    self.assertEqual(rel.main(["--tag", f"v{version}", "--channel"]), 1)
+                    path.write_text("- ????\n", encoding="utf-8")
+                    self.assertEqual(rel.main(["--tag", f"v{version}", "--check-tag"]), 1)
+                    path.write_text("- 直しました\n", encoding="utf-8")
+                    self.assertEqual(rel.main(["--tag", f"v{version}", "--check-tag"]), 0)
+            finally:
+                rel.NOTES = notes
+            self.assertIn("missing", err.getvalue())
+            self.assertIn("question marks", err.getvalue())
+
+
 class ListTests(unittest.TestCase):
     def test_the_installer_installs_and_removes_the_same_files(self):
         install, uninstall = rel.nsis_lists(["a.exe", "licenses/X.txt", "licenses/sub/Y.txt", "NOTICE"])

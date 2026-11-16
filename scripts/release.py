@@ -11,6 +11,10 @@
   python scripts/release.py --tag v1.0.1-beta.1 --channel
                                                check the tag and print `beta` or `stable`
 
+With --tag, the release notes of the version (docs/release-notes/<version>.md, the body of the
+release and what the update panel reads) are checked too: they must be there, read as UTF-8,
+and have no U+FFFD and no text that a wrong code page turned into question marks.
+
 The version is the one of [workspace.package] in Cargo.toml; a release's tag is `v<version>`
 (the update check reads the tag of the latest release, crates/xirius-session/src/update.rs).
 A version with a pre-release part (`1.0.1-beta.1`) is the beta channel: the release workflow
@@ -87,6 +91,29 @@ def check_tag(tag: str, version: str) -> str | None:
         tag = tag[len("refs/tags/"):]
     if tag != f"v{version}":
         return f"the tag {tag!r} is not v{version}, the version in Cargo.toml"
+    return None
+
+
+NOTES = ROOT / "docs" / "release-notes"
+
+# Text saved through a code page without the characters: each one became `?`.
+LOST = re.compile(r"\?\?")
+
+
+def check_notes(path: Path) -> str | None:
+    """Why the release notes at `path` cannot be published as they are, or None."""
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except FileNotFoundError:
+        return f"{path.name} is missing (write the notes as `- ` bullets)"
+    except UnicodeDecodeError as error:
+        return f"{path.name} is not UTF-8 (byte {error.start})"
+    for number, line in enumerate(text.splitlines(), 1):
+        if "\ufffd" in line:
+            return f"{path.name}:{number} has U+FFFD, a character lost in a conversion"
+        bare = line.strip(" \t-#*>")
+        if (bare and set(bare) == {"?"}) or LOST.search(line):
+            return f"{path.name}:{number} has question marks where the text was lost: {line.strip()}"
     return None
 
 
@@ -317,6 +344,10 @@ def main(argv: list[str] | None = None) -> int:
     version = workspace_version()
     if args.tag:
         why = check_tag(args.tag, version)
+        if why:
+            print(f"release: {why}", file=sys.stderr)
+            return 1
+        why = check_notes(NOTES / f"{version}.md")
         if why:
             print(f"release: {why}", file=sys.stderr)
             return 1

@@ -17,7 +17,8 @@ name: release
 #   同じ .py でアプリの UPDATE_KEY により確かめる。build の作ったプログラムは鍵の近くで
 #   走らせない。鍵のファイルは署名の直後と job の最後に消す。
 # - Release の本文は `docs/release-notes/<版>.md`（`- ` の箇条で書く。アプリの更新の知らせが
-#   これを読む）から取り、本文の無い版は作らない。
+#   これを読む）から取り、本文の無い版は作らない。本文が UTF-8 で読めない・U+FFFD がある・文字が
+#   `?` に化けている版も、--channel の段で止める（scripts/release.py の check_notes）。
 # タグは Cargo.toml の [workspace.package] version に v を付けたもので、違えば作らずに落ちる。
 # 流せるのはリポジトリの持ち主だけ。
 
