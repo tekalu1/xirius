@@ -49,7 +49,9 @@ the UI crate, which waits for a closed song's history, for work on other threads
 writes in it, and for files a program that is ending still holds), and names the folders of what it starts: a test that starts a plugin host
 sets `XIRIUS_CRASH_DIR` to a folder of its own before it starts a thread (each host makes its
 crash records as it starts, whether it falls over or not; `shot::CrashRecords` in the UI crate,
-`crash_records::CrashRecords` in the engine's and the session's tests); one that opens the
+`crash_records::CrashRecords` in the engine's and the session's tests). That folder is under
+`target/`, as the plugin copies below: a host still ending may hold its records after the test,
+and a later test removes the old ones. One that opens the
 browser or scans plugins with a song of its own names its files too (`XIRIUS_BROWSER_FILE`,
 `XIRIUS_PLUGIN_CACHE`, or the scan options of its song); and one that bounces or exports from an
 unsaved song points the temporary folder at one of its own (`shot::TestTemp`). A plugin a test loads into its own process cannot be removed on Windows

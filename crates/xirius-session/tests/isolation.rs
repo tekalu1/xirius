@@ -8,12 +8,15 @@
 //! The tests skip when kHs Gain is not installed or `xirius-plugin-host` has not been built
 //! (`cargo test --workspace` builds it).
 
+mod crash_records;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crash_records::CrashRecords;
 use serde_json::{Map, Value, json};
 use xirius_core::model::{PluginIsolation, Project};
 use xirius_core::session::{RunOptions, RunResult, Session};
@@ -53,21 +56,12 @@ impl Dir {
 
 impl Drop for Dir {
     fn drop(&mut self) {
-        // A host still closing keeps its crash record open for a moment (`crash_records`).
+        // A host still closing may keep a file here open for a moment.
         let end = Instant::now() + Duration::from_secs(10);
         while std::fs::remove_dir_all(&self.0).is_err() && self.0.exists() && Instant::now() < end {
             thread::sleep(Duration::from_millis(50));
         }
     }
-}
-
-/// The crash records of the hosts a test starts go to `dir`'s folder (`XIRIUS_CRASH_DIR`, read
-/// by each host as it starts), not to the person's `Crashes`: a host makes its records whether
-/// it goes down or not.
-fn crash_records(dir: &Dir) {
-    // SAFETY: nextest runs each test in a process of its own (docs/testing.md), and this is set
-    // before the test starts a thread.
-    unsafe { std::env::set_var("XIRIUS_CRASH_DIR", dir.path().join("crashes")) };
 }
 
 fn run(s: &mut Session, name: &str, args: Value) -> RunResult {
@@ -214,7 +208,7 @@ fn options(g: &Gain, song_dir: &Path, isolation: Isolation) -> Options {
 fn export_through_the_host(speed: bool) {
     let Some(g) = gain() else { return };
     let dir = Dir::new("match");
-    crash_records(&dir);
+    let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 10.0);
     run(
         &mut s,
@@ -274,7 +268,7 @@ fn the_export_through_the_host_is_faster_than_real_time() {
 fn a_host_that_goes_down_during_an_export_leaves_the_dry_signal() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("crash");
-    crash_records(&dir);
+    let _records = CrashRecords::new();
     let secs = 60.0;
     let (mut s, song_dir, pid) = song(&dir, &g, secs);
     run(
@@ -495,7 +489,7 @@ fn wait_for(host: &mut SessionHost, what: &str, f: impl Fn(&mut SessionHost) -> 
 fn while_playing_a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_back() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("kill");
-    crash_records(&dir);
+    let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 30.0);
     run(
         &mut s,
@@ -540,7 +534,7 @@ fn while_playing_a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_ba
 fn a_parameter_set_in_the_song_reaches_the_running_plugin_without_a_new_mix() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("param");
-    crash_records(&dir);
+    let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 30.0);
     let (mut host, pull) = start(&s, &song_dir, &g);
     let unity_level = steady(&host, &pull, 0.3);
@@ -564,7 +558,7 @@ fn a_parameter_set_in_the_song_reaches_the_running_plugin_without_a_new_mix() {
 fn an_edit_in_the_plugin_comes_into_the_song_as_one_undo_step_and_feeds_automation() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("collect");
-    crash_records(&dir);
+    let _records = CrashRecords::new();
     let (mut s, song_dir, _) = song(&dir, &g, 30.0);
     let (mut host, pull) = start(&s, &song_dir, &g);
     let id = s
@@ -702,7 +696,7 @@ fn wait_open(host: &mut SessionHost) {
 fn every_process_mode_plays_and_only_another_process_adds_its_delay() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("modes");
-    crash_records(&dir);
+    let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 30.0);
     run(
         &mut s,
@@ -770,7 +764,7 @@ fn every_process_mode_plays_and_only_another_process_adds_its_delay() {
 fn a_host_that_goes_down_leaves_the_plugins_on_the_other_hosts_playing() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("hosts");
-    crash_records(&dir);
+    let _records = CrashRecords::new();
     let (mut s, song_dir, a) = song(&dir, &g, 60.0);
     // A second track with the same sine and its own kHs Gain.
     let t = id_of(&run(&mut s, "track.add.audio", json!({ "name": "Sine 2" })));
@@ -866,7 +860,7 @@ fn a_host_that_goes_down_leaves_the_plugins_on_the_other_hosts_playing() {
 fn a_plugin_moved_to_another_process_keeps_its_state_and_the_move_is_one_undo_step() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("move");
-    crash_records(&dir);
+    let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 60.0);
     set_mode(&mut s, &pid, "shared");
     let (mut host, pull) = start_with(&s, &song_dir, &g, per_plugin(&g));
@@ -949,7 +943,7 @@ fn a_plugin_moved_to_another_process_keeps_its_state_and_the_move_is_one_undo_st
 fn a_plugin_that_takes_the_shared_host_down_is_suggested_a_host_of_its_own() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("suggest");
-    crash_records(&dir);
+    let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 60.0);
     set_mode(&mut s, &pid, "shared");
     let (mut host, pull) = start_with(&s, &song_dir, &g, per_plugin(&g));
@@ -1007,7 +1001,7 @@ fn level_between(host: &mut SessionHost, pull: &Pull, from: f64, to: f64) -> f64
 fn a_parameter_lane_moves_the_plugin_while_playing_in_and_out_of_process() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("lane");
-    crash_records(&dir);
+    let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 10.0);
     let track = s
         .project()
@@ -1064,7 +1058,7 @@ fn an_edit_in_the_plugin_while_playing_is_written_into_its_lane_in_one_step() {
     use xirius_session::autowrite::Pass;
     let Some(g) = gain() else { return };
     let dir = Dir::new("write");
-    crash_records(&dir);
+    let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 30.0);
     let track = s
         .project()

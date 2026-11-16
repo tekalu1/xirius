@@ -173,9 +173,17 @@ pub(crate) struct CrashRecords(std::path::PathBuf);
 #[cfg(test)]
 impl CrashRecords {
     pub(crate) fn new() -> CrashRecords {
+        // Under the test build directory, not the temporary folder: with many tests running, a
+        // host may still hold its records after the wait in `drop`, or a host started as the test
+        // ends may make the folder again; `copies_dir` removes those a later test finds old.
+        let deps = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
         let dir = tempfile::Builder::new()
-            .prefix("xirius-ui-crash-records-")
-            .tempdir()
+            .prefix("crash-records-")
+            .tempdir_in(xirius_test_vst3::copies_dir(&deps))
             .unwrap()
             .keep();
         // SAFETY: nextest runs each test in a process of its own (docs/testing.md), and this is
