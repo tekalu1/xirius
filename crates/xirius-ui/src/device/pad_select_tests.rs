@@ -79,6 +79,57 @@ fn shown(s: &Studio) -> usize {
     s.instruments.open[0].pick
 }
 
+#[test]
+fn mixed_pad_outputs_show_the_last_pressed_pads_destination() {
+    let (mut s, g, t, id) = window("Drum Kit");
+    fill(&mut s, id, 0);
+    fill(&mut s, id, 1);
+    assert!(
+        s.run_command("track.add.bus", json!({"name":"Kick Bus"})),
+        "{:?}",
+        s.error
+    );
+    let bus = s
+        .project()
+        .tracks
+        .values()
+        .find(|t| t.name == "Kick Bus")
+        .unwrap()
+        .id;
+    assert!(
+        s.run_command(
+            "plugin.pad_output.set",
+            json!({"id":id,"pads":[{"pad":"A1"}],"to":bus}),
+        ),
+        "{:?}",
+        s.error
+    );
+    let row = |s: &Studio| {
+        let x = plugin(s, t);
+        let def = s.instruments.def_of(&x).unwrap();
+        let r = s.instruments.frame(0, &g);
+        let name = x
+            .pad_outputs
+            .get(&shown(s))
+            .and_then(|to| s.project().tracks.get(to).map(|t| t.name.clone()));
+        s.instruments
+            .body_named(r, &x, def, name.as_deref())
+            .spots
+            .into_iter()
+            .find(|x| x.mark == Mark::Output)
+            .unwrap()
+            .text
+    };
+    press(&mut s, &g, id, 0, Mods::NONE);
+    press(&mut s, &g, id, 1, Mods::ctrl());
+    assert_eq!(shown(&s), 1);
+    assert_eq!(row(&s), "Main");
+    press(&mut s, &g, id, 1, Mods::NONE);
+    press(&mut s, &g, id, 0, Mods::ctrl());
+    assert_eq!(shown(&s), 0);
+    assert_eq!(row(&s), "Kick Bus");
+}
+
 /// The 0..1 value of a pad's `id` in the song (its default when it keeps none).
 fn value(s: &Studio, t: TrackId, pad: usize, id: &str) -> Option<f64> {
     plugin(s, t).params.get(&pad_key(pad, id)).copied()

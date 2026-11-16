@@ -43,6 +43,92 @@ fn song() -> Session {
     song_with_bus(false)
 }
 
+fn output(s: &Session) -> Option<TrackId> {
+    s.project().track(TrackId(1)).unwrap().inserts[0]
+        .pad_outputs
+        .get(&0)
+        .copied()
+}
+
+#[test]
+fn emptying_a_pad_clears_its_output_and_undo_restores_it() {
+    let mut s = song_with_bus(true);
+    s.run_value(
+        "plugin.samples.add",
+        json!({"id":"plg_2","file":"old.wav","pad":"A1"}),
+        &RunOptions::human(),
+    )
+    .unwrap();
+    s.run_value(
+        "plugin.pad_output.set",
+        json!({"id":"plg_2","pads":[{"pad":"A1"}],"to":"trk_3"}),
+        &RunOptions::human(),
+    )
+    .unwrap();
+    assert_eq!(output(&s), Some(TrackId(3)));
+    s.run_value(
+        "plugin.samples.remove",
+        json!({"id":"plg_2","pad":"A1"}),
+        &RunOptions::human(),
+    )
+    .unwrap();
+    assert_eq!(output(&s), None);
+    s.undo(1).unwrap();
+    assert_eq!(output(&s), Some(TrackId(3)));
+    s.redo(1).unwrap();
+    assert_eq!(output(&s), None);
+    s.run_value(
+        "plugin.samples.add",
+        json!({"id":"plg_2","file":"new.wav","pad":"A1"}),
+        &RunOptions::human(),
+    )
+    .unwrap();
+    assert_eq!(output(&s), None);
+}
+
+#[test]
+fn replacing_samples_clears_the_old_pad_output() {
+    let mut s = song_with_bus(true);
+    for (pad, file) in [("A1", "one.wav"), ("A2", "two.wav")] {
+        s.run_value(
+            "plugin.samples.add",
+            json!({"id":"plg_2","file":file,"pad":pad}),
+            &RunOptions::human(),
+        )
+        .unwrap();
+    }
+    s.run_value(
+        "plugin.pad_output.set",
+        json!({"id":"plg_2","pads":[{"pad":"A1"},{"pad":"A2"}],"to":"trk_3"}),
+        &RunOptions::human(),
+    )
+    .unwrap();
+    s.run_value(
+        "plugin.samples.add",
+        json!({"id":"plg_2","file":"replacement.wav","pad":"A1","replace":true}),
+        &RunOptions::human(),
+    )
+    .unwrap();
+    assert!(
+        s.project().track(TrackId(1)).unwrap().inserts[0]
+            .pad_outputs
+            .is_empty()
+    );
+    s.undo(1).unwrap();
+    assert_eq!(
+        s.project().track(TrackId(1)).unwrap().inserts[0]
+            .pad_outputs
+            .len(),
+        2
+    );
+    s.redo(1).unwrap();
+    assert!(
+        s.project().track(TrackId(1)).unwrap().inserts[0]
+            .pad_outputs
+            .is_empty()
+    );
+}
+
 #[test]
 fn setting_main_and_a_new_bus_is_one_undo_step() {
     let mut s = song();

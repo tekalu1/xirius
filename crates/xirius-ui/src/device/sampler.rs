@@ -722,18 +722,15 @@ fn mode_rows(def: &BuiltinDef, b: &mut Body, rx: f32, rw: f32, mut y: f32) -> f3
     y + SEG_H + GAP
 }
 
-fn output_row(b: &mut Body, plugin: Option<&Plugin>, pad: usize, x: f32, w: f32, y: f32) -> f32 {
+fn output_row(b: &mut Body, output_name: Option<&str>, x: f32, w: f32, y: f32) -> f32 {
     b.names.push(name(
         Rect::new(x, y + (ROW_H - NAME_H) / 2.0, 68.0, NAME_H),
         "Output",
     ));
-    let to = plugin
-        .and_then(|p| p.pad_outputs.get(&pad))
-        .map_or_else(|| "Main".to_string(), ToString::to_string);
     b.spots.push(Spot::new(
         Rect::new(x + 74.0, y, (w - 74.0).clamp(72.0, 116.0), ROW_H),
         Mark::Output,
-        to,
+        output_name.unwrap_or("Main"),
     ));
     y + ROW_H + GAP
 }
@@ -853,7 +850,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         // one on it does not move it: the plane takes the editor's place (as far as a
         // sample's row, one name and its default values reach), the voice sits under it
         // where it does for a pad with a sample, dim and out of reach.
-        let y = output_row(&mut b, filled, pick, rx, rw, top + ROW_H + GAP);
+        let y = output_row(&mut b, s.output_name, rx, rw, top + ROW_H + GAP);
         let mut at = Body::default();
         let mut ey = mode_rows(def, &mut at, rx, rw, y) + LAYER_H + GAP;
         ey += sample_row(def, s.values, &mut at, (rx, ey), rw, "x") + GAP;
@@ -891,7 +888,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         Rect::new(rx + rw - CHOKE_W, top, CHOKE_W, ROW_H),
     ));
     let mut y = mode_rows(def, &mut b, rx, rw, top + ROW_H + GAP);
-    y = output_row(&mut b, filled, pick, rx, rw, y);
+    y = output_row(&mut b, s.output_name, rx, rw, y);
     let layer = s.layer.min(files.len() - 1);
     b.names.push(name(
         Rect::new(rx, y + (LAYER_H - NAME_H) / 2.0, 48.0, NAME_H),

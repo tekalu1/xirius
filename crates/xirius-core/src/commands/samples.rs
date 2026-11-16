@@ -330,6 +330,7 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         // The pads' own values go with their files: a file dropped there later does not
         // sound with the old Choke or Trigger (L2-smp-2).
         x.samples.clear();
+        x.pad_outputs.clear();
         x.params
             .retain(|k, _| !matches!(scope(def, k), Some(Scope::File(_) | Scope::Pad(_))));
     }
@@ -540,6 +541,8 @@ pub fn drop_files(def: &BuiltinDef, x: &mut Plugin, gone: &[bool]) {
         }
     }
     x.params = params;
+    x.pad_outputs
+        .retain(|pad, _| kept.get(*pad).copied().unwrap_or(false));
     let mut i = 0;
     x.samples.retain(|_| {
         i += 1;

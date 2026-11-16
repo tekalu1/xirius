@@ -400,6 +400,8 @@ pub struct Shape<'a> {
     pub layer: usize,
     /// The Drum Kit's bank shown while it is not the chosen pad's.
     pub bank: Option<usize>,
+    /// The chosen pad's resolved destination name, when the caller has the song.
+    pub output_name: Option<&'a str>,
 }
 
 impl Shape<'_> {

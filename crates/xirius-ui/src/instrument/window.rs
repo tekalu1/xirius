@@ -601,6 +601,16 @@ impl Windows {
     /// The body of the window whose frame is `r`, on the screen, for the
     /// values it shows and the band chosen.
     pub(crate) fn body(&self, r: Rect, plugin: &Plugin, def: &BuiltinDef) -> Body {
+        self.body_named(r, plugin, def, None)
+    }
+
+    pub(crate) fn body_named(
+        &self,
+        r: Rect,
+        plugin: &Plugin,
+        def: &BuiltinDef,
+        output_name: Option<&str>,
+    ) -> Body {
         let w = self.win_of(plugin.id);
         // A layer's edge dragged shows where it goes before the song takes it.
         let moved;
@@ -631,6 +641,7 @@ impl Windows {
             self.band(plugin.id),
             Some(plugin),
             w.map_or((0, 0, None), |w| (w.pick, w.layer, w.bank)),
+            output_name,
         );
         if let Some(keyboard) = &mut b.keyboard {
             *keyboard = play::Keyboard::new(
@@ -1452,6 +1463,7 @@ pub(crate) fn body_of(
     band: usize,
     plugin: Option<&Plugin>,
     (pick, layer, bank): (usize, usize, Option<usize>),
+    output_name: Option<&str>,
 ) -> Body {
     let room = r.h - title_bar::BAR_H;
     let lay = |w: f32| {
@@ -1465,6 +1477,7 @@ pub(crate) fn body_of(
                 pick,
                 layer,
                 bank,
+                output_name,
             },
         )
     };
@@ -2609,13 +2622,11 @@ fn paint_window(
                 _ => None,
             }
         });
-        let mut body = ins.body(r, plugin, def);
-        if let Some(to) = plugin.pad_outputs.get(&w.pick)
-            && let Some(bus) = studio.project().tracks.get(to)
-            && let Some(row) = body.spots.iter_mut().find(|s| s.mark == Mark::Output)
-        {
-            row.text = bus.name.clone();
-        }
+        let output_name = plugin
+            .pad_outputs
+            .get(&w.pick)
+            .and_then(|to| studio.project().tracks.get(to).map(|bus| bus.name.clone()));
+        let mut body = ins.body_named(r, plugin, def, output_name.as_deref());
         if let Some(preview) = ins.preview.as_ref().filter(|v| v.plugin == plugin.id) {
             super::kit_drag::ghost(&mut body, preview);
         }

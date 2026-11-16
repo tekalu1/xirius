@@ -1137,6 +1137,7 @@ impl Studio {
             .get(&track)
             .and_then(|t| t.inserts.iter().find(|x| x.id == plugin));
         let shape = layout::Shape {
+            output_name: None,
             w: win.map_or_else(|| layout::natural_w(def), |w| w.body.0),
             band: self.instruments.band(plugin),
             values,
