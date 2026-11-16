@@ -944,6 +944,17 @@ async fn each_permission_level_answers_the_ai_with_its_reason() {
     let r = c.call("project_save", json!({})).await;
     assert_eq!(r["result"]["isError"], false, "{r}");
     assert_eq!(payload(&r)["ok"], true, "{r}");
+    // The server and its runs hold the song until they end; the song closes in the folder.
+    drop(c);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while Arc::strong_count(&song) > 1 {
+        assert!(
+            std::time::Instant::now() < end,
+            "the server never let go of the song"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    drop(song);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
