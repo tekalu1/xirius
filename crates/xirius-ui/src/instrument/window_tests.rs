@@ -595,16 +595,11 @@ fn an_effects_preset_list_checks_the_preset_it_is_at() {
 
 #[test]
 fn the_tag_keeps_its_preset_in_a_song_opened_again() {
+    let folder = crate::shot::TestFolder::new("xirius-ui-inst-tag-reopen-");
     let (mut s, _, t, _) = studio();
     let id = compressor(&mut s, t);
     assert!(s.load_preset(id, "ドラムをまとめる"));
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let dir = root.join(format!("target/inst-tag-reopen-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = folder.path().join("song");
     s.command(|song| song.save_as(&dir));
     assert!(s.error.is_none(), "{:?}", s.error);
     // A fresh start opens the song: the device keeps its preset's name in it.
@@ -625,7 +620,6 @@ fn the_tag_keeps_its_preset_in_a_song_opened_again() {
         s.instruments.tag_of(&insert(&s, id)),
         ("ドラムをまとめる".to_string(), true)
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -671,6 +665,7 @@ fn the_tag_keeps_a_preset_loaded_from_the_cli() {
 /// 「ドラムをまとめる」 it opens again as that, its knobs reading as they did.
 #[test]
 fn an_old_songs_compressor_opens_at_its_preset() {
+    let folder = crate::shot::TestFolder::new("xirius-ui-comp-old-preset-");
     let (mut s, _, t, _) = studio();
     assert!(s.run_command(
         "plugin.add",
@@ -708,13 +703,7 @@ fn an_old_songs_compressor_opens_at_its_preset() {
             .collect()
     };
     let before = texts(&insert(&s, comp));
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let dir = root.join(format!("target/comp-old-preset-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = folder.path().join("song");
     s.command(|song| song.save_as(&dir));
     assert!(s.error.is_none(), "{:?}", s.error);
     // The song as the version before wrote it: none of the new knobs.
@@ -742,7 +731,6 @@ fn an_old_songs_compressor_opens_at_its_preset() {
     let mut s = Studio::sample();
     s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
     assert!(s.error.is_none(), "{:?}", s.error);
-    let _ = std::fs::remove_dir_all(&dir);
     s.show_instrument(t, comp);
     s.instruments.detached_target = Some(comp);
     let x = insert(&s, comp);

@@ -170,8 +170,10 @@ fn text(s: &mut Studio) {
         .find(|v| v[0] == "--shot")
         .map(|v| std::path::PathBuf::from(&v[1]))
         .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join(format!("../../target/plugin-keys-{}", std::process::id()))
+            crate::shot::script_dir(|| {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join(format!("../../target/plugin-keys-{}", std::process::id()))
+            })
         });
     std::fs::create_dir_all(&dir).unwrap();
     let local = s
@@ -265,6 +267,7 @@ mod tests {
     #[test]
     fn native_text_stays_in_the_editor_and_frame_space_toggles_local_and_host_playback() {
         let _records = crate::shot::CrashRecords::new();
+        let _folder = crate::shot::TestFolder::lent("xirius-ui-plugin-keys-");
         for mode in [0, 1] {
             let mut s = Studio::sample();
             stage(&mut s, mode);

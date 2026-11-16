@@ -187,10 +187,8 @@ mod tests {
     }
     #[test]
     fn switches_persist_and_control_the_clip_drag_after_a_fresh_launch() {
-        let path = std::env::current_dir()
-            .unwrap()
-            .join("target")
-            .join(format!("automation-prefs-test-{}", std::process::id()));
+        let folder = crate::shot::TestFolder::new("xirius-ui-automation-prefs-");
+        let path = folder.path().join("settings");
         let mut s = Studio::sample();
         s.song.load_settings(&path);
         s.settings_reload();
@@ -268,6 +266,5 @@ mod tests {
             s.arrange_spot(&g, from.0, from.1),
             Spot::Clip { .. }
         ));
-        let _ = std::fs::remove_dir_all(path);
     }
 }

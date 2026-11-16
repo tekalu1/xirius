@@ -51,12 +51,13 @@ fn prepare(s: &mut Studio, _: u8) {
     });
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let next = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target")
-        .join(format!(
-            "automation-pdc-ui-{}-{next}",
-            crate::shot::fixture_run_id()
-        ));
+    let dir = crate::shot::script_dir(|| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")
+    })
+    .join(format!(
+        "automation-pdc-ui-{}-{next}",
+        crate::shot::fixture_run_id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("pdc.wav");
     xirius_session::export::write_wav(&file, &vec![0.125; 192000], &vec![0.125; 192000], 48000, 32)
@@ -163,6 +164,7 @@ mod tests {
     #[test]
     fn the_saved_pdc_song_opens_its_lane_through_the_track_and_key() {
         xirius_test_vst3::fixture_marker();
+        let _folder = crate::shot::TestFolder::lent("xirius-ui-automation-pdc-");
         let mut s = Studio::sample();
         prepare(&mut s, 0);
         let t = track(&s, "Vocal");

@@ -7,16 +7,9 @@ use crate::arrange::probe::{clip_mid, track};
 use crate::popup::Look;
 use crate::studio::{DrawerTab, Geometry, Hit, Studio};
 
-/// Saves the song in a folder of its own and writes a tone where the Vocal clip's file is.
-fn with_sound(s: &mut Studio, name: &str) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let dir = root.join(format!("target/ctx-audio-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    s.command(|song| song.save_as(&dir));
+/// Saves the song in `dir` and writes a tone where the Vocal clip's file is.
+fn with_sound(s: &mut Studio, dir: &std::path::Path) {
+    s.command(|song| song.save_as(dir));
     assert!(s.error.is_none(), "{:?}", s.error);
     let t = track(s, "Vocal");
     let p = s.project();
@@ -519,16 +512,9 @@ fn right_pressing_a_clip_releases_old_automation_point_selection() {
 
 #[test]
 fn an_audio_clips_reveal_row_resolves_the_file_from_the_song_folder() {
+    let folder = crate::shot::TestFolder::new("xirius-ui-ctx2-reveal-");
     let (mut s, g) = studio();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let dir = root.join(format!(
-        "target/ctx2-reveal-{}",
-        crate::shot::fixture_run_id()
-    ));
+    let dir = folder.path().join("song");
     s.command(|song| song.save_as(&dir));
     assert!(s.error.is_none(), "{:?}", s.error);
     let t = track(&s, "Vocal");
@@ -678,8 +664,9 @@ fn following_the_tempo_is_one_step_and_shows_a_check() {
 #[test]
 fn reversing_from_the_menu_is_one_step_and_a_frozen_track_offers_to_unfreeze() {
     let _tmp = crate::shot::TestTemp::new();
+    let folder = crate::shot::TestFolder::new("xirius-ui-ctx-audio-");
     let (mut s, g) = studio();
-    with_sound(&mut s, "reverse");
+    with_sound(&mut s, &folder.path().join("reverse"));
     let vocal = track(&s, "Vocal");
     let reversed = |s: &Studio| match &s.project().tracks[&vocal].clips[0].body {
         xirius_core::model::ClipBody::Audio { process, .. } => process.reverse,
@@ -854,8 +841,9 @@ fn a_bounce_in_place_shows_on_its_clip_and_makes_no_row() {
 
 #[test]
 fn a_normalize_raises_the_gain_and_says_by_how_much_over_the_clip_for_a_moment() {
+    let folder = crate::shot::TestFolder::new("xirius-ui-ctx-audio-");
     let (mut s, g) = studio();
-    with_sound(&mut s, "normalize");
+    with_sound(&mut s, &folder.path().join("normalize"));
     let vocal = track(&s, "Vocal");
     let gain = |s: &Studio| match &s.project().tracks[&vocal].clips[0].body {
         xirius_core::model::ClipBody::Audio { gain_db, .. } => *gain_db,
