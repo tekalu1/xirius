@@ -216,7 +216,12 @@ pub fn body(def: &BuiltinDef, s: &Shape<'_>) -> Body {
     let picker_y = graph.bottom() + 38.0;
     let picker_w = if narrow { 100.0 } else { 112.0 };
     let key_y = picker_y + 46.0;
-    let white_w = (w - PAD * 2.0) / 7.0;
+    let keyboard_w = if narrow {
+        w - PAD * 2.0
+    } else {
+        w * 0.58 - PAD
+    };
+    let white_w = keyboard_w / 7.0;
     let keys = (0..12)
         .map(|n| {
             let (column, black) = match n {

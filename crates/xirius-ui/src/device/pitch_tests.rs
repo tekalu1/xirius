@@ -24,6 +24,19 @@ fn pitch_ui_has_the_approved_controls_and_graph_at_both_widths() {
         assert_eq!(body.slot(0).unwrap().look, Look::Menu);
         assert_eq!(body.slot(1).unwrap().look, Look::Menu);
         assert!(body.slots.iter().all(|s| s.cell.bottom() <= body.h));
+        for key in &body.keys {
+            for slot in &body.slots {
+                let r = slot.cell;
+                assert!(
+                    key.r.right() <= r.x
+                        || key.r.x >= r.right()
+                        || key.r.bottom() <= r.y
+                        || key.r.y >= r.bottom(),
+                    "keyboard overlaps parameter {} at width {width}",
+                    slot.k
+                );
+            }
+        }
     }
 }
 
