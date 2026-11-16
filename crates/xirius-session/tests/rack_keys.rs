@@ -16,6 +16,7 @@ use xirius_session::graph::Select;
 
 fn gain(id: u64, key_from: Option<TrackId>) -> Plugin {
     Plugin {
+        pad_outputs: Default::default(),
         id: PluginId(id),
         name: format!("G{id}"),
         kind: PluginKind::Effect,

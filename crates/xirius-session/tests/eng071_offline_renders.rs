@@ -24,6 +24,7 @@ fn each_offline_render_plays_the_instance_it_opened() {
     });
     let mut track = Track::new(TrackId(100), TrackKind::Audio, "T".to_string());
     track.inserts.push(Plugin {
+        pad_outputs: Default::default(),
         samples: Vec::new(),
         id: PID,
         name: "Test".into(),

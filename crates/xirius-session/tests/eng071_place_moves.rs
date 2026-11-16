@@ -48,6 +48,7 @@ fn song_with(
 ) -> Project {
     let mut t = Track::new(TRACK, TrackKind::Audio, "T".to_string());
     let plugin = |id, isolation| Plugin {
+        pad_outputs: Default::default(),
         samples: Vec::new(),
         id,
         name: "Test".into(),

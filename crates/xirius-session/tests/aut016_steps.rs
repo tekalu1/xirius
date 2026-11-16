@@ -37,6 +37,7 @@ fn a_plug_in_in_a_host_tells_the_steps_of_its_switch() {
     let tid = TrackId(100);
     let mut t = Track::new(tid, TrackKind::Audio, "T");
     t.inserts.push(Plugin {
+        pad_outputs: Default::default(),
         samples: Vec::new(),
         id,
         name: "Test".into(),

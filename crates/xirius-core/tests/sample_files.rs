@@ -25,6 +25,7 @@ fn project_with_samples(samples: &[String]) -> Project {
     let mut p = Project::new("s");
     let mut t = Track::new(TrackId(1), TrackKind::Instrument, "Keys");
     t.inserts.push(Plugin {
+        pad_outputs: Default::default(),
         id: PluginId(2),
         name: "Sampler".into(),
         kind: PluginKind::Instrument,

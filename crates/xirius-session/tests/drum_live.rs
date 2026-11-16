@@ -781,6 +781,7 @@ fn failed_latency_case(before: bool) {
         if i == 0 {
             track.inserts.push(Plugin {
                 samples: vec![],
+                pad_outputs: Default::default(),
                 id: pid,
                 name: "Latency fixture".into(),
                 kind: PluginKind::Effect,

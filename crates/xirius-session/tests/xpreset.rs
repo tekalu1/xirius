@@ -952,6 +952,7 @@ fn y2_a_name_every_device_has_loads_onto_an_empty_track_with_device() {
 
 fn instrument(id: PluginId, format: &str, uid: &str) -> Plugin {
     Plugin {
+        pad_outputs: Default::default(),
         id,
         name: uid.to_string(),
         kind: PluginKind::Instrument,

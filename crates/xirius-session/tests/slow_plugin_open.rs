@@ -44,6 +44,7 @@ fn song(kind: PluginKind, uid: &str) -> Project {
     let id = TrackId(100);
     let mut t = Track::new(id, TrackKind::Audio, "Gt".to_string());
     t.inserts.push(Plugin {
+        pad_outputs: Default::default(),
         samples: Vec::new(),
         id: PluginId(1),
         name: "Test Latency".to_string(),

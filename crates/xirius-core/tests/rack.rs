@@ -25,6 +25,7 @@ fn fresh_id() -> impl FnMut() -> u64 {
 
 fn plugin(id: u64, kind: PluginKind) -> Plugin {
     Plugin {
+        pad_outputs: Default::default(),
         id: PluginId(id),
         name: format!("p{id}"),
         kind,

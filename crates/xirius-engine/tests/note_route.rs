@@ -194,6 +194,8 @@ fn overflowing_the_note_queue_releases_notes_without_restarting_them() {
             left: &mut left,
             right: &mut right,
             key: None,
+            pad_routes: None,
+            route_owner: 0,
         },
         &[],
     );
@@ -214,6 +216,8 @@ fn overflowing_the_note_queue_releases_notes_without_restarting_them() {
             left: &mut left,
             right: &mut right,
             key: None,
+            pad_routes: None,
+            route_owner: 0,
         },
         &[],
     );

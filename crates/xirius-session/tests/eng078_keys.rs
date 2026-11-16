@@ -17,6 +17,7 @@ use xirius_session::graph::{Mix, Scope, Select};
 
 fn effect(id: u64, format: &str, uid: &str, sidechain: Option<Sidechain>) -> Plugin {
     Plugin {
+        pad_outputs: Default::default(),
         id: PluginId(id),
         name: uid.to_string(),
         kind: PluginKind::Effect,

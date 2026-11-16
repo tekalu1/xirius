@@ -128,15 +128,18 @@ fn sends_buses_and_master_inserts_are_compensated() {
         &[
             Compensation {
                 output: 0,
-                sends: vec![100]
+                sends: vec![100],
+                pad_outputs: vec![],
             },
             Compensation {
                 output: 140,
-                sends: vec![40]
+                sends: vec![40],
+                pad_outputs: vec![],
             },
             Compensation {
                 output: 142,
-                sends: vec![]
+                sends: vec![],
+                pad_outputs: vec![],
             },
         ]
     );
@@ -145,11 +148,13 @@ fn sends_buses_and_master_inserts_are_compensated() {
         &[
             Compensation {
                 output: 0,
-                sends: vec![]
+                sends: vec![],
+                pad_outputs: vec![],
             },
             Compensation {
                 output: 0,
-                sends: vec![]
+                sends: vec![],
+                pad_outputs: vec![],
             },
         ]
     );
@@ -164,11 +169,13 @@ fn compensate_handles_a_bus_that_nothing_feeds() {
         latency: 12,
         output: Output::Master,
         sends: vec![],
+        pad_outputs: vec![],
     }];
     let buses = [Route {
         latency: 30,
         output: Output::Master,
         sends: vec![],
+        pad_outputs: vec![],
     }];
     let (t, b, total) = compensate(&tracks, &buses, 0);
     // The empty bus is 30 late on its own, so the track waits for it.

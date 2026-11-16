@@ -25,6 +25,7 @@ const PID: PluginId = PluginId(1);
 fn track(isolation: PluginIsolation, uid: &str) -> Arc<Track> {
     let mut t = Track::new(TrackId(100), TrackKind::Audio, "T".to_string());
     t.inserts.push(Plugin {
+        pad_outputs: Default::default(),
         samples: Vec::new(),
         id: PID,
         name: "Test".into(),

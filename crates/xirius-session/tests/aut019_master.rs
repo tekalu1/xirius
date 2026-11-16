@@ -34,6 +34,7 @@ fn catalog() -> (Arc<Catalog>, String) {
 /// The fixture effect, `latency` of 256 frames late.
 fn fixture(id: u64, uid: &str, latency: f64) -> Plugin {
     Plugin {
+        pad_outputs: Default::default(),
         samples: Vec::new(),
         id: PluginId(id),
         name: format!("Test Latency {id}"),

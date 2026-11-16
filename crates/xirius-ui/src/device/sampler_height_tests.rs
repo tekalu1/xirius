@@ -11,6 +11,7 @@ use super::layout::{self, Body};
 use super::sampler;
 use crate::instrument::window::Part;
 use crate::instrument::{Pick, current};
+use crate::popup::PopupKind;
 use crate::studio::{Geometry, Studio};
 use crate::tools::Mods;
 
@@ -261,4 +262,37 @@ fn the_narrow_stacked_form_follows_the_same_rule() {
         );
         row_inside(&s2.0, &s2.1, s2.2);
     }
+}
+
+#[test]
+fn output_sits_above_layers_and_inside_each_kit_window() {
+    for w in WIDTHS {
+        let (mut s, g, t, id) = window("Drum Kit");
+        open_at(&mut s, t, w);
+        fill(&mut s, &g, id, 0);
+        let b = body(&s, &g, t);
+        let output = b
+            .spots
+            .iter()
+            .find(|x| x.mark == layout::Mark::Output)
+            .unwrap();
+        let label = b.names.iter().find(|x| x.text == "Output").unwrap();
+        let layers = b.names.iter().find(|x| x.text == "Layers").unwrap();
+        assert!(label.r.y < layers.r.y, "{w}");
+        assert!(output.r.bottom() <= foot(&s, &g) + 0.01, "{w}");
+        assert_eq!(output.text, "Main");
+    }
+}
+
+#[test]
+fn pad_output_uses_the_searchable_pick_list() {
+    let (mut s, _, _, id) = window("Drum Kit");
+    let mut list = s.pick_view(PopupKind::PadOutput(id)).unwrap();
+    let rows = list.visible();
+    assert_eq!(rows.first().unwrap().label, "Main");
+    assert_eq!(rows.last().unwrap().label, "New Bus");
+    list.field.value = "new".into();
+    let found = list.visible();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].to(), "new");
 }

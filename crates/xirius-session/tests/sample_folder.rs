@@ -15,6 +15,7 @@ fn session(dir: &Path, uid: &str) -> Session {
     let mut p = Project::new("s");
     let mut t = Track::new(TrackId(1), TrackKind::Instrument, "Drums");
     t.inserts.push(Plugin {
+        pad_outputs: Default::default(),
         id: PluginId(2),
         name: "Drum Kit".into(),
         kind: PluginKind::Instrument,

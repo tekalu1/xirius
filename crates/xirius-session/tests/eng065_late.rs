@@ -25,6 +25,7 @@ impl Drop for Held {
 
 fn plugin(id: u64, uid: &str) -> Plugin {
     Plugin {
+        pad_outputs: Default::default(),
         samples: Vec::new(),
         id: PluginId(id),
         name: format!("Test {id}"),

@@ -20,6 +20,7 @@ const OPEN: Duration = Duration::from_millis(900);
 fn track(i: u64, uid: &str) -> Arc<Track> {
     let mut t = Track::new(TrackId(100 + i), TrackKind::Audio, format!("T{i}"));
     t.inserts.push(Plugin {
+        pad_outputs: Default::default(),
         samples: Vec::new(),
         id: PluginId(1 + i),
         name: format!("Test {i}"),

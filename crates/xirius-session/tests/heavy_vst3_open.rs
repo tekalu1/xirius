@@ -43,6 +43,7 @@ fn real_heavy_plugins_prepare_without_failed_tracks() {
         let id = TrackId(100 + i as u64);
         let mut t = Track::new(id, TrackKind::Audio, format!("T{i}"));
         t.inserts.push(Plugin {
+            pad_outputs: Default::default(),
             samples: Vec::new(),
             id: PluginId(i as u64 + 1),
             name: e.name.clone(),

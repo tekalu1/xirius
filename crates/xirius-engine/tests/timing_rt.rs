@@ -34,6 +34,8 @@ fn a_timed_block_allocates_nothing_even_after_the_ring_wraps() {
                     left: &mut l,
                     right: &mut r,
                     key: None,
+                    pad_routes: None,
+                    route_owner: 0,
                 },
                 &[],
             );

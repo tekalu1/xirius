@@ -106,6 +106,7 @@ fn song(wav: &Path, uid: &str, state: Option<String>) -> Project {
         },
     });
     track.inserts.push(Plugin {
+        pad_outputs: Default::default(),
         samples: Vec::new(),
         id: PLUGIN,
         name: xirius_test_clap::NAME.into(),

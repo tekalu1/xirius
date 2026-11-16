@@ -40,6 +40,7 @@ fn plugin_states_pulled_twice_report_which_differ() {
         let id = TrackId(100);
         let mut t = Track::new(id, TrackKind::Instrument, "T".to_string());
         let model_plugin = Plugin {
+            pad_outputs: Default::default(),
             samples: Vec::new(),
             id: PluginId(1),
             name: entry.name.clone(),

@@ -31,6 +31,7 @@ fn entry(dll: PathBuf) -> Entry {
 }
 fn plugin(e: &Entry) -> Plugin {
     Plugin {
+        pad_outputs: Default::default(),
         id: PluginId(9),
         name: e.name.clone(),
         kind: e.kind,

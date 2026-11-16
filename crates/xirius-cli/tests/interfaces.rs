@@ -289,3 +289,26 @@ fn pitch_range_remains_settable_through_cli_and_mcp() {
         );
     }
 }
+
+#[test]
+fn pad_output_uses_the_same_cli_and_mcp_command() {
+    for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
+        let track =
+            endpoint.run("track.add.instrument", json!({"name":"Drums"}))["data"]["id"].clone();
+        let kit =
+            endpoint.run("plugin.add", json!({"track":track,"name":"Drum Kit"}))["data"]["id"]
+                .clone();
+        let made = endpoint.run(
+            "plugin.pad_output.set",
+            json!({"id":kit,"pads":[{"pad":"A1"},{"pad":"A2"}],"active":"A2","to":"new"}),
+        );
+        let bus = made["data"]["output"].as_str().unwrap();
+        assert!(bus.starts_with("trk_"), "{made}");
+        endpoint.run("history.undo", json!({}));
+        let main = endpoint.run(
+            "plugin.pad_output.set",
+            json!({"id":kit,"pads":[{"pad":"A1"}],"to":"Main"}),
+        );
+        assert_eq!(main["data"]["output"], "main");
+    }
+}

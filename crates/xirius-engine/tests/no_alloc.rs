@@ -8,10 +8,55 @@ use xirius_engine::builtin::{Delay, Gain, Sine, SineSynth};
 use xirius_engine::click::Click;
 use xirius_engine::engine::{self, EngineConfig};
 use xirius_engine::{
-    AudioData, BusSpec, CTRL_PITCH_BEND, Command, KeyFrom, KeySourceSpec, KeySpec, MixSpec,
-    NoteKind, Plan, ProcessSetup, Region, RenderMode, SendSpec, TimedNote, Timeline, TrackSlot,
-    TrackSpec,
+    AudioData, AudioIo, BusSpec, CTRL_PITCH_BEND, Command, KeyFrom, KeySourceSpec, KeySpec,
+    MixSpec, NoteEvent, NoteKind, Plan, ProcessSetup, Processor, Region, RenderMode, SendSpec,
+    TimedNote, Timeline, TrackSlot, TrackSpec,
 };
+
+struct RoutedTone;
+
+impl Processor for RoutedTone {
+    fn name(&self) -> &str {
+        "routed tone"
+    }
+    fn prepare(&mut self, _: &ProcessSetup) {}
+    fn process(&mut self, io: &mut AudioIo<'_>, _: &[NoteEvent]) {
+        io.clear();
+        let n = io.frames();
+        let route = io.pad_routes.as_deref_mut().unwrap().first_mut().unwrap();
+        route.left[..n].fill(0.3);
+        route.right[..n].fill(0.3);
+    }
+}
+
+#[test]
+fn a_routed_pad_and_its_bus_render_without_audio_thread_allocation() {
+    let mut kit = TrackSpec::new("kit", Box::new(RoutedTone));
+    kit.pad_outputs.push((0, 0, 0));
+    let setup = ProcessSetup {
+        sample_rate: 48_000.0,
+        max_block: 64,
+        mode: RenderMode::Realtime,
+    };
+    let plan = Plan::build(
+        MixSpec {
+            tracks: vec![TrackSlot::New(kit)],
+            buses: vec![BusSpec::new("pad")],
+            ..MixSpec::default()
+        },
+        setup,
+        None,
+    )
+    .unwrap();
+    let (mut audio, _) = engine::create(plan, EngineConfig::default());
+    let mut out = [0.0f32; 128];
+    reset_violation_count();
+    for _ in 0..40 {
+        audio.render(&mut out, 2);
+    }
+    assert_eq!(violation_count(), 0);
+    assert!(out.iter().any(|x| *x != 0.0));
+}
 
 #[global_allocator]
 static ALLOC: AllocDisabler = AllocDisabler;

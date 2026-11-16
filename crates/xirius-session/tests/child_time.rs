@@ -91,6 +91,7 @@ fn a_plugin_in_its_own_process_reads_as_the_time_it_took_there() {
             },
         });
         track.inserts.push(Plugin {
+            pad_outputs: Default::default(),
             samples: Vec::new(),
             id: pid,
             name: "Test".into(),

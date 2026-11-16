@@ -678,6 +678,14 @@ fn every_history_command_undoes_and_redoes() {
         json!({"instrument": "Sampler", "arm": true,
                "notes": [{"at": 0, "pitch": 60, "length": 480}]}),
     );
+    let kit = rig.step(
+        "track.add.with-instrument",
+        json!({"instrument": "Drum Kit"}),
+    );
+    rig.step(
+        "plugin.pad_output.set",
+        json!({"id": kit.data["plugin"], "pads": [{"pad": "A1"}], "to": bus}),
+    );
     // the files of a Sampler and a Drum Kit (PLG-067, PLG-068)
     rig.step(
         "plugin.samples.add",

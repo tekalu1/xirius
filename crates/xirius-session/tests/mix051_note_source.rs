@@ -74,6 +74,7 @@ fn song(file: &std::path::Path) -> (Project, TrackId, PluginId) {
         },
     });
     voice.inserts.push(Plugin {
+        pad_outputs: Default::default(),
         id: effect_id,
         name: "Pitch Correction".into(),
         kind: PluginKind::Effect,

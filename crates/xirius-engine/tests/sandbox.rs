@@ -132,6 +132,8 @@ fn automation_sent_before_a_block_matches_the_same_process() {
                 left: &mut l,
                 right: &mut r,
                 key: None,
+                pad_routes: None,
+                route_owner: 0,
             },
             &[],
         );
@@ -197,6 +199,8 @@ fn automation_keeps_its_offsets_inside_the_input_block() {
                 left: &mut l,
                 right: &mut r,
                 key: None,
+                pad_routes: None,
+                route_owner: 0,
             },
             &[],
         );
