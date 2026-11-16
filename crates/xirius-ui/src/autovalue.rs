@@ -90,6 +90,15 @@ pub fn text(target: &AutoTarget, v: f64) -> String {
                 }
             }
         }
+        AutoTarget::Param(_, key) if crate::arrange::pitch_param(key).is_some() => {
+            let spec = crate::arrange::pitch_param(key).expect("checked");
+            let plain = spec.to_plain(v);
+            if matches!(spec.curve, Curve::Choice(_) | Curve::Toggle) {
+                spec.text(plain)
+            } else {
+                format!("{plain:.0}")
+            }
+        }
         AutoTarget::Param(..) | AutoTarget::Control(_) => format!("{}", (v * 100.0).round()),
     }
 }

@@ -579,11 +579,22 @@ pub fn value_text(target: &AutoTarget, v: f64) -> String {
         .into(),
         AutoTarget::Param(_, key) => match pad_param(key) {
             Some((_, spec)) => crate::device::control::text(spec, v),
+            None if pitch_param(key).is_some() => {
+                crate::device::control::text(pitch_param(key).expect("checked"), v)
+            }
             None => format!("{v:.2}"),
         },
         AutoTarget::Control(c) if c.is_button() => if v >= 0.5 { "オン" } else { "オフ" }.into(),
         AutoTarget::Control(_) => format!("{:.0} %", v * 100.0),
     }
+}
+
+/// Pitch Correction's seven device parameters have unique catalog keys.
+pub fn pitch_param(key: &str) -> Option<&'static xirius_params::ParamSpec> {
+    xirius_params::PITCH_CORRECTION
+        .params
+        .iter()
+        .find(|p| p.id == key)
 }
 
 /// Whether a key is a sample file's value: `file<n>.<id>`.
