@@ -7,6 +7,34 @@ pub(super) fn defs() -> Vec<CommandDef> {
     let plugin = || ArgDef::id("id", IdKind::Plugin, "ノートを受けるプラグイン").req();
     vec![
         edit(
+            "plugin.pitch_key.toggle",
+            "パラメーターを設定",
+            vec![
+                plugin(),
+                ArgDef::int("relative", "Key").range(0.0, 11.0).req(),
+            ],
+            |p, _, a| {
+                let id: PluginId = a.id("id")?;
+                let relative =
+                    u8::try_from(a.i64("relative")?).map_err(|_| CmdError::invalid("Key"))?;
+                let x = receiving_plugin(p, id)?;
+                if x.builtin().is_none_or(|def| def.uid != "pitch-correction") {
+                    return Err(CmdError::conflict("Pitch Correction"));
+                }
+                let scale = x.params.get("scale").copied().unwrap_or(0.0);
+                let next = xirius_params::pitch_correction::toggle_relative(scale, relative);
+                let mask = xirius_params::pitch_correction::scale_mask(next);
+                let next = match mask {
+                    xirius_params::pitch_correction::CHROMATIC => 0.0,
+                    xirius_params::pitch_correction::MAJOR => 1.0 / 3.0,
+                    xirius_params::pitch_correction::MINOR => 2.0 / 3.0,
+                    _ => next,
+                };
+                x.params.insert("scale".to_string(), next);
+                Ok(Output::msg("Key"))
+            },
+        ),
+        edit(
             "plugin.note_source.set",
             "プラグインのノートの送り元を設定します",
             vec![

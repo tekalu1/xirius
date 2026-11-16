@@ -167,6 +167,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("plugin.note_source.remove", "ノートの送り元を削除"),
     ("plugin.note_source.enable", "ノートの送り元を切り替え"),
     ("plugin.note_source.list", "ノートの送り元の一覧"),
+    ("plugin.pitch_key.toggle", "パラメーターを設定"),
     ("view.dock", "ドックを開閉"),
     ("track.reveal", "チャンネルを表示"),
     ("mixer.focus", "ミキサーでチャンネルを選択"),
