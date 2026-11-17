@@ -127,7 +127,7 @@ fn a_latency_notification_rebuilds_pdc_while_the_transport_keeps_playing() {
                     deactivated: false,
                     params: BTreeMap::new(),
                     state: None,
-                    isolation: PluginIsolation::InProcess,
+                    isolation: PluginIsolation::Shared,
                     sidechain: None,
                     note_source: None,
                     preset: None,
@@ -149,7 +149,7 @@ fn a_latency_notification_rebuilds_pdc_while_the_transport_keeps_playing() {
                 isolation: Some(if remote {
                     Isolation::Separate(exe)
                 } else {
-                    Isolation::InProcess
+                    Isolation::PerPlugin(xirius_engine::server::find_host())
                 }),
                 ..Default::default()
             },
@@ -183,7 +183,11 @@ fn a_latency_notification_rebuilds_pdc_while_the_transport_keeps_playing() {
                 host.sync(&p);
             }
         } else if scenario == 1 {
-            assert!(host.plugins().local(pid).unwrap().0.set_param(1, 0.5));
+            let link = host.plugins().link(pid).unwrap();
+            host.plugins()
+                .server_of(pid)
+                .unwrap()
+                .set_param(&link, "1", 0.5);
         } else if scenario == 2 {
             let state = xirius_vst3::PluginState {
                 component: 128u32.to_le_bytes().to_vec(),
@@ -196,11 +200,11 @@ fn a_latency_notification_rebuilds_pdc_while_the_transport_keeps_playing() {
                 "state is first applied to the live instance"
             );
         } else {
+            let link = host.plugins().link(pid).unwrap();
             host.plugins()
-                .local(pid)
+                .server_of(pid)
                 .unwrap()
-                .0
-                .edit_like_editor(1, &[0.5]);
+                .simulate_edit(&link, 1, &[0.5]);
         }
         let deadline = Instant::now() + Duration::from_secs(30);
         while audio.latency() == initial && Instant::now() < deadline {

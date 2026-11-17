@@ -66,6 +66,8 @@ pub struct HostConfig {
     pub catalog: Option<Arc<xirius_plugins::Catalog>>,
     /// Where VST3 plugins run (`None`: [`Isolation::default`]).
     pub isolation: Option<Isolation>,
+    /// Process preferences supplied by a caller with an isolated settings store.
+    pub process_prefs: Option<xirius_prefs::Prefs>,
     /// How long an in-process plugin's opening is waited for (`None`: [`OPEN_WAIT`]). Tests
     /// set a short one to reach the "does not answer" failure.
     pub open_wait: Option<Duration>,

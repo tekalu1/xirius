@@ -208,17 +208,10 @@ fn pull_check(isolation: Isolation, mode: PluginIsolation) {
     }
     let opts = RunOptions::human();
 
-    // The plugin's patch changes without a word.
-    if let Some(link) = host.plugins().link(id) {
-        let server = host.plugins().server_of(id).unwrap();
-        server.set_param(&link, "Latency", 0.5);
-    } else {
-        let (plugin, _) = host
-            .plugins()
-            .local(id)
-            .expect("the instance is in process");
-        assert!(plugin.set_param(1, 0.5));
-    }
+    // The host plugin's patch changes without a word.
+    let link = host.plugins().link(id).expect("external plugin has a host");
+    let server = host.plugins().server_of(id).unwrap();
+    server.set_param(&link, "Latency", 0.5);
     for _ in 0..40 {
         audio.render(&mut buffer, 2);
         host.poll();
@@ -275,18 +268,21 @@ fn pull_check(isolation: Isolation, mode: PluginIsolation) {
 }
 
 #[test]
-fn a_silent_patch_change_in_a_plugin_in_the_app_reaches_the_song_when_it_is_asked() {
-    pull_check(Isolation::InProcess, PluginIsolation::InProcess);
+fn a_silent_patch_change_in_a_default_host_reaches_the_song_when_it_is_asked() {
+    pull_check(
+        Isolation::PerPlugin(xirius_engine::server::find_host()),
+        PluginIsolation::Shared,
+    );
 }
 
 #[test]
-fn a_silent_patch_change_in_a_plugin_in_the_host_process_reaches_the_song_when_it_is_asked() {
+fn a_silent_patch_change_in_a_dedicated_host_reaches_the_song_when_it_is_asked() {
     let _records = CrashRecords::new();
     let Some(exe) = find_host() else {
         eprintln!("skipped: xirius-plugin-host is not built");
         return;
     };
-    pull_check(Isolation::Separate(exe), PluginIsolation::Shared);
+    pull_check(Isolation::PerPlugin(Some(exe)), PluginIsolation::Dedicated);
 }
 
 #[test]

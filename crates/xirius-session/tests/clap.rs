@@ -117,7 +117,7 @@ fn song(wav: &Path, uid: &str, state: Option<String>) -> Project {
         deactivated: false,
         params: BTreeMap::new(),
         state,
-        isolation: PluginIsolation::InProcess,
+        isolation: PluginIsolation::Shared,
         sidechain: None,
         note_source: None,
         preset: None,
@@ -183,7 +183,11 @@ fn a_clap_plugin_plays_with_its_state_and_an_edit_comes_into_the_song() {
 
     // In this process, with the song's state.
     let p = song(&wav, &uid, Some(state(0.25)));
-    let (mut host, mut audio) = start(&p, &catalog, Isolation::InProcess);
+    let (mut host, mut audio) = start(
+        &p,
+        &catalog,
+        Isolation::PerPlugin(xirius_engine::server::find_host()),
+    );
     settles_at(&mut host, &mut audio, 0.25);
     drop(audio);
     drop(host);
@@ -228,7 +232,11 @@ fn a_clap_plugin_plays_with_its_state_and_an_edit_comes_into_the_song() {
     drop(host);
 
     // The song as saved, opened anew in this process: the edit is in it.
-    let (mut host, mut audio) = start(s.project(), &catalog, Isolation::InProcess);
+    let (mut host, mut audio) = start(
+        s.project(),
+        &catalog,
+        Isolation::PerPlugin(xirius_engine::server::find_host()),
+    );
     settles_at(&mut host, &mut audio, 0.5);
 }
 
@@ -256,7 +264,11 @@ fn edt_134_the_names_a_clap_plugin_gives_its_keys_reach_the_loader_and_follow_it
         .collect();
 
     // In this process: the names of the song's state, read when it opened.
-    let (host, audio) = start(&p, &catalog, Isolation::InProcess);
+    let (host, audio) = start(
+        &p,
+        &catalog,
+        Isolation::PerPlugin(xirius_engine::server::find_host()),
+    );
     assert_eq!(kick(&host).as_deref(), Some(xirius_test_clap::SOFT_KICK));
     assert_eq!(host.plugins().note_names(PLUGIN)[1..], want[1..]);
     drop(audio);

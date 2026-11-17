@@ -81,6 +81,9 @@ impl Starting {
             builder.plugins_mut().set_open_wait(wait);
         }
         builder.set_catalog(config.catalog);
+        if let Some(prefs) = config.process_prefs {
+            builder.plugins_mut().set_process_prefs(prefs);
+        }
         if let Some(i) = config.isolation {
             builder.set_isolation(i);
         }

@@ -61,7 +61,7 @@ fn a_plugin_in_its_own_process_reads_as_the_time_it_took_there() {
     }
     writer.finalize().unwrap();
     let pid = PluginId(200);
-    for remote in [false, true] {
+    for remote in [true] {
         let isolation = if remote {
             let Some(exe) = find_host() else {
                 eprintln!("the child's time needs the plugin host binary");
@@ -69,7 +69,7 @@ fn a_plugin_in_its_own_process_reads_as_the_time_it_took_there() {
             };
             Isolation::Separate(exe)
         } else {
-            Isolation::InProcess
+            Isolation::PerPlugin(xirius_engine::server::find_host())
         };
         let mut p = Project::new("child time");
         let id = TrackId(100);
@@ -102,7 +102,7 @@ fn a_plugin_in_its_own_process_reads_as_the_time_it_took_there() {
             deactivated: false,
             params: BTreeMap::new(),
             state: None,
-            isolation: PluginIsolation::InProcess,
+            isolation: PluginIsolation::Shared,
             sidechain: None,
             note_source: None,
             preset: None,

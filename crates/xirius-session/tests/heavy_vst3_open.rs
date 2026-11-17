@@ -54,7 +54,7 @@ fn real_heavy_plugins_prepare_without_failed_tracks() {
             deactivated: false,
             params: BTreeMap::new(),
             state: None,
-            isolation: PluginIsolation::InProcess,
+            isolation: PluginIsolation::Shared,
             sidechain: None,
             note_source: None,
             preset: None,
@@ -67,7 +67,7 @@ fn real_heavy_plugins_prepare_without_failed_tracks() {
         HostConfig {
             catalog: Some(catalog),
             threaded_local: true,
-            isolation: Some(Isolation::InProcess),
+            isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
             ..Default::default()
         },
     );

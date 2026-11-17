@@ -5,29 +5,18 @@
 //! catalogue from the last scan ([`xirius_plugins::Catalog`]) says which bundle offers the
 //! class.
 //!
-//! Each plugin says in the song where it runs ([`PluginIsolation`], PLG-022): in this process
-//! (the default), in the `xirius-plugin-host` process the other plugins share, or in a host
-//! process of its own. A plugin in a host exchanges audio with the mix through shared memory,
-//! one fixed delay `L` that delay compensation lines up (PLG-023). A plugin that crashes or
-//! hangs takes only its host down: the plugins on that host go on with the dry signal until
-//! [`PluginLoader::restart`], the ones elsewhere keep playing. A plugin that took the shared
-//! host down is counted ([`PluginStatus::faults`]), so `plugin.status` can suggest giving it a
-//! host of its own; that is never done by itself. Edits in the plugin's editor come back as
-//! [`RemoteEdit`]s, for the song ([`crate::host::collect_plugin_states`]) and for writing
-//! automation. Parameter and state changes from the song reach a plugin in a host without a
-//! new mix. Moved to another process, a plugin is opened there with the state it had.
-//!
-//! A plugin in this process keeps its UI-thread side here ([`PluginLoader::local`]), so its
-//! editor is the instance that plays: its edits are heard, come back as [`RemoteEdit`]s like
-//! those of a plugin in a host, and the song's changes to its values reach it without a new
-//! mix. A new mix opens it again with what its editor changed.
+//! External plugins run in plugin host processes. The song selects the default vendor group
+//! or a dedicated process for each plugin. Audio crosses shared memory without added latency;
+//! the engine waits for the host within the current block. A crashed or hung host is bypassed
+//! and can be restarted while other hosts continue playing. Editor changes return as
+//! [`RemoteEdit`]s and song parameter changes reach a host without rebuilding the mix.
 //!
 //! The built-ins with a processor of the engine's ([`xirius_engine::stock`], PLG-016) are
 //! opened here too: they always run in this process, and their parameters move without a new
 //! mix like those of a plugin in a host (PLG-045).
 //!
-//! A plugin that uses ARA ([`xirius_plugins::Entry::ara`], PLG-078) runs in a plugin host process,
-//! with a warning when the song asked for another: ARA reads the song's audio here.
+//! A plugin that uses ARA ([`xirius_plugins::Entry::ara`], PLG-078) runs in a plugin host process;
+//! its document and audio access use the separate ARA worker protocol.
 //!
 //! A song's plugins can be opened before its mix is built ([`PluginLoader::preload`], ENG-064),
 //! one at a time while a window keeps drawing; the build then takes them as they are. A plugin
@@ -35,9 +24,8 @@
 //! of different hosts open at once. How long each one took is kept for
 //! [`PluginLoader::open_times`].
 //!
-//! Without the host the plugins run in this process, with a warning for the ones that asked
-//! for another. `XIRIUS_PLUGIN_ISOLATION` (`inprocess`, `shared`) puts every plugin in one
-//! place whatever the song says, for tests.
+//! A missing host executable makes the external plugin unavailable. The environment can
+//! request a single shared host for tests.
 
 use std::collections::{HashMap, HashSet};
 use std::mem::ManuallyDrop;
@@ -45,19 +33,18 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
-use xirius_engine::plugin_updates::{Field, Origin, Stamp, UpdateGate, new_instance};
+use xirius_engine::plugin_updates::{Field, Origin, Stamp, UpdateGate};
 
 use xirius_core::id::PluginId;
 use xirius_core::model::{Plugin, PluginIsolation, PluginKind};
-use xirius_engine::plugin::Vst3Processor;
 use xirius_engine::server::{
     DEFAULT_LATENCY, EditPhase, ParamEdit, PluginLink, PluginServer, PluginStatus, RemotePlugin,
     RemoteSpec, find_host,
 };
 use xirius_engine::stock::{self, StockHandle};
 use xirius_engine::{ProcessSetup, Processor, Readied};
-use xirius_plugins::{Catalog, decode_state, uid_hex};
-use xirius_vst3::{Gesture, Module, PluginState};
+use xirius_plugins::{Catalog, decode_state};
+use xirius_vst3::{Gesture, PluginState};
 
 use crate::clap_plugins::{self, is_clap};
 
@@ -69,9 +56,6 @@ pub fn is_vst3(x: &Plugin) -> bool {
 /// Where plugins run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Isolation {
-    /// Every plugin in this process, whatever the song says: a plugin that crashes takes the
-    /// program with it.
-    InProcess,
     /// Every plugin in one process of the given `xirius-plugin-host` executable, whatever the
     /// song says.
     Separate(PathBuf),
@@ -91,9 +75,8 @@ impl Isolation {
 }
 
 impl Default for Isolation {
-    /// [`Isolation::set_default`]'s, else what `XIRIUS_PLUGIN_ISOLATION` says (`inprocess`, or
-    /// `shared` with the host [`find_host`] finds), else each plugin where the song says with
-    /// that host.
+    /// [`Isolation::set_default`]'s, else a test override for one shared host, else the
+    /// song's default grouping or dedicated placement with [`find_host`].
     fn default() -> Isolation {
         if let Some(i) = HOST_OVERRIDE
             .lock()
@@ -103,9 +86,6 @@ impl Default for Isolation {
             return i;
         }
         let forced = std::env::var("XIRIUS_PLUGIN_ISOLATION").unwrap_or_default();
-        if forced.eq_ignore_ascii_case("inprocess") {
-            return Isolation::InProcess;
-        }
         if forced.eq_ignore_ascii_case("shared") || forced.eq_ignore_ascii_case("separate") {
             return Isolation::Separate(find_host().unwrap_or_default());
         }
@@ -470,13 +450,6 @@ struct OnThread<T> {
 unsafe impl<T> Send for OnThread<T> {}
 
 impl<T> OnThread<T> {
-    fn new(value: T) -> OnThread<T> {
-        OnThread {
-            value: ManuallyDrop::new(value),
-            thread: std::thread::current().id(),
-        }
-    }
-
     fn get(&self) -> Option<&T> {
         (std::thread::current().id() == self.thread).then_some(&*self.value)
     }
@@ -489,14 +462,6 @@ impl<T> Drop for OnThread<T> {
             unsafe { ManuallyDrop::drop(&mut self.value) };
         }
     }
-}
-
-/// The values of each switch or list of choices among a VST3 plugin's parameters (AUT-016).
-fn vst3_param_steps(params: &[xirius_vst3::ParamInfo]) -> Vec<(u32, u32)> {
-    params
-        .iter()
-        .filter_map(|p| Some((p.id, xirius_params::vst3_steps(p.step_count, p.is_list())?)))
-        .collect()
 }
 
 /// A plugin running in this process: its UI-thread side, kept so that its editor is the
@@ -793,7 +758,6 @@ pub struct PluginLoader {
     process_setup: Option<ProcessSetup>,
     catalog: Option<Arc<Catalog>>,
     process_prefs: Option<xirius_prefs::Prefs>,
-    modules: HashMap<PathBuf, Arc<Module>>,
     isolation: Isolation,
     /// Hosts shared by plugins from the same vendor (or bundle parent folder).
     groups: HashMap<String, PluginServer>,
@@ -1101,9 +1065,6 @@ impl PluginLoader {
     pub(crate) fn set_open_wait(&mut self, wait: Duration) {
         self.open_wait = Some(wait);
     }
-    fn open_wait(&self) -> Duration {
-        self.open_wait.unwrap_or(crate::host::OPEN_WAIT)
-    }
     pub(crate) fn set_setup(&mut self, setup: ProcessSetup) {
         self.process_setup = Some(setup);
     }
@@ -1239,7 +1200,7 @@ impl PluginLoader {
         self.process_prefs = Some(prefs);
     }
 
-    fn requested(&self, x: &Plugin) -> (PluginIsolation, bool) {
+    fn requested(&self, x: &Plugin) -> PluginIsolation {
         let disk;
         let prefs = if let Some(prefs) = &self.process_prefs {
             prefs
@@ -1249,64 +1210,27 @@ impl PluginLoader {
         };
         let legacy = crate::plugin_policy::legacy_override(prefs, self.catalog.as_deref(), x);
         let fallback = legacy.unwrap_or(x.isolation);
-        let fallback = if fallback == PluginIsolation::InProcess
-            && !matches!(self.isolation, Isolation::InProcess)
-        {
-            PluginIsolation::Shared
-        } else {
-            fallback
-        };
-        let configured = prefs.text(&xirius_prefs::isolation::key(&x.format, &x.uid)) != "song"
-            || legacy.is_some();
-        (
-            xirius_prefs::isolation::resolve(prefs, &x.format, &x.uid, fallback),
-            configured,
-        )
+        xirius_prefs::isolation::resolve(prefs, &x.format, &x.uid, fallback)
     }
 
-    /// Where `x` runs, and the host executable when that is not this process. `ara`: the
-    /// catalogue says it uses ARA.
+    /// Where `x` runs and the host executable. `ara` marks the catalogue's ARA entry.
     fn placement(
         &self,
         x: &Plugin,
-        ara: bool,
-        warnings: &mut Vec<String>,
+        _ara: bool,
+        _warnings: &mut Vec<String>,
     ) -> (PluginIsolation, PathBuf) {
-        let (requested, configured) = self.requested(x);
-        if ara {
-            // ARA instances are hosted even when an older song requests local placement.
-            let placement = if requested == PluginIsolation::Dedicated {
-                PluginIsolation::Dedicated
-            } else {
-                PluginIsolation::Shared
-            };
-            if requested == PluginIsolation::InProcess {
-                warnings.push(format!(
-                    "{}: ARA requires a separate plugin host process",
-                    x.name
-                ));
-            }
-            let host = match &self.isolation {
-                Isolation::Separate(host) | Isolation::PerPlugin(Some(host)) => host.clone(),
-                Isolation::PerPlugin(None) => PathBuf::new(),
-                Isolation::InProcess => find_host().unwrap_or_default(),
-            };
-            return (placement, host);
-        }
-        if configured {
-            let host = match &self.isolation {
-                Isolation::Separate(host) | Isolation::PerPlugin(Some(host)) => host.clone(),
-                Isolation::PerPlugin(None) => PathBuf::new(),
-                Isolation::InProcess => find_host().unwrap_or_default(),
-            };
-            return (requested, host);
-        }
-        match &self.isolation {
-            Isolation::InProcess => (PluginIsolation::InProcess, PathBuf::new()),
-            Isolation::Separate(host) => (PluginIsolation::Shared, host.clone()),
-            Isolation::PerPlugin(Some(host)) => (requested, host.clone()),
-            Isolation::PerPlugin(None) => (requested, PathBuf::new()),
-        }
+        let requested = self.requested(x);
+        let placement = if requested == PluginIsolation::Dedicated {
+            PluginIsolation::Dedicated
+        } else {
+            PluginIsolation::Shared
+        };
+        let host = match &self.isolation {
+            Isolation::Separate(host) | Isolation::PerPlugin(Some(host)) => host.clone(),
+            Isolation::PerPlugin(None) => PathBuf::new(),
+        };
+        (placement, host)
     }
 
     /// The single policy point for choosing a shared host.
@@ -1581,7 +1505,7 @@ impl PluginLoader {
             }
             loader.set_sample_home(dir, rate);
             loader.set_setup(setup);
-            loader.set_isolation(Isolation::InProcess);
+            loader.set_isolation(Isolation::PerPlugin(find_host()));
             let result = loader
                 .open(&owner, &value)
                 .map(|(p, w)| (Box::new(Readied::new(p, &setup)) as Box<dyn Processor>, w))
@@ -1744,12 +1668,9 @@ impl PluginLoader {
             .is_some_and(|(p, _)| p.preparing())
     }
 
-    /// Whether `x` would run in a host process.
+    /// External plugins run in a host process; built-ins stay in the engine.
     pub fn runs_apart(&mut self, x: &Plugin) -> bool {
-        let Some(ara) = crate::plugin_policy::find(self.catalog(), x).map(|e| e.ara) else {
-            return false;
-        };
-        self.placement(x, ara, &mut Vec::new()).0.is_separate()
+        is_vst3(x) || is_clap(x)
     }
 
     /// How long each plugin the last build opened took: to be made and prepared here, or, for
@@ -1778,11 +1699,7 @@ impl PluginLoader {
         owner: &str,
         x: &Plugin,
     ) -> Result<(Box<dyn Processor>, Vec<String>), String> {
-        let (processor, warnings) = self.open_raw(owner, x)?;
-        Ok((
-            Box::new(crate::plugin_policy::Attributed::new(x, processor)),
-            warnings,
-        ))
+        self.open_raw(owner, x)
     }
 
     fn open_raw(
@@ -1804,7 +1721,7 @@ impl PluginLoader {
             })?;
         let mut warnings = Vec::new();
         let (placement, host) = self.placement(x, entry.ara, &mut warnings);
-        if placement.is_separate() && !host.is_file() {
+        if !host.is_file() {
             return Err(format!(
                 "{}: 別プロセスのホストが見つからないため、読み込めません",
                 x.name
@@ -1840,7 +1757,7 @@ impl PluginLoader {
             .as_ref()
             .filter(|_| !stays)
             .and_then(|r| r.link.editor());
-        let mut transfer = moving
+        let transfer = moving
             .as_ref()
             .filter(|old| StateIntent(old.applied.clone()).accepts(x))
             .map(|old| {
@@ -1850,296 +1767,70 @@ impl PluginLoader {
                     (!stays).then(|| old.link.update_gate()),
                 )
             });
-        let mut predecessor = transfer
-            .as_ref()
-            .and_then(|(_, protected, gate)| gate.clone().map(|gate| (gate, protected.clone())));
         let editor_context = moving.as_ref().map(|previous| previous.link.clone());
-        let mut values = self.values(x, moving)?;
-        // The instance that played in this process until now: what its editor changed that
-        // the song has not taken yet goes to the new one, and to the song later.
-        if let Some(mut old) = self.locals.remove(&x.id) {
-            let preserve = StateIntent(old.applied.clone()).accepts(x);
-            if preserve {
-                let basis = old.update_gate();
-                let protected = StateIntent(old.applied.clone()).protected_params(x);
-                predecessor = Some((basis.clone(), protected.clone()));
-                transfer = Some((0, protected, Some(basis)));
-            }
-            // Latency-only notifications need not include gestures or a parameter edit.
-            if preserve {
-                values.state = old
-                    .direct()
-                    .and_then(|p| p.get_state().ok())
-                    .or(values.state);
-                if old.applied.params == x.params
-                    && let Some(plugin) = old.direct()
-                {
-                    let titles = plugin.params();
-                    for (key, value) in &mut values.params {
-                        if let Some(now) = param_id(&titles, key).and_then(|id| plugin.param(id)) {
-                            *value = now;
-                        }
-                    }
-                }
-            }
-            if let Some(edit) = old.take(x.id, true) {
-                if preserve && let Some(text) = &edit.state {
-                    values.state = decode_state(text).ok().or(values.state);
-                }
-                if old.applied.params == x.params {
-                    for (key, v) in &mut values.params {
-                        if let Some(value) = edit
-                            .params
-                            .iter()
-                            .rev()
-                            .filter(|p| names(key, p))
-                            .find_map(|p| p.value)
-                        {
-                            *v = value;
-                        }
-                    }
-                }
-                self.carried.push(edit);
-            }
-            if !self.leaving.contains_key(&x.id) {
-                let sender = self.senders.remove(&x.id);
-                self.leaving.insert(x.id, Leaving::Local(old, sender));
-            }
-        }
-
-        if placement.is_separate() {
-            let server = self.server_for(x.id, placement, host, &entry);
-            let link = match self.remotes.get(&x.id) {
-                Some(r) if stays => r.link.clone(),
-                _ => PluginLink::new(),
-            };
-            let spec = RemoteSpec {
-                name: x.name.clone(),
-                bundle: entry.path.clone(),
-                class: if is_clap(x) {
-                    Some(clap_plugins::class_key(x))
-                } else {
-                    parse_uid(&x.uid)
-                },
-                state: values.state,
-                params: values.params,
-                instrument: x.kind == PluginKind::Instrument,
-                latency: DEFAULT_LATENCY,
-            };
-            self.remotes.insert(
-                x.id,
-                Remote {
-                    link: link.clone(),
-                    server: server.clone(),
-                    placement,
-                    owner: owner.to_string(),
-                    applied: x.clone(),
-                },
-            );
-            self.fresh.push(x.id);
-            if let Some(previous) = &editor_context {
-                link.copy_editor_context_from(previous);
-            }
-            // Local -> remote and background rebuilds retain the same view context too.
-            // Cache it on the link before its deferred OpenEditor is sent.
-            let context = self
-                .editor_contexts
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(&x.id)
-                .cloned();
-            if let Some(context) = context {
-                if let Some(area) = context.area {
-                    server.editor_area(&link, area);
-                }
-                if let Some(bar) = context.bar {
-                    server.editor_bar(&link, bar);
-                }
-            }
-            if let Some((title, caption)) = window {
-                server.open_editor_later(&link, &title, caption);
-            }
-            let mut processor = RemotePlugin::new(server, link, spec);
-            if let Some((revision, protected, basis)) = transfer {
-                if let Some(basis) = basis {
-                    processor.preserve_updates_from(basis, revision, protected);
-                } else {
-                    processor.preserve_live_edits_since(revision, protected);
-                }
-            } else {
-                processor.discard_previous_editor_changes();
-            }
-            return Ok((Box::new(processor), warnings));
-        }
-
-        let identity = format!("{}:{}", x.format.to_ascii_lowercase(), x.uid);
-        let _context = xirius_vst3::crash_context::enter(&identity);
-        if is_clap(x) {
-            let (p, names) = clap_plugins::open_in_process(
-                &entry.path,
-                x,
-                values.state.as_ref(),
-                &values.params,
-                &mut warnings,
-            )?;
-            self.clap_names.insert(x.id, names);
-            self.fresh_clap.push(x.id);
-            return Ok((p, warnings));
-        }
-        if entry.requires_process_main {
-            return Err("主スレッドが必要なプラグインです。別プロセスで開く設定を選んでください（ローカル実行の指定は変更していません）".into());
-        }
-        if self.threaded_local {
-            let setup = self.process_setup.unwrap_or_else(|| {
-                crate::build::setup(self.rate, xirius_engine::RenderMode::Realtime)
-            });
-            let ticket = xirius_vst3::owner::Controller::open(xirius_vst3::owner::Open {
-                bundle: entry.path.clone(),
-                class: parse_uid(&x.uid)
-                    .ok_or_else(|| "プラグインの ID が正しくありません".to_string())?,
-                state: values.state,
-                params: values.params,
-                requires_process_main: entry.requires_process_main,
-                sample_rate: setup.sample_rate,
-                max_block: setup.max_block,
-                offline: setup.mode == xirius_engine::RenderMode::Offline,
-            })?;
-            // This synchronous builder entry is for non-UI callers. UI preloading
-            // and the preparation coordinator use the asynchronous entry below.
-            let deadline = Instant::now() + self.open_wait();
-            let opened = loop {
-                if let Some(result) = ticket.poll() {
-                    break result.map_err(|e| format!("専用所有スレッドで開けませんでした: {e}。主スレッドが必要なプラグインは別プロセスで開く設定を選んでください（ローカル実行の指定は変更していません）"))?;
-                }
-                if Instant::now() >= deadline {
-                    ticket.quarantine();
-                    return Err(
-                        "プラグインが応答しません。別プロセスで開くことを検討してください".into(),
-                    );
-                }
-                std::thread::sleep(Duration::from_millis(2));
-            };
-            let latency = opened
-                .audio
-                .prepared(
-                    setup.sample_rate,
-                    setup.max_block,
-                    setup.mode == xirius_engine::RenderMode::Offline,
-                )
-                .map_err(|e| e.to_string())?;
-            let steps = vst3_param_steps(&opened.params);
-            let titles: Vec<_> = opened.params.into_iter().map(|p| (p.id, p.title)).collect();
-            self.senders.insert(x.id, opened.sender);
-            self.generation += 1;
-            self.locals.insert(
-                x.id,
-                Local {
-                    updates: Box::new(UpdateGate::new(Stamp {
-                        instance: new_instance(),
-                        generation: 0,
-                        revision: 0,
-                    })),
-                    plugin: None,
-                    owned: Some(Box::new(crate::owned_local::OwnedLocal::new(
-                        opened.controller,
-                        opened.retirement,
-                        titles.clone(),
-                        opened.note_names.clone(),
-                        latency,
-                    ))),
-                    restart_pending: 0,
-                    applied: x.clone(),
-                    generation: self.generation,
-                    titles,
-                    steps,
-                    note_names: opened.note_names,
-                    capture: None,
-                },
-            );
-            if let Some((basis, protected)) = predecessor {
-                self.locals
-                    .get_mut(&x.id)
-                    .unwrap()
-                    .inherit_updates(&basis, protected);
-            }
-            self.fresh_locals.push(x.id);
-            return Ok((Box::new(Vst3Processor::owned(opened.audio)), warnings));
-        }
-        let module = match self.modules.get(&entry.path) {
-            Some(m) => m.clone(),
-            None => {
-                let m = Arc::new(
-                    Module::load(&entry.path)
-                        .map_err(|e| format!("{}: {e}", entry.path.display()))?,
-                );
-                self.modules.insert(entry.path.clone(), m.clone());
-                m
-            }
+        let values = self.values(x, moving)?;
+        let server = self.server_for(x.id, placement, host, &entry);
+        let link = match self.remotes.get(&x.id) {
+            Some(r) if stays => r.link.clone(),
+            _ => PluginLink::new(),
         };
-        let class = module
-            .classes()
-            .into_iter()
-            .find(|c| uid_hex(&c.cid).eq_ignore_ascii_case(&x.uid))
-            .ok_or_else(|| format!("{} に {} が見つかりません", entry.path.display(), x.uid))?;
-        let mut plugin = xirius_vst3::Plugin::new(module, &class)
-            .map_err(|e| format!("{} を読み込めません: {e}", x.name))?;
-        if let Some(state) = &values.state {
-            plugin
-                .set_state(state)
-                .map_err(|e| format!("{} の状態を復元できません: {e}", x.name))?;
-        }
-        if !values.params.is_empty() {
-            let params = plugin.params();
-            for (key, value) in &values.params {
-                match param_id(&params, key) {
-                    Some(id) => {
-                        plugin.set_param(id, value.clamp(0.0, 1.0));
-                    }
-                    None => {
-                        warnings.push(format!("{}: パラメーター {key} が見つかりません", x.name))
-                    }
-                }
-            }
-        }
-        self.senders.insert(x.id, plugin.param_sender());
-        let part = plugin
-            .audio()
-            .map_err(|e| format!("{} を再生できません: {e}", x.name))?;
-        // What the plugin said while it was being set up is not the user's.
-        plugin.handler().take_gestures();
-        plugin.handler().take_restart_flags();
-        self.generation += 1;
-        let params = plugin.params();
-        let steps = vst3_param_steps(&params);
-        let titles = params.into_iter().map(|p| (p.id, p.title)).collect();
-        let note_names = plugin.note_names();
-        self.locals.insert(
+        let spec = RemoteSpec {
+            name: x.name.clone(),
+            bundle: entry.path.clone(),
+            class: if is_clap(x) {
+                Some(clap_plugins::class_key(x))
+            } else {
+                parse_uid(&x.uid)
+            },
+            state: values.state,
+            params: values.params,
+            instrument: x.kind == PluginKind::Instrument,
+            latency: DEFAULT_LATENCY,
+        };
+        self.remotes.insert(
             x.id,
-            Local {
-                updates: Box::new(UpdateGate::new(Stamp {
-                    instance: new_instance(),
-                    generation: 0,
-                    revision: 0,
-                })),
-                restart_pending: 0,
-                plugin: Some(OnThread::new(plugin)),
-                owned: None,
+            Remote {
+                link: link.clone(),
+                server: server.clone(),
+                placement,
+                owner: owner.to_string(),
                 applied: x.clone(),
-                generation: self.generation,
-                titles,
-                steps,
-                note_names,
-                capture: None,
             },
         );
-        if let Some((basis, protected)) = predecessor {
-            self.locals
-                .get_mut(&x.id)
-                .unwrap()
-                .inherit_updates(&basis, protected);
+        self.fresh.push(x.id);
+        if let Some(previous) = &editor_context {
+            link.copy_editor_context_from(previous);
         }
-        self.fresh_locals.push(x.id);
-        Ok((Box::new(Vst3Processor::new(part)), warnings))
+        // Background rebuilds retain the same view context.
+        // Cache it on the link before its deferred OpenEditor is sent.
+        let context = self
+            .editor_contexts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&x.id)
+            .cloned();
+        if let Some(context) = context {
+            if let Some(area) = context.area {
+                server.editor_area(&link, area);
+            }
+            if let Some(bar) = context.bar {
+                server.editor_bar(&link, bar);
+            }
+        }
+        if let Some((title, caption)) = window {
+            server.open_editor_later(&link, &title, caption);
+        }
+        let mut processor = RemotePlugin::new(server, link, spec);
+        if let Some((revision, protected, basis)) = transfer {
+            if let Some(basis) = basis {
+                processor.preserve_updates_from(basis, revision, protected);
+            } else {
+                processor.preserve_live_edits_since(revision, protected);
+            }
+        } else {
+            processor.discard_previous_editor_changes();
+        }
+        Ok((Box::new(processor), warnings))
     }
 
     /// The UI-thread side of a plugin that plays in this process, and which instance it is
@@ -3086,9 +2777,7 @@ impl PluginLoader {
     /// A plugin's parameter id → the values of each switch or list of choices, as the host
     /// reported when it opened (AUT-016). A parameter that glides is not in it, nor is any of a
     /// CLAP plugin playing in this process (its parameters are not read here): one set to
-    /// `inprocess` (the default), an ARA plugin, every plugin when the mix runs them all here,
-    /// or one set to a host process when `xirius-plugin-host` is not found.
-    /// Its lanes glide as before, and the plugin takes the value it gets.
+    /// The host reports these for both supported external plugin placements.
     pub fn param_steps(&self, id: PluginId) -> Vec<(u32, u32)> {
         if let Some(l) = self.playing_local(id) {
             return l.steps.clone();
@@ -3153,7 +2842,7 @@ impl PluginLoader {
                 out.push(PluginReport {
                     id,
                     name: local.applied.name.clone(),
-                    placement: PluginIsolation::InProcess,
+                    placement: PluginIsolation::Shared,
                     requested: local.applied.isolation,
                     status: PluginStatus {
                         error: owned.error(),
@@ -3804,7 +3493,7 @@ mod tests {
             note_source: None,
             preset: None,
             samples: vec![],
-            isolation: PluginIsolation::InProcess,
+            isolation: PluginIsolation::Shared,
         };
         let catalog = Catalog {
             entries: vec![xirius_plugins::Entry {
@@ -3849,7 +3538,6 @@ mod tests {
                 let error = loader.instantiate("Track", &plugin).err().unwrap();
                 assert!(error.contains("ホストが見つからない"), "{error}");
                 assert!(loader.locals.is_empty());
-                assert!(loader.modules.is_empty());
             }
         }
     }
@@ -3874,7 +3562,7 @@ mod tests {
             note_source: None,
             preset: None,
             samples: Vec::new(),
-            isolation: PluginIsolation::InProcess,
+            isolation: PluginIsolation::Shared,
         };
         let mut loader = PluginLoader::new(Some(Arc::new(Catalog::default())));
         assert!(!loader.answered(id), "not built");

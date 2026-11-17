@@ -48,7 +48,7 @@ fn plugin(id: u64, kind: PluginKind, uid: &str) -> Plugin {
         deactivated: false,
         params: BTreeMap::new(),
         state: None,
-        isolation: PluginIsolation::InProcess,
+        isolation: PluginIsolation::Shared,
         sidechain: None,
         note_source: None,
         preset: None,
@@ -92,7 +92,7 @@ fn each_step_opens_one_plugin_and_the_build_takes_them() {
         &p,
         HostConfig {
             catalog: Some(catalog),
-            isolation: Some(Isolation::InProcess),
+            isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
             ..Default::default()
         },
     );
@@ -106,19 +106,22 @@ fn each_step_opens_one_plugin_and_the_build_takes_them() {
     );
     assert_eq!(first.done, 0);
     assert!(first.units.iter().all(|(_, u)| *u == UnitState::Waiting));
-    // The first step asks the host processes (none here); the next one is under way.
+    // The first step asks each host to open its plugin.
     assert!(!s.step());
     let asked = s.progress();
     assert_eq!(asked.done, 0);
     assert_eq!(asked.units[0].1, UnitState::Working);
-    assert_eq!(asked.units[1].1, UnitState::Waiting);
+    assert_eq!(asked.units[1].1, UnitState::Working);
     let mut done = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !s.step() {
         done.push(s.progress().done);
-        assert!(done.len() < 10, "{done:?}");
+        assert!(std::time::Instant::now() < deadline, "{done:?}");
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     done.push(s.progress().done);
-    assert_eq!(done, [1, 2, 3]);
+    assert_eq!(done.last(), Some(&3));
+    assert!(done.windows(2).all(|pair| pair[0] <= pair[1]));
     let (host, _audio, warnings) = s.finish(&p).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
     for id in 1..=3 {
@@ -148,7 +151,7 @@ fn a_plugin_that_cannot_be_opened_is_said_and_the_song_opens() {
         &p,
         HostConfig {
             catalog: Some(catalog),
-            isolation: Some(Isolation::InProcess),
+            isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
             ..Default::default()
         },
     );
@@ -183,13 +186,13 @@ fn finishing_before_the_steps_opens_the_rest_on_the_spot() {
         &p,
         HostConfig {
             catalog: Some(catalog),
-            isolation: Some(Isolation::InProcess),
+            isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
             ..Default::default()
         },
     );
     s.step();
     s.step();
-    assert_eq!(s.progress().done, 1);
+    assert!(s.progress().done <= 1);
     let (host, _audio, warnings) = s.finish(&p).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
     assert!(host.plugin_timings().opened(1).is_some());

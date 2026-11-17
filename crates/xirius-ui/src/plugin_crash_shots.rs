@@ -24,23 +24,44 @@ pub const SHOTS: &[Shot] = &[
 ];
 
 pub(crate) fn crash(s: &mut Studio, _: u8) {
-    crate::plugin_reload_shots::ready(s);
     let id = crate::plugin_reload_shots::id(s);
-    let host = s.transport.host().unwrap();
-    let key = host
-        .plugins()
-        .param_titles(id)
-        .into_iter()
-        .find(|(_, title)| title == "Crash")
-        .unwrap()
-        .0
-        .to_string();
-    let link = host.plugins().link(id).unwrap();
-    let server = host.plugins().server_of(id).unwrap();
-    assert!(server.automate(&link, &key, 1.0, 0));
-    // Reset the momentary control for the next instance; the positive processor event
-    // remains in the event queue, including when both points land in the same block.
-    assert!(server.automate(&link, &key, 0.0, 1));
+    // The first two failures restart automatically. The third leaves the existing manual
+    // recovery actions available, so these scenes exercise that final state.
+    for attempt in 0..3 {
+        crate::plugin_reload_shots::ready(s);
+        let host = s.transport.host().unwrap();
+        let key = host
+            .plugins()
+            .param_titles(id)
+            .into_iter()
+            .find(|(_, title)| title == "Crash")
+            .unwrap()
+            .0
+            .to_string();
+        let link = host.plugins().link(id).unwrap();
+        let server = host.plugins().server_of(id).unwrap().clone();
+        let old_pid = server.pid();
+        let before = server.status(&link).crashes;
+        assert!(server.automate(&link, &key, 1.0, 0));
+        assert!(server.automate(&link, &key, 0.0, 1));
+        crate::shot::run_for(s, 15.0, |_| server.status(&link).crashes > before);
+        assert!(
+            server.status(&link).crashes > before,
+            "attempt={attempt}, before={before}, status={:?}, pid={:?}, playing={}",
+            server.status(&link),
+            server.pid(),
+            s.transport.playing
+        );
+        if attempt < 2 {
+            crate::shot::run_for(s, 15.0, |s| {
+                s.transport.host().is_some_and(|h| {
+                    h.plugins()
+                        .server_of(id)
+                        .is_some_and(|next| next.pid().is_some() && next.pid() != old_pid)
+                })
+            });
+        }
+    }
     crate::shot::run_for(s, 15.0, |s| s.health.crashed(id));
     s.poll_plugins_now();
     assert!(s.health.fake.is_none());

@@ -81,6 +81,10 @@ pub struct Keep {
 }
 
 impl Keep {
+    #[cfg(test)]
+    pub(crate) fn save_generation(&self) -> u64 {
+        self.save_generation
+    }
     /// Keeps under `root`.
     pub fn at(root: PathBuf) -> Keep {
         Keep {
@@ -224,12 +228,6 @@ impl Keep {
 
     pub(crate) fn recent_close_since(&self) -> Option<std::time::Instant> {
         self.closing_recent
-    }
-
-    /// Saves started, for the tests: one close must save once.
-    #[cfg(all(test, windows))]
-    pub(crate) fn save_generation(&self) -> u64 {
-        self.save_generation
     }
 
     /// The recent songs as the last [`Keep::sync`] read them.

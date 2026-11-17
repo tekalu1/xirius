@@ -78,7 +78,15 @@ pub const PREFS: &[Pref] = &[
     p("plugins.process.", Kind::Choice(PROCESS), "same"),
     p(
         "plugins.isolation.",
-        Kind::Choice(&["song", "same", "shared", "default", "dedicated"]),
+        Kind::Choice(&[
+            "song",
+            "same",
+            "shared",
+            "default",
+            "dedicated",
+            "inprocess",
+            "in_process",
+        ]),
         "song",
     ),
     p("plugins.crash.processed", Kind::List, ""),
@@ -231,7 +239,7 @@ impl Pref {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Prefs {
-    /// The values that differ from the default.
+    /// The values that differ from the default, plus explicit legacy process choices.
     pub values: BTreeMap<String, Value>,
 }
 
@@ -277,7 +285,10 @@ impl Prefs {
     pub fn set(&mut self, key: &str, v: &Value) -> Result<Value, String> {
         let s = schema(key).ok_or_else(|| format!("「{key}」は設定の名前ではありません"))?;
         let v = s.read(v)?;
-        if v == s.default_value() {
+        if v == s.default_value()
+            && !key.starts_with("plugins.isolation.")
+            && !key.starts_with("plugins.process.")
+        {
             self.values.remove(key);
         } else {
             self.values.insert(key.to_string(), v.clone());

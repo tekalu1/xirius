@@ -4695,7 +4695,7 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 
 プラグインの実行方法を設定
 
-プラグインを実行するプロセスを設定します（inprocess: エンジン内 / shared: 共有の別プロセス / dedicated: 専用の別プロセス）
+プラグインを実行するプロセスを設定します（default: 既定 / dedicated: 専用）
 
 事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
 
@@ -4705,7 +4705,7 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 |---|---|---|---|
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `ids` | — | `{"items":{"type":"string"},"type":"array"}` | プラグイン（plugin の ID のリスト） |
-| `mode` | 必須 | `{"enum":["inprocess","shared","dedicated"],"type":"string"}` | 実行するプロセス |
+| `mode` | 必須 | `{"type":"string"}` | default または dedicated |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 

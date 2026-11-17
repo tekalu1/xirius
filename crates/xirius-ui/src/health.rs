@@ -269,11 +269,7 @@ impl Studio {
             suggest: self.health.suggests(id)
                 && x.isolation != PluginIsolation::Dedicated
                 && !builtin,
-            mode: if builtin {
-                PluginIsolation::InProcess
-            } else if mode == PluginIsolation::InProcess
-                || (ara && mode != PluginIsolation::Dedicated)
-            {
+            mode: if ara && mode != PluginIsolation::Dedicated {
                 PluginIsolation::Shared
             } else {
                 mode
@@ -425,7 +421,6 @@ mod tests {
                 PlugAct::Open => "画面を開く",
                 PlugAct::Restart => "再起動",
                 PlugAct::Remove => "外す",
-                PlugAct::Mode(PluginIsolation::InProcess) => "アプリ内",
                 PlugAct::Mode(PluginIsolation::Shared) => "既定",
                 PlugAct::Mode(PluginIsolation::Dedicated) => "専用で動かす",
             };

@@ -45,7 +45,7 @@ fn fixture(id: u64, uid: &str, latency: f64) -> Plugin {
         deactivated: false,
         params: BTreeMap::from([("1".into(), latency)]),
         state: None,
-        isolation: PluginIsolation::InProcess,
+        isolation: PluginIsolation::Shared,
         sidechain: None,
         note_source: None,
         preset: None,
@@ -55,7 +55,7 @@ fn fixture(id: u64, uid: &str, latency: f64) -> Plugin {
 fn builder(catalog: &Arc<Catalog>) -> Builder {
     let mut b = Builder::new(48000, None);
     b.set_catalog(Some(catalog.clone()));
-    b.set_isolation(Isolation::InProcess);
+    b.set_isolation(Isolation::PerPlugin(xirius_engine::server::find_host()));
     b
 }
 

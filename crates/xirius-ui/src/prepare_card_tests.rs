@@ -119,7 +119,7 @@ fn with_plugins() -> (Studio, Vec<PluginId>, Vec<String>) {
         let id = s.project().tracks[track].inserts.last().unwrap().id;
         assert!(s.run_command(
             "plugin.isolation.set",
-            json!({"ids":[id.to_string()], "mode":"inprocess"})
+            json!({"ids":[id.to_string()], "mode":"default"})
         ));
         ids.push(id);
     }

@@ -1,12 +1,9 @@
-// Windows-only: tests Win32 DLL timers and module handles during Save As.
+// Windows-only: Save As keeps a hosted plugin playing without opening a device.
 #![cfg(windows)]
 //! Save As reaches the file picker's Studio entry, with no window or devices.
 use crate::studio::{FileRequest, Studio};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
-use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
-use windows_sys::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW};
 
 const CHILD: &str = "XIRIUS_SAVE_CRASH_CHILD";
 
@@ -18,14 +15,9 @@ fn save_as_child() {
     let root = std::path::PathBuf::from(std::env::var_os("XIRIUS_SAVE_CRASH_ROOT").unwrap());
     xirius_engine::crash::install_at(&root.join("crashes"), "save-as test", true).unwrap();
     let mut s = Studio::sample();
+    s.keep = crate::keep::Keep::at(root.join("keep"));
     crate::plugin_reload_shots::prepare(&mut s, 0);
     let id = crate::plugin_reload_shots::id(&s);
-    assert!(s.run_command(
-        "plugin.isolation.set",
-        serde_json::json!({
-            "ids":[id.to_string()], "mode":"inprocess"
-        })
-    ));
     if kind == "draft" {
         s.song
             .session_mut()
@@ -33,14 +25,158 @@ fn save_as_child() {
             .unwrap();
         s.song.mark_draft(true);
     }
-    if kind == "saved" || kind == "recording" {
+    if matches!(
+        kind.as_str(),
+        "saved"
+            | "recording"
+            | "capture"
+            | "close"
+            | "volatile_close"
+            | "unsaved_close"
+            | "sabotage_close"
+    ) {
         s.song.save_as(&root.join("original")).unwrap();
     }
     let p = s.project();
     let dir = s.song.dir();
-    let host = s.transport.start_host(&p, dir).unwrap();
-    let (plugin, generation) = host.plugins().local(id).expect("in-process fixture");
-    let instance = plugin as *const _ as usize;
+    s.transport.start_host(&p, dir).unwrap();
+    crate::shot::run_for(&mut s, 10.0, |s| {
+        s.transport
+            .host()
+            .and_then(|host| host.plugins().server_of(id))
+            .and_then(|server| server.pid())
+            .is_some()
+    });
+    let pid = s
+        .transport
+        .host()
+        .unwrap()
+        .plugins()
+        .server_of(id)
+        .and_then(|server| server.pid())
+        .expect("fixture host");
+    if kind == "capture" {
+        assert!(s.start_save());
+        s.wait_for_save();
+        assert_eq!(s.error, None);
+        let reopened = xirius_core::session::Session::open_with(
+            root.join("original"),
+            xirius_session::commands::shared_registry(),
+        )
+        .unwrap();
+        let plugin = reopened
+            .project()
+            .tracks
+            .values()
+            .flat_map(|track| &track.inserts)
+            .find(|plugin| plugin.id == id)
+            .expect("saved hosted plugin");
+        assert_eq!(plugin.params.get("1"), Some(&0.75));
+        assert!(plugin.state.is_some(), "save pulls state from the host");
+        return;
+    }
+    if matches!(
+        kind.as_str(),
+        "close" | "volatile_close" | "unsaved_close" | "sabotage_close"
+    ) {
+        use crate::context::key_more::WindowAsk;
+        if kind != "close" {
+            assert!(s.start_save());
+            s.wait_for_save();
+        }
+        let previous = s
+            .project()
+            .tracks
+            .values()
+            .flat_map(|track| &track.inserts)
+            .find(|plugin| plugin.id == id)
+            .and_then(|plugin| plugin.state.clone());
+        let steps = s.song.steps();
+        let generation = s.keep.save_generation();
+        if kind == "close" {
+            let host = s.transport.host_mut().unwrap();
+            let link = host.plugins().link(id).unwrap();
+            host.plugins()
+                .server_of(id)
+                .unwrap()
+                .set_param(&link, "Latency", 0.5);
+        }
+        if kind == "unsaved_close" {
+            s.song
+                .run(
+                    "track.add.audio",
+                    serde_json::json!({"name":"Unsaved take"}),
+                )
+                .unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        s.window_ask = Some(WindowAsk::Quit);
+        let mut was_armed = false;
+        let mut sabotages = 0;
+        loop {
+            s.idle();
+            let armed = s.keep.recent_close_since().is_some();
+            if kind == "sabotage_close" && armed && !was_armed && sabotages < 4 {
+                sabotages += 1;
+                s.song
+                    .run(
+                        "track.add.audio",
+                        serde_json::json!({"name":format!("sabotage {sabotages}")}),
+                    )
+                    .unwrap();
+            }
+            was_armed = armed;
+            if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "hosted close watchdog");
+            assert!(s.keep.save_generation() - generation <= 4);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if kind != "unsaved_close" && kind != "sabotage_close" {
+            assert_eq!(s.song.steps(), steps, "close capture adds no edit step");
+        }
+        assert_eq!(
+            s.keep.save_generation() - generation,
+            if kind == "sabotage_close" { 4 } else { 1 }
+        );
+        let reopened = xirius_core::session::Session::open_with(
+            root.join("original"),
+            xirius_session::commands::shared_registry(),
+        )
+        .unwrap();
+        let plugin = reopened
+            .project()
+            .tracks
+            .values()
+            .flat_map(|track| &track.inserts)
+            .find(|plugin| plugin.id == id)
+            .expect("closed hosted plugin was saved");
+        let state = xirius_plugins::decode_state(plugin.state.as_deref().unwrap()).unwrap();
+        if kind == "close" {
+            assert_eq!(state.component, 128u32.to_le_bytes());
+        }
+        if kind == "volatile_close" {
+            assert_ne!(plugin.state, previous);
+        }
+        if kind == "unsaved_close" {
+            assert!(
+                reopened
+                    .project()
+                    .tracks
+                    .values()
+                    .any(|track| track.name == "Unsaved take")
+            );
+        }
+        return;
+    }
+    xirius_session::host::pull_plugin_states(
+        s.song.session_mut(),
+        s.transport.host_mut().unwrap(),
+        &xirius_core::session::RunOptions::human(),
+        xirius_session::host::PULL_WAIT,
+    )
+    .unwrap();
     let saved = root.join("saved");
     let mut take_files = Vec::new();
     if kind == "recording" {
@@ -87,26 +223,26 @@ fn save_as_child() {
             "a recorded audio take must be in the song"
         );
     }
-    let dll = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("xirius_test_vst3.dll");
-    use std::os::windows::ffi::OsStrExt;
-    let wide: Vec<u16> = dll.as_os_str().encode_wide().chain([0]).collect();
-    let mut counter = AtomicU32::new(0);
-    // SAFETY: the fixture export takes a counter kept on this stack through dispatch.
-    unsafe {
-        let handle = GetModuleHandleW(wide.as_ptr());
-        assert!(!handle.is_null());
-        let arm: unsafe extern "system" fn(*mut AtomicU32) -> usize = std::mem::transmute(
-            GetProcAddress(handle, c"FixtureLingeringTimer".as_ptr().cast()).unwrap(),
-        );
-        assert_ne!(arm(&mut counter), 0);
-    }
     s.finish_file_request_sync(FileRequest::SaveAs, &saved);
     assert_eq!(s.error, None);
     assert!(saved.join("manifest.toml").is_file());
+    let reopened = xirius_core::session::Session::open_with(
+        &saved,
+        xirius_session::commands::shared_registry(),
+    )
+    .unwrap();
+    let plugin = reopened
+        .project()
+        .tracks
+        .values()
+        .flat_map(|track| &track.inserts)
+        .find(|plugin| plugin.id == id)
+        .expect("hosted plugin survives Save As");
+    assert_eq!(plugin.params.get("1"), Some(&0.75));
+    assert!(
+        plugin.state.is_some(),
+        "Save As captures the hosted plugin state"
+    );
     for file in take_files {
         assert!(
             saved.join(&file).is_file(),
@@ -115,36 +251,41 @@ fn save_as_child() {
         assert!(root.join("original").join(&file).is_file());
     }
     assert!(s.transport.is_live(), "Save As preserves the player");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while counter.load(Ordering::Acquire) == 0 {
-        assert!(Instant::now() < deadline, "fixture timer never fired");
-        // SAFETY: dispatch only this headless child's messages; never send OS input.
-        unsafe {
-            let mut msg: MSG = std::mem::zeroed();
-            while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
-                DispatchMessageW(&msg);
-            }
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
     let host = s.transport.host().unwrap();
-    let (plugin, now) = host.plugins().local(id).unwrap();
-    assert_eq!((plugin as *const _ as usize, now), (instance, generation));
-    assert_eq!(counter.load(Ordering::Acquire), 1);
+    assert_eq!(
+        host.plugins().server_of(id).and_then(|server| server.pid()),
+        Some(pid)
+    );
     s.transport.reset();
-    // SAFETY: a NUL-terminated module path, only inspecting the handle.
-    assert!(!unsafe { GetModuleHandleW(wide.as_ptr()) }.is_null());
 }
 
 #[test]
-fn save_as_keeps_the_player_and_a_lingering_dll_timer_alive() {
+fn save_as_keeps_the_player_and_hosted_plugin_alive() {
     crate::plugin_reload_shots::require_plugin_host();
-    for kind in ["unsaved", "draft", "saved", "recording"] {
+    for kind in [
+        "unsaved",
+        "draft",
+        "saved",
+        "recording",
+        "capture",
+        "close",
+        "volatile_close",
+        "unsaved_close",
+        "sabotage_close",
+    ] {
         let root = tempfile::tempdir().unwrap();
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "save_crash_tests::save_as_child", "--nocapture"])
             .env(CHILD, kind)
             .env("XIRIUS_SAVE_CRASH_ROOT", root.path())
+            .env(
+                "XIRIUS_FIXTURE_VOLATILE_STATE",
+                if matches!(kind, "volatile_close" | "unsaved_close" | "sabotage_close") {
+                    "1"
+                } else {
+                    ""
+                },
+            )
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()

@@ -19,8 +19,14 @@ pub fn resolve(
     uid: &str,
     fallback: PluginIsolation,
 ) -> PluginIsolation {
-    match prefs.text(&key(format, uid)).as_str() {
-        "same" | "shared" | "default" => PluginIsolation::Shared,
+    let key = key(format, uid);
+    if !prefs.values.contains_key(&key) {
+        return fallback;
+    }
+    match prefs.text(&key).as_str() {
+        "same" | "shared" | "song" | "inprocess" | "in_process" | "default" => {
+            PluginIsolation::Shared
+        }
         "dedicated" => PluginIsolation::Dedicated,
         _ => fallback,
     }
@@ -53,11 +59,20 @@ mod tests {
     }
 
     #[test]
-    fn song_setting_uses_the_songs_process_choice() {
+    fn missing_setting_uses_song_choice_but_legacy_song_means_default() {
         let prefs = Prefs::default();
         assert_eq!(
             resolve(&prefs, "clap", "fixture", PluginIsolation::Dedicated),
             PluginIsolation::Dedicated
+        );
+        let mut prefs = Prefs::default();
+        prefs
+            .set(&key("clap", "fixture"), &serde_json::json!("song"))
+            .unwrap();
+        assert!(prefs.values.contains_key(&key("clap", "fixture")));
+        assert_eq!(
+            resolve(&prefs, "clap", "fixture", PluginIsolation::Dedicated),
+            PluginIsolation::Shared
         );
     }
 }

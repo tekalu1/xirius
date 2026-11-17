@@ -51,7 +51,7 @@ fn plugin_states_pulled_twice_report_which_differ() {
             deactivated: false,
             params: BTreeMap::new(),
             state: None,
-            isolation: PluginIsolation::InProcess,
+            isolation: PluginIsolation::Shared,
             sidechain: None,
             note_source: None,
             preset: None,
@@ -68,7 +68,7 @@ fn plugin_states_pulled_twice_report_which_differ() {
             HostConfig {
                 catalog: Some(catalog),
                 threaded_local: true,
-                isolation: Some(Isolation::InProcess),
+                isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
                 ..Default::default()
             },
         );

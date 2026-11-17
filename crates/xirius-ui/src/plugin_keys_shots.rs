@@ -96,9 +96,7 @@ pub(crate) fn frame(s: &Studio) -> HWND {
                 .tracks
                 .values()
                 .flat_map(|t| &t.inserts)
-                .find(|p| {
-                    p.id == id && p.isolation == xirius_core::model::PluginIsolation::InProcess
-                })
+                .find(|p| p.id == id && p.isolation == xirius_core::model::PluginIsolation::Shared)
                 .map(|_| std::process::id())
         })
     else {
@@ -184,7 +182,7 @@ fn text(s: &mut Studio) {
         .unwrap()
         .inserts[0]
         .isolation
-        == xirius_core::model::PluginIsolation::InProcess;
+        == xirius_core::model::PluginIsolation::Shared;
     let path = dir.join(if local {
         "editor01-local.bmp"
     } else {
@@ -234,7 +232,7 @@ fn stage(s: &mut Studio, n: u8) {
         0 | 1 => {
             crate::plugin_reload_shots::prepare(s, 0);
             if n == 0 {
-                assert!(s.run_command("plugin.isolation.set", json!({"ids":[crate::plugin_reload_shots::id(s).to_string()], "mode":xirius_core::model::PluginIsolation::InProcess.name()})));
+                assert!(s.run_command("plugin.isolation.set", json!({"ids":[crate::plugin_reload_shots::id(s).to_string()], "mode":xirius_core::model::PluginIsolation::Shared.name()})));
             }
         }
         2 => text(s),

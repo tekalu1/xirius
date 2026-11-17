@@ -318,7 +318,10 @@ impl Latency {
         let Some(stream) = (unsafe { vst3::ComRef::from_raw(state) }) else {
             return kInvalidArgument;
         };
-        let value = if STATE_VOLATILE.load(Ordering::Relaxed) != 0 {
+        let value = if STATE_VOLATILE.load(Ordering::Relaxed) != 0
+            || std::env::var_os("XIRIUS_FIXTURE_VOLATILE_STATE").as_deref()
+                == Some(std::ffi::OsStr::new("1"))
+        {
             STATE_COUNTER.fetch_add(1, Ordering::Relaxed)
         } else {
             self.delay.load(Ordering::Relaxed)

@@ -140,11 +140,10 @@ pub(crate) fn ready(s: &mut Studio) {
         !s.sound_preparing()
             && s.error.is_none()
             && s.transport.host().is_some_and(|h| {
-                h.plugins().reports().iter().any(|r| {
-                    r.id == id
-                        && r.status.latency == xirius_engine::server::DEFAULT_LATENCY + 192
-                        && !r.status.crashed
-                })
+                h.plugins()
+                    .reports()
+                    .iter()
+                    .any(|r| r.id == id && r.status.latency == 192 && !r.status.crashed)
             })
     });
     assert!(
@@ -155,26 +154,15 @@ pub(crate) fn ready(s: &mut Studio) {
     );
     let reports = s.transport.host().unwrap().plugins().reports();
     assert!(
-        reports.iter().any(|r| r.id == id
-            && r.status.latency == xirius_engine::server::DEFAULT_LATENCY + 192
-            && !r.status.crashed),
+        reports
+            .iter()
+            .any(|r| r.id == id && r.status.latency == 192 && !r.status.crashed),
         "{reports:?}"
     );
 }
 
 fn crash(s: &mut Studio, _: u8) {
-    ready(s);
-    let id = id(s);
-    let host = s.transport.host().unwrap();
-    let link = host.plugins().link(id).unwrap();
-    host.plugins()
-        .server_of(id)
-        .unwrap()
-        .fault(&link, xirius_engine::wire::Fault::Crash, 1);
-    crate::shot::run_for(s, 15.0, |s| s.health.crashed(id));
-    s.poll_plugins_now();
-    assert!(s.health.fake.is_none());
-    assert!(s.health.crashed(id));
+    crate::plugin_crash_shots::crash(s, 0);
 }
 
 fn selected(s: &mut Studio, _: u8) {

@@ -2128,9 +2128,6 @@ impl Studio {
     }
 }
 
-#[cfg(all(test, windows))]
-mod owned_save_tests;
-
 #[cfg(test)]
 mod tests {
     use super::*;

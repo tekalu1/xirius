@@ -110,9 +110,9 @@ fn the_window_follows_the_plugin_through_each_swap() {
     let open = at("swap01-open");
     let latency = at("swap02-latency");
     let added = at("swap03-track-added");
-    let shared = at("swap04-shared");
-    let inprocess = at("swap05-inprocess");
-    let dedicated = at("swap06-dedicated");
+    let default = at("swap04-default");
+    let dedicated = at("swap05-dedicated");
+    let default_again = at("swap06-default");
     assert_eq!(open.n("delay"), 192, "the song's value");
     assert_ne!(open.n("pid"), app, "its own host");
     for (s, before) in [(latency, open), (added, latency)] {
@@ -125,15 +125,15 @@ fn the_window_follows_the_plugin_through_each_swap() {
         latency.n("instance"),
         "unchanged track retained"
     );
-    for s in [shared, inprocess, dedicated] {
+    for s in [default, dedicated, default_again] {
         assert_eq!(s.n("delay"), 128, "the value moved in the window");
         assert_eq!(s.n("pid"), s.n("window-pid"), "the window of the instance");
     }
-    assert_ne!(shared.n("pid"), added.n("pid"), "the shared host");
-    assert_eq!(inprocess.n("pid"), app, "in the app");
+    assert_ne!(default.n("pid"), added.n("pid"), "the default host");
     assert_ne!(dedicated.n("pid"), app, "out of the app");
-    assert_ne!(dedicated.n("pid"), shared.n("pid"), "a host of its own");
-    for shot in ["swap07-closed-shared", "swap09-closed-inprocess"] {
+    assert_ne!(dedicated.n("pid"), default.n("pid"), "a host of its own");
+    assert_ne!(default_again.n("pid"), dedicated.n("pid"));
+    for shot in ["swap07-closed-dedicated", "swap09-closed-default"] {
         let s = at(shot);
         assert_eq!(s.what, "closed");
         assert!(
@@ -143,8 +143,8 @@ fn the_window_follows_the_plugin_through_each_swap() {
         assert!(!s.yes("reopened"), "{shot}: the window opened again");
     }
     // To another host, the new instance takes a while: the screen sees the window closed
-    // before it plays. One made in the app comes in within a frame of the screen.
-    assert!(at("swap07-closed-shared").yes("noticed"));
+    // before it plays.
+    assert!(at("swap07-closed-dedicated").yes("noticed"));
     let reopened = at("swap08-reopened");
     assert_ne!(reopened.n("pid"), app);
 }

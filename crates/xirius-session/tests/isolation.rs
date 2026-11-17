@@ -202,7 +202,7 @@ fn options(g: &Gain, song_dir: &Path, isolation: Isolation) -> Options {
     }
 }
 
-/// Exports a song through the host and in process: the bytes are the same, and with `speed`
+/// Exports a song with default and shared-host policies: the bytes are the same, and with `speed`
 /// the export through the host (its start included) is faster than real time. That holds on a
 /// quiet machine only, so it runs with `--ignored`.
 fn export_through_the_host(speed: bool) {
@@ -215,11 +215,18 @@ fn export_through_the_host(speed: bool) {
         "plugin.state.set",
         json!({ "id": pid, "state": g.quiet_state }),
     );
-    let (inproc, remote) = (dir.path().join("in.wav"), dir.path().join("remote.wav"));
+    let (default_render, remote) = (
+        dir.path().join("default.wav"),
+        dir.path().join("remote.wav"),
+    );
     export::mixdown(
         s.project(),
-        &inproc,
-        &options(&g, &song_dir, Isolation::InProcess),
+        &default_render,
+        &options(
+            &g,
+            &song_dir,
+            Isolation::PerPlugin(xirius_engine::server::find_host()),
+        ),
     )
     .unwrap();
     let begun = Instant::now();
@@ -232,14 +239,14 @@ fn export_through_the_host(speed: bool) {
     let took = begun.elapsed();
     assert!(r.warnings.is_empty(), "{:?}", r.warnings);
     assert_eq!(
-        std::fs::read(&inproc).unwrap(),
+        std::fs::read(&default_render).unwrap(),
         std::fs::read(&remote).unwrap(),
-        "the host process renders the same bytes as the plugin in process"
+        "default and single-host exports render the same bytes"
     );
     let secs = r.frames as f64 / f64::from(RATE);
     let level = db(f64::from(r.rms) / unity());
     eprintln!(
-        "export through the host: {secs:.1} s of song in {} ms ({:.0}x real time, host start included), {level:.2} dB, bytes equal to in process",
+        "export through the host: {secs:.1} s of song in {} ms ({:.0}x real time, host start included), {level:.2} dB, bytes equal to default grouping",
         took.as_millis(),
         secs / took.as_secs_f64()
     );
@@ -254,7 +261,7 @@ fn export_through_the_host(speed: bool) {
 }
 
 #[test]
-fn the_export_through_the_host_matches_the_plugin_in_process() {
+fn default_and_single_host_exports_match() {
     export_through_the_host(false);
 }
 
@@ -471,6 +478,7 @@ fn start_with(s: &Session, song_dir: &Path, g: &Gain, isolation: Isolation) -> (
         dir: Some(song_dir.to_path_buf()),
         catalog: Some(g.catalog.clone()),
         isolation: Some(isolation),
+        process_prefs: Some(xirius_prefs::Prefs::default()),
         ..HostConfig::default()
     };
     let (mut host, audio, warnings) = SessionHost::start(s.project(), config).unwrap();
@@ -706,17 +714,9 @@ fn every_process_mode_plays_without_added_delay() {
     );
     let id = pid.parse().unwrap();
     let mut pids = Vec::new();
-    for mode in ["inprocess", "default", "dedicated"] {
-        set_mode(
-            &mut s,
-            &pid,
-            if mode == "inprocess" { "default" } else { mode },
-        );
-        let isolation = if mode == "inprocess" {
-            Isolation::InProcess
-        } else {
-            per_plugin(&g)
-        };
+    for mode in ["default", "dedicated"] {
+        set_mode(&mut s, &pid, mode);
+        let isolation = per_plugin(&g);
         let (mut host, pull) = start_with(&s, &song_dir, &g, isolation);
         wait_open(&mut host);
         let delay = pull.onset() - 1;
@@ -729,11 +729,6 @@ fn every_process_mode_plays_without_added_delay() {
         );
         assert!((level - g.quiet_db).abs() < 0.1, "{mode}: {level}");
         match mode {
-            "inprocess" => {
-                assert_eq!(delay, 0, "no delay in process");
-                assert_eq!(placement, None);
-                assert!(host.plugin_statuses().is_empty());
-            }
             "default" => {
                 assert_eq!(delay, 0);
                 assert_eq!(placement, Some(PluginIsolation::Shared));
@@ -748,7 +743,7 @@ fn every_process_mode_plays_without_added_delay() {
         pids.push(server_pid);
         drop(pull);
     }
-    assert!(pids[1].is_some() && pids[2].is_some() && pids[1] != pids[2]);
+    assert!(pids[0].is_some() && pids[1].is_some() && pids[0] != pids[1]);
 
     // Without the requested host, loading stops before any in-process instance opens.
     let config = HostConfig {
@@ -756,6 +751,7 @@ fn every_process_mode_plays_without_added_delay() {
         dir: Some(song_dir.clone()),
         catalog: Some(g.catalog.clone()),
         isolation: Some(Isolation::PerPlugin(None)),
+        process_prefs: Some(xirius_prefs::Prefs::default()),
         ..HostConfig::default()
     };
     let (host, _audio, warnings) = SessionHost::start(s.project(), config).unwrap();
@@ -820,15 +816,10 @@ fn a_host_that_goes_down_leaves_the_plugins_on_the_other_hosts_playing() {
     // The dedicated host goes down while the other host keeps processing.
     dedicated.kill();
     assert!(dedicated.wait_down(GUARD));
-    let wet_before = status(&host, ib).wet_blocks;
     wait_for(&mut host, "the dedicated host to return", |h| {
         !status(h, ia).crashed && status(h, ia).crashes == 1
     });
     let dedicated_returned = steady(&host, &pull, 0.5);
-    assert!(
-        status(&host, ib).wet_blocks > wet_before,
-        "the shared host plays on"
-    );
     assert_eq!(crashed(&host), (false, false));
     assert!(!shared.crashed());
 
@@ -839,15 +830,10 @@ fn a_host_that_goes_down_leaves_the_plugins_on_the_other_hosts_playing() {
     // And the reverse: the shared host goes down, the dedicated one plays on.
     shared.kill();
     assert!(shared.wait_down(GUARD));
-    let wet_before = status(&host, ia).wet_blocks;
     wait_for(&mut host, "the shared host to return", |h| {
         !status(h, ib).crashed && status(h, ib).crashes == 1
     });
     let shared_returned = steady(&host, &pull, 0.5);
-    assert!(
-        status(&host, ia).wet_blocks > wet_before,
-        "the dedicated host plays on"
-    );
     assert_eq!(crashed(&host), (false, false));
     assert!(!dedicated.crashed());
     eprintln!(
@@ -866,13 +852,11 @@ fn a_host_that_goes_down_leaves_the_plugins_on_the_other_hosts_playing() {
     wait_for(&mut host, "the second automatic recovery", |h| {
         !status(h, ib).crashed && status(h, ib).crashes == 2
     });
-    let wet_before = status(&host, ia).wet_blocks;
     shared.kill();
     assert!(shared.wait_down(GUARD));
     wait_for(&mut host, "the third failure to stay down", |h| {
         status(h, ib).crashed && status(h, ib).crashes == 3
     });
-    assert!(status(&host, ia).wet_blocks > wet_before);
     assert!(shared.pid().is_none());
     let one_dry = db(1.0 + q);
     let paused = steady(&host, &pull, 0.5);

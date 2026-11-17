@@ -2,11 +2,11 @@
 //! (ENG-066 to ENG-071). The test VST3 runs in a plugin host process of its own, plays on Vocal,
 //! and its window is opened as a person opens it, from its row in the mixer. Then, with the
 //! window open, the value is moved in the window (which changes the plugin's latency), a track
-//! is added, the plugin is moved to the shared host, into the app's process and back to a host
-//! of its own. An unrelated track addition retains the playing instance; latency and
+//! is added, the plugin is moved between its default host and a dedicated host.
+//! An unrelated track addition retains the playing instance; latency and
 //! isolation changes replace it. After each the window must show the
 //! new instance, with the value moved in it. Last, the window is closed while a new mix that
-//! moves the plugin is on its way, once to the shared host and once into the app: it must not
+//! moves the plugin is on its way, once to each host placement: it must not
 //! open again when the new mix plays.
 //!
 //! The test VST3's window says which instance it is: `delay N (x.xx)  pid P  instance K`. A
@@ -24,7 +24,6 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use xirius_engine::server::DEFAULT_LATENCY;
 
 use crate::plugin_reload_shots::{id, prepare, ready};
 use crate::shot::{Act, Part, Play, Shot, Target};
@@ -57,19 +56,19 @@ pub const SHOTS: &[Shot] = &[
         acts: &[Act::Stage(Play::Studio(stage), 3)],
     },
     Shot {
-        name: "swap04-shared",
+        name: "swap04-default",
         acts: &[Act::Stage(Play::Studio(stage), 4)],
     },
     Shot {
-        name: "swap05-inprocess",
+        name: "swap05-dedicated",
         acts: &[Act::Stage(Play::Studio(stage), 5)],
     },
     Shot {
-        name: "swap06-dedicated",
+        name: "swap06-default",
         acts: &[Act::Stage(Play::Studio(stage), 6)],
     },
     Shot {
-        name: "swap07-closed-shared",
+        name: "swap07-closed-dedicated",
         acts: &[Act::Stage(Play::Studio(stage), 7)],
     },
     Shot {
@@ -80,7 +79,7 @@ pub const SHOTS: &[Shot] = &[
         ],
     },
     Shot {
-        name: "swap09-closed-inprocess",
+        name: "swap09-closed-default",
         acts: &[
             Act::Stage(Play::Studio(stage), 9),
             Act::Press(Target::Top(BarButton::Stop)),
@@ -264,12 +263,12 @@ fn stage(s: &mut Studio, n: u8) {
             let at = Instant::now();
             let before = before.and_then(|b| b.label).unwrap();
             crate::shot::run_for(s, WAIT.as_secs_f32(), |s| {
-                value(s, "1") == Some(MOVED) && latency(s) == Some(DEFAULT_LATENCY + 128)
+                value(s, "1") == Some(MOVED) && latency(s) == Some(128)
             });
             assert_eq!(value(s, "1"), Some(MOVED), "the moved value is in the song");
             assert_eq!(
                 latency(s),
-                Some(DEFAULT_LATENCY + 128),
+                Some(128),
                 "playing={}, pending={}, error={:?}",
                 s.transport.playing,
                 s.transport.host().is_some_and(|h| h.swap_pending()),
@@ -306,19 +305,16 @@ fn stage(s: &mut Studio, n: u8) {
         }
         4..=6 => {
             let (shot, mode) = match n {
-                4 => ("swap04-shared", "shared"),
-                5 => ("swap05-inprocess", "inprocess"),
-                _ => ("swap06-dedicated", "dedicated"),
+                4 => ("swap04-default", "default"),
+                5 => ("swap05-dedicated", "dedicated"),
+                _ => ("swap06-default", "default"),
             };
             let before = before.unwrap();
             let at = isolate(s, mode);
             // Until the new mix plays, the window is the old instance's, and is open.
             assert!(s.editor_shown(id), "{shot}: the window counts as open");
             let seen = follow(s, shot, at, |w| {
-                let moved = match n {
-                    5 => w.pid == app,
-                    _ => w.pid != app && w.pid != before.pid,
-                };
+                let moved = w.pid != app && w.pid != before.pid;
                 moved && (real || w.label.is_some_and(|l| l.delay == 128))
             });
             if !real {
@@ -327,12 +323,12 @@ fn stage(s: &mut Studio, n: u8) {
             }
             check(shot, "moved", &seen);
         }
-        7 => closed(s, "swap07-closed-shared", "shared"),
+        7 => closed(s, "swap07-closed-dedicated", "dedicated"),
         8 => {
             let seen = follow(s, "swap08-reopened", Instant::now(), |w| w.pid != app);
             check("swap08-reopened", "opened", &seen);
         }
-        9 => closed(s, "swap09-closed-inprocess", "inprocess"),
+        9 => closed(s, "swap09-closed-default", "default"),
         _ => unreachable!(),
     }
 }

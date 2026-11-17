@@ -35,7 +35,7 @@ fn each_offline_render_plays_the_instance_it_opened() {
         deactivated: false,
         params: BTreeMap::from([("1".into(), 0.5)]),
         state: None,
-        isolation: PluginIsolation::InProcess,
+        isolation: PluginIsolation::Shared,
         sidechain: None,
         note_source: None,
         preset: None,
@@ -46,13 +46,25 @@ fn each_offline_render_plays_the_instance_it_opened() {
 
     let mut builder = Builder::new(48000, None);
     builder.set_catalog(Some(catalog));
-    builder.set_isolation(Isolation::InProcess);
+    builder.set_isolation(Isolation::PerPlugin(xirius_engine::server::find_host()));
+    builder
+        .plugins_mut()
+        .set_process_prefs(xirius_prefs::Prefs::default());
     let mut seen = Vec::new();
-    for _ in 0..2 {
+    for pass in 0..2 {
+        if pass == 1 {
+            Arc::make_mut(p.tracks.get_mut(&TrackId(100)).unwrap()).inserts[0].isolation =
+                PluginIsolation::Dedicated;
+        }
         let out = export::render(&mut builder, &p, Select::All, 0, 480, 0).unwrap();
         assert!(out.warnings.is_empty(), "{:?}", out.warnings);
-        let (_, generation) = builder.plugins().local(PID).expect("it plays in the app");
-        seen.push(generation);
+        seen.push(
+            builder
+                .plugins()
+                .server_of(PID)
+                .and_then(|server| server.pid())
+                .expect("the render opened a host"),
+        );
     }
     assert_ne!(
         seen[0], seen[1],

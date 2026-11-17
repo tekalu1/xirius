@@ -77,7 +77,7 @@ fn with_test_plugin(s: &mut Studio) {
         let mode = if instrument || i >= 3 {
             "dedicated"
         } else {
-            "inprocess"
+            "default"
         };
         assert!(s.run_command(
             "plugin.isolation.set",

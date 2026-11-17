@@ -102,7 +102,7 @@ fn an_ara_plugin_requires_a_host() {
     }
 
     // A legacy in-process request still requires a host.
-    let p = song(&uid, PluginIsolation::InProcess);
+    let p = song(&uid, PluginIsolation::Shared);
     let mut ara = entries.clone();
     ara.iter_mut().for_each(|e| e.ara = true);
     let mut b = builder(Catalog {

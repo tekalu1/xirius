@@ -287,10 +287,9 @@ pub fn retuned(norm: f64) -> f64 {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginIsolation {
-    /// In the engine's process.
-    InProcess,
     /// In the host selected by the default grouping policy.
     #[default]
+    #[serde(rename = "default", alias = "shared", alias = "same", alias = "song")]
     Shared,
     /// In a separate process of its own.
     Dedicated,
@@ -306,7 +305,6 @@ impl PluginIsolation {
 
     pub fn name(self) -> &'static str {
         match self {
-            PluginIsolation::InProcess => "inprocess",
             PluginIsolation::Shared => "default",
             PluginIsolation::Dedicated => "dedicated",
         }
@@ -324,7 +322,7 @@ impl PluginIsolation {
 
     /// Runs outside the engine's process.
     pub fn is_separate(self) -> bool {
-        self != PluginIsolation::InProcess
+        true
     }
 }
 

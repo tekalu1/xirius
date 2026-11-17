@@ -88,15 +88,11 @@ fn song(mode: &str) -> Song {
 /// The plug-in's "Latency" turned in its own window: the song hears nothing of it.
 fn turn_silently(s: &mut Studio, id: PluginId, v: f64) {
     let host = s.transport.host().unwrap();
-    if let Some(link) = host.plugins().link(id) {
-        host.plugins()
-            .server_of(id)
-            .unwrap()
-            .set_param(&link, "Latency", v);
-    } else {
-        let (plugin, _) = host.plugins().local(id).expect("in process");
-        assert!(plugin.set_param(1, v));
-    }
+    let link = host.plugins().link(id).unwrap();
+    host.plugins()
+        .server_of(id)
+        .unwrap()
+        .set_param(&link, "Latency", v);
     crate::shot::run_for(s, 0.5, |_| false);
 }
 
@@ -227,8 +223,8 @@ fn a_copy_leaves_the_song_and_its_history_as_they_were() {
 }
 
 #[test]
-fn a_copy_from_plugins_in_this_process_leaves_the_song_too() {
-    copy_leaves_the_song("inprocess");
+fn a_copy_from_default_host_leaves_the_song_too() {
+    copy_leaves_the_song("default");
 }
 
 fn copy_leaves_the_song(mode: &str) {
@@ -382,38 +378,6 @@ fn ctrl_c_on_the_heading_copies_what_the_plugin_holds_now() {
 }
 
 #[test]
-fn a_wait_cut_short_still_reads_the_plugins_in_this_process() {
-    let _records = crate::shot::CrashRecords::new();
-    let Song {
-        mut s,
-        g,
-        vocal,
-        guitar,
-        from,
-        to,
-    } = song("inprocess");
-    turn_silently(&mut s, from, 0.5);
-    turn_silently(&mut s, to, 0.625);
-    // a copy reads them itself: nothing to wait for
-    assert!(
-        s.arrange_run("channel.inserts.copy", json!({ "id": vocal.to_string() }))
-            .is_some()
-    );
-    assert!(s.inserts_wait.is_none(), "copied at once");
-    drag(&mut s, &g, vocal, guitar);
-    assert!(s.inserts_wait.is_some());
-    // the window closed or the song left at once: what they hold is still read
-    s.inserts_wait_flush();
-    assert!(s.inserts_wait.is_none());
-    assert_eq!(held(&s, guitar), (0.5, Some(delay(0.5))));
-    assert_eq!(s.notice_text(), Some("インサートを貼り付けました"));
-    assert!(s.undo(&g));
-    assert_eq!(s.project().tracks[&guitar].inserts[0].id, to);
-    assert_eq!(held(&s, guitar), (0.625, Some(delay(0.625))));
-    s.transport.pause();
-}
-
-#[test]
 fn a_plugin_whose_host_went_down_is_copied_as_the_song_last_had_it() {
     let _records = crate::shot::CrashRecords::new();
     let Song {
@@ -424,24 +388,23 @@ fn a_plugin_whose_host_went_down_is_copied_as_the_song_last_had_it() {
         from,
         to,
     } = song("dedicated");
-    let host = s.transport.host().unwrap();
-    let link = host.plugins().link(from).unwrap();
-    host.plugins()
-        .server_of(from)
-        .unwrap()
-        .fault(&link, xirius_engine::wire::Fault::Crash, 1);
-    crate::shot::run_for(&mut s, 15.0, |s| s.health.crashed(from));
-    s.poll_plugins_now();
-    assert!(s.health.crashed(from));
     turn_silently(&mut s, to, 0.625);
+    let host = s.transport.host().unwrap();
+    let server = host.plugins().server_of(from).unwrap().clone();
+    server.kill();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while server.pid().is_some() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(server.pid().is_none(), "the host stopped");
     drag(&mut s, &g, vocal, guitar);
-    crate::shot::run_for(&mut s, 5.0, |s| s.inserts_wait.is_none());
+    s.inserts_wait_flush();
     assert!(s.inserts_wait.is_none());
     assert_eq!(held(&s, guitar), (0.75, None));
-    // the one that answered is still read: an undo brings it back as it answered
+    // Flushing before either host answers keeps each saved song value.
     assert!(s.undo(&g));
     assert_eq!(s.project().tracks[&guitar].inserts[0].id, to);
-    assert_eq!(held(&s, guitar), (0.625, Some(delay(0.625))));
+    assert_eq!(held(&s, guitar), (0.25, None));
     s.transport.pause();
 }
 

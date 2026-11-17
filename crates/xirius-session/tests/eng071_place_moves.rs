@@ -232,85 +232,12 @@ fn a_plugin_moved_between_processes_is_the_one_that_plays_until_the_new_mix_does
         }),
         exe,
     };
-    into_the_app(&rig);
-    out_of_the_app(&rig);
-    for to in [PluginIsolation::Shared, PluginIsolation::InProcess] {
-        closed_while_on_its_way(&rig, to, true);
-        closed_while_on_its_way(&rig, to, false);
-    }
+    closed_while_on_its_way(&rig, PluginIsolation::Shared, true);
+    closed_while_on_its_way(&rig, PluginIsolation::Shared, false);
     window_stays_after_it_played(&rig);
     #[cfg(windows)]
-    for to in [PluginIsolation::Shared, PluginIsolation::InProcess] {
-        shut_as_it_plays(&rig, to);
-    }
+    shut_as_it_plays(&rig, PluginIsolation::Shared);
     let_go(&rig);
-}
-
-/// From its own host into the app, with its window open.
-fn into_the_app(rig: &Rig) {
-    let (mut host, mut audio) = rig.start(PluginIsolation::Dedicated, 0.75);
-    let old_server = host.plugins().server_of(PID).unwrap().clone();
-    let old_link = host.plugins().link(PID).unwrap();
-    let before = status(&host).unwrap().latency;
-    host.plugin_editor(PID, true, None).unwrap();
-
-    let p2 = song(&rig.uid, PluginIsolation::InProcess, 0.25);
-    assert!(!host.sync_later(&p2).swapped);
-    let mut frames = 0;
-    swap(&mut host, &mut audio, |host| {
-        frames += 1;
-        // The host's instance plays on: its window, its latency, its process.
-        let s = status(host).expect("the instance that plays is reported");
-        assert!(s.editor_open, "its window counts as open");
-        assert_eq!(s.latency, before, "the latency of the instance that plays");
-        let r = host.plugins().reports();
-        let r = r.iter().find(|r| r.id == PID).unwrap();
-        assert_eq!(r.placement, PluginIsolation::Dedicated);
-        assert!(
-            host.plugins().local(PID).is_none(),
-            "no window opens on the instance that does not play yet"
-        );
-    });
-    assert!(frames > 1, "the new mix was on its way a while");
-
-    assert!(host.plugins().local(PID).is_some(), "it plays in the app");
-    assert!(status(&host).is_none(), "nothing plays it in a host");
-    assert!(
-        old_link.editor().is_none(),
-        "the host's window is shut: the screen opens it here"
-    );
-    // Once the host has let go of the old instance, with nothing said about its window.
-    assert!(host.plugins().window_moving_in(PID));
-    assert!(!host.plugins().window_moved_in(PID));
-    settle(&mut host, &old_server, &old_link);
-    assert!(!host.plugins().window_moving_in(PID));
-    assert!(host.plugins().window_moved_in(PID));
-    assert_eq!(old_link.windows_shut(), 0, "nobody shut it");
-}
-
-/// From the app into its own host.
-fn out_of_the_app(rig: &Rig) {
-    let (mut host, mut audio) = rig.start(PluginIsolation::InProcess, 0.75);
-    let (_, generation) = host.plugins().local(PID).expect("it plays in the app");
-    let p2 = song(&rig.uid, PluginIsolation::Dedicated, 0.25);
-    assert!(!host.sync_later(&p2).swapped);
-    let mut asked = None;
-    swap(&mut host, &mut audio, |host| {
-        assert_eq!(
-            host.plugins().local(PID).map(|(_, g)| g),
-            Some(generation),
-            "the window stays on the instance that plays"
-        );
-        assert!(status(host).is_none(), "no host plays it yet");
-        // The screen's window is this process's: nothing to open in the host.
-        asked = Some(host.plugin_editor(PID, false, None));
-    });
-    assert!(asked.is_some_and(|r| r.is_err()));
-    assert!(host.plugins().local(PID).is_none());
-    let s = status(&host).expect("its host plays it");
-    assert!(!s.editor_open, "the screen opens the window in the host");
-    host.plugin_editor(PID, true, None).unwrap();
-    assert!(status(&host).unwrap().editor_open);
 }
 
 /// From its own host to the shared one (`to`) or into the app, the window closed while the new
@@ -326,7 +253,7 @@ fn closed_while_on_its_way(rig: &Rig, to: PluginIsolation, screen: bool) {
 
     let p2 = song(&rig.uid, to, 0.25);
     assert!(!host.sync_later(&p2).swapped);
-    let apart = to != PluginIsolation::InProcess;
+    let apart = true;
     let mut frames = 0;
     swap(&mut host, &mut audio, |host| {
         frames += 1;
@@ -353,20 +280,12 @@ fn closed_while_on_its_way(rig: &Rig, to: PluginIsolation, screen: bool) {
     });
     assert!(frames >= 2, "the new mix was on its way a while");
 
-    if apart {
-        let link = host.plugins().link(PID).unwrap();
-        assert!(!Arc::ptr_eq(&link, &old_link), "a new link in the new host");
-        assert!(link.editor().is_none(), "the window does not open again");
-        let s = status(&host).unwrap();
-        assert!(!s.editor_open);
-        assert_eq!(s.latency, base + 64, "the new instance's latency");
-    } else {
-        assert!(host.plugins().local(PID).is_some(), "it plays in the app");
-        assert!(
-            !host.plugins().window_moved_in(PID),
-            "the window does not open in the app"
-        );
-    }
+    let link = host.plugins().link(PID).unwrap();
+    assert!(!Arc::ptr_eq(&link, &old_link), "a new link in the new host");
+    assert!(link.editor().is_none(), "the window does not open again");
+    let s = status(&host).unwrap();
+    assert!(!s.editor_open);
+    assert_eq!(s.latency, base + 64, "the new instance's latency");
 }
 
 /// From its own host to the shared one, the window open and nobody shutting it: the new mix
@@ -444,18 +363,10 @@ fn shut_as_it_plays(rig: &Rig, to: PluginIsolation) {
     assert!(shut, "the window was shut before the new mix played");
     settle(&mut host, &old_server, &old_link);
     assert_eq!(old_link.windows_shut(), 1, "the old host said it was shut");
-    if to == PluginIsolation::InProcess {
-        assert!(host.plugins().local(PID).is_some(), "it plays in the app");
-        assert!(
-            !host.plugins().window_moved_in(PID),
-            "the window does not open in the app"
-        );
-    } else {
-        let link = host.plugins().link(PID).unwrap();
-        assert!(!Arc::ptr_eq(&link, &old_link), "a new link in the new host");
-        assert!(link.editor().is_none(), "the window does not stay open");
-        assert!(!status(&host).unwrap().editor_open);
-    }
+    let link = host.plugins().link(PID).unwrap();
+    assert!(!Arc::ptr_eq(&link, &old_link), "a new link in the new host");
+    assert!(link.editor().is_none(), "the window does not stay open");
+    assert!(!status(&host).unwrap().editor_open);
 }
 
 /// A new mix that moves it to the shared host, let go while the new instance opens: it stays

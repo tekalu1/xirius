@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 use xirius_core::{
     auto::{AutoLane, AutoPoint, AutoTarget},
     id::{ClipId, Node, PluginId, TrackId},
@@ -9,9 +12,24 @@ use xirius_session::{
     build::Builder,
     export,
     graph::Select,
-    host::{HostConfig, SessionHost},
+    host::{HostConfig, SessionHost, peek_pulled_states},
     plugins::Isolation,
 };
+
+fn remote_param(host: &mut SessionHost, song: &Project, id: PluginId) -> f64 {
+    let pull = host.begin_peek_states_of(&HashSet::from([id]));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !pull.ready() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the host did not return its state"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let mut copy = song.tracks[&TrackId(100)].inserts[1].clone();
+    peek_pulled_states(host, &pull, song, std::slice::from_mut(&mut copy));
+    copy.params["1"]
+}
 
 #[test]
 fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek() {
@@ -81,7 +99,7 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
                 deactivated: false,
                 params: BTreeMap::from([("1".into(), 1.0)]),
                 state: None,
-                isolation: PluginIsolation::InProcess,
+                isolation: PluginIsolation::Shared,
                 sidechain: None,
                 note_source: None,
                 preset: None,
@@ -105,7 +123,7 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
     for from in [0, 2400] {
         let mut builder = Builder::new(48000, None);
         builder.set_catalog(Some(catalog.clone()));
-        builder.set_isolation(Isolation::InProcess);
+        builder.set_isolation(Isolation::PerPlugin(xirius_engine::server::find_host()));
         let out = export::render(&mut builder, &p, Select::All, from, from + 2200, 0).unwrap();
         assert!(out.warnings.is_empty(), "{:?}", out.warnings);
         assert_eq!(
@@ -120,7 +138,7 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
             &p,
             HostConfig {
                 catalog: Some(catalog.clone()),
-                isolation: Some(Isolation::InProcess),
+                isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
                 engine: xirius_engine::EngineConfig {
                     meter_interval: std::time::Duration::ZERO,
                     ..Default::default()
@@ -149,7 +167,7 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
     for from in [1100, 3500] {
         let mut builder = Builder::new(48000, None);
         builder.set_catalog(Some(catalog.clone()));
-        builder.set_isolation(Isolation::InProcess);
+        builder.set_isolation(Isolation::PerPlugin(xirius_engine::server::find_host()));
         let out = export::render(&mut builder, &p, Select::All, from, from + 600, 0).unwrap();
         assert_eq!(
             out.left[10], 2.0,
@@ -159,7 +177,7 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
             &p,
             HostConfig {
                 catalog: Some(catalog.clone()),
-                isolation: Some(Isolation::InProcess),
+                isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
                 engine: xirius_engine::EngineConfig {
                     meter_interval: std::time::Duration::ZERO,
                     ..Default::default()
@@ -174,7 +192,12 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
         host.poll();
         assert_eq!(host.status().frame, from);
         assert_eq!(
-            host.plugins().local(PluginId(200)).unwrap().0.latency(),
+            host.plugins()
+                .link(PluginId(200))
+                .unwrap()
+                .opened()
+                .unwrap()
+                .latency,
             256
         );
         audio.render(&mut buffer, 2);
@@ -194,7 +217,7 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
         &parameter_song,
         HostConfig {
             catalog: Some(catalog.clone()),
-            isolation: Some(Isolation::InProcess),
+            isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
             engine: xirius_engine::EngineConfig {
                 meter_interval: std::time::Duration::ZERO,
                 ..Default::default()
@@ -224,9 +247,8 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
     // to process the new parameter before this assertion by chance.
     audio.render(&mut [0.0; 2], 2);
     assert_eq!(
-        host.plugins().local(PluginId(201)).unwrap().0.param(1),
-        Some(0.25),
-        "sync uses the later insert's input time before poll"
+        remote_param(&mut host, &parameter_song, PluginId(201)),
+        0.25
     );
     Arc::make_mut(parameter_song.tracks.get_mut(&TrackId(100)).unwrap()).inserts[1]
         .params
@@ -234,9 +256,8 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
     host.sync(&parameter_song);
     audio.render(&mut [0.0; 960], 2);
     assert_eq!(
-        host.plugins().local(PluginId(201)).unwrap().0.param(1),
-        Some(0.25),
-        "the parameter lane overrides a saved knob immediately"
+        remote_param(&mut host, &parameter_song, PluginId(201)),
+        0.25
     );
     assert!(
         !audio.prefetch(0).unwrap().lent,
