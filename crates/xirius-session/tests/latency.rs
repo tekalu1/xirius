@@ -229,7 +229,13 @@ fn a_latency_notification_rebuilds_pdc_while_the_transport_keeps_playing() {
         );
         if !remote && scenario != 3 {
             // The untouched track is delayed too: the two impulses still sum at one frame.
+            host.controller().send(Command::Seek(0)).ok().unwrap();
+            audio.render(&mut buffer, 2);
             let at = audio.song_position();
+            assert!(
+                at <= 4096 + 128,
+                "the seek reached the impulse before rendering"
+            );
             let mut out = [0.0; 8000 * 2];
             audio.render(&mut out, 2);
             let frame = (4096 + 128 - at) as usize;
