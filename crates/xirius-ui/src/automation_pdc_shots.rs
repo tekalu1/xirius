@@ -163,6 +163,7 @@ mod tests {
     use crate::studio::Hit;
     #[test]
     fn the_saved_pdc_song_opens_its_lane_through_the_track_and_key() {
+        let _records = crate::shot::CrashRecords::new();
         xirius_test_vst3::fixture_marker();
         let _folder = crate::shot::TestFolder::lent("xirius-ui-automation-pdc-");
         let mut s = Studio::sample();

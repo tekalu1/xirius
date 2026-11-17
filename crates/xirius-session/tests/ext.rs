@@ -1,5 +1,6 @@
 //! The session layer's extension: background exports, the player and VST3 plugins in a song.
 //! The player plays into a silent output; nothing here opens an audio device.
+mod crash_records;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -473,6 +474,7 @@ fn export(s: &mut Session, out: &Path) -> RunResult {
 
 #[test]
 fn a_vst3_insert_sounds_in_the_export_and_keeps_its_state_through_save_and_open() {
+    let _records = crash_records::CrashRecords::new();
     let Some((path, catalog)) = installed("Kilohearts/kHs Gain.vst3") else {
         return;
     };
@@ -579,6 +581,7 @@ fn a_vst3_insert_sounds_in_the_export_and_keeps_its_state_through_save_and_open(
 
 #[test]
 fn a_vst3_instrument_plays_the_notes_of_its_track() {
+    let _records = crash_records::CrashRecords::new();
     let Some((_, catalog)) = installed("Vital.vst3") else {
         return;
     };
