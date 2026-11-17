@@ -282,6 +282,7 @@ impl Windows {
                 kind: Kind::Device(id),
                 title,
                 initial,
+                display: None,
                 min_size: None,
                 resizable: true,
                 positions: Some(positions.clone()),
@@ -345,16 +346,24 @@ impl Windows {
         if let Some(handle) = self.preset.take() {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         }
-        let scale = dpi.max(96) as f32 / 96.0;
-        let initial = Bounds::new(
-            point(px(x as f32 / scale), px(y as f32 / scale)),
-            size(px(332.0), px(420.0)),
-        );
+        // The point is in physical screen pixels: it becomes logical ones by the scale of the
+        // display it is on, which need not be the one of the window that sent it.
+        let popup = size(px(332.0), px(420.0));
+        let screens = crate::independent::screens(cx);
+        let (initial, display) = match crate::independent::popup_bounds((x, y), popup, &screens) {
+            Some((i, bounds)) => (bounds, Some(screens[i].id)),
+            None => {
+                let scale = dpi.max(96) as f32 / 96.0;
+                let at = point(px(x as f32 / scale), px(y as f32 / scale));
+                (Bounds::new(at, popup), None)
+            }
+        };
         let shared = studio.clone();
         let spec = Spec {
             kind: Kind::Presets,
             title: "Presets".into(),
             initial,
+            display,
             min_size: None,
             resizable: false,
             positions: None,
@@ -414,6 +423,7 @@ impl Windows {
             kind: Kind::Macros,
             title: "Xirius · Macro Controls".into(),
             initial: Bounds::new(origin, size(px(w), px(h))),
+            display: None,
             min_size: None,
             resizable: false,
             positions: Some(positions.clone()),
@@ -489,6 +499,7 @@ impl Windows {
                 point(origin.x + px(60.0), origin.y + px(80.0)),
                 size(px(natural.0), px(natural.1)),
             ),
+            display: None,
             min_size: Some(size(px(least), px(CHANNEL_MIN_H))),
             resizable: true,
             positions: Some(positions.clone()),

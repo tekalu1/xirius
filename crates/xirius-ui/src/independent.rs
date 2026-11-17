@@ -5,7 +5,7 @@
 //! and the owner (the main window).
 
 use gpui::{
-    App, Bounds, Entity, Pixels, Render, Size, TitlebarOptions, Window, WindowBounds,
+    App, Bounds, DisplayId, Entity, Pixels, Render, Size, TitlebarOptions, Window, WindowBounds,
     WindowDecorations, WindowHandle, WindowOptions, point, px,
 };
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -113,8 +113,12 @@ pub(crate) type Positions = Rc<RefCell<HashMap<Key, Bounds<Pixels>>>>;
 pub(crate) struct Spec {
     pub kind: Kind,
     pub title: String,
-    /// Where it opens the first time (a remembered place of its `kind` wins).
+    /// Where it opens the first time (a remembered place of its `kind` wins), in the logical
+    /// pixels of its display.
     pub initial: Bounds<Pixels>,
+    /// The display `initial` is on, where the caller knows it (from [`screens`]); else the
+    /// display whose bounds hold its origin.
+    pub display: Option<DisplayId>,
     pub min_size: Option<Size<Pixels>>,
     pub resizable: bool,
     pub positions: Option<Positions>,
@@ -140,13 +144,16 @@ pub(crate) fn open<V: Render + 'static>(
         .zip(spec.positions.as_ref())
         .and_then(|(key, p)| p.borrow().get(&key).copied())
         .unwrap_or(spec.initial);
-    if !parked
-        && let Some(display) = cx
-            .displays()
-            .into_iter()
-            .find(|d| d.bounds().contains(&initial.origin))
-            .or_else(|| main.display(cx))
-    {
+    let display = spec
+        .display
+        .and_then(|id| cx.find_display(id))
+        .or_else(|| {
+            cx.displays()
+                .into_iter()
+                .find(|d| d.bounds().contains(&initial.origin))
+        })
+        .or_else(|| main.display(cx));
+    if !parked && let Some(display) = &display {
         initial = fit_bounds(initial, display.visible_bounds());
     }
     if parked
@@ -157,12 +164,26 @@ pub(crate) fn open<V: Render + 'static>(
         // Create hidden on the display, then park before showing it.
         initial.origin = display.visible_bounds().origin;
     }
+    // Windows: the bounds are the display's logical pixels, and GPUI checks them against the
+    // display it is given, the primary one when none is: on another display it would put the
+    // window in the middle of the primary one at its default size. Elsewhere the platform's
+    // own placement is kept as it was.
+    let display = display.filter(|_| cfg!(windows) && !parked);
+    // The window is created on the display the system picks; `place` moves it in the pixels
+    // of the display it goes to, not those of the one it was created on.
+    let scale = display.as_ref().and_then(|d| {
+        screens(cx)
+            .into_iter()
+            .find(|s| s.id == d.id())
+            .map(|s| s.scale)
+    });
     let title = spec.title.clone();
     let spec_key = spec.kind.key();
     let positions = spec.positions.clone();
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(initial)),
+            display_id: display.map(|d| d.id()),
             titlebar: Some(TitlebarOptions {
                 title: Some(spec.title.into()),
                 appears_transparent: true,
@@ -185,7 +206,11 @@ pub(crate) fn open<V: Render + 'static>(
                 // these windows are shown without one (a parked window is never activated
                 // either). Place and size it now, so it opens as asked.
                 window.resize(initial.size);
-                place(&title, initial.origin, window.scale_factor());
+                place(
+                    &title,
+                    initial.origin,
+                    scale.unwrap_or_else(|| window.scale_factor()),
+                );
                 if let Some((key, positions)) = spec_key.zip(positions.as_ref()) {
                     // Remember it from the start, so a reopen finds it though it was never
                     // moved (and the Macro Controls find where the Channel Editor is).
@@ -201,8 +226,9 @@ pub(crate) fn open<V: Render + 'static>(
     )
 }
 
-/// Puts the client area of the window at `origin` (logical px). Windows only: elsewhere the
-/// platform places the window at the initial bounds it is created with.
+/// Puts the client area of the window at `origin` (logical px of the display it goes to, whose
+/// scale is `scale`). Windows only: elsewhere the platform places the window at the initial
+/// bounds it is created with.
 fn place(title: &str, origin: gpui::Point<Pixels>, scale: f32) {
     #[cfg(not(windows))]
     let _ = (title, origin, scale);
@@ -292,6 +318,86 @@ fn show(title: &str) {
     }
 }
 
+/// A display in the units the OS gives a point on the screen in (physical pixels of the
+/// whole desktop): all of it, the part windows may cover (without the taskbar), and how many
+/// physical pixels make one of its logical ones. Each display's logical pixels are its
+/// physical ones divided by its own scale, as GPUI counts them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Screen {
+    pub id: DisplayId,
+    /// Left, top, right, bottom.
+    pub area: [i32; 4],
+    pub work: [i32; 4],
+    pub scale: f32,
+}
+
+/// The displays GPUI knows, with their physical bounds and scale. Windows only (GPUI names a
+/// display by its monitor handle there); elsewhere none, and the callers keep to GPUI's
+/// logical bounds.
+pub(crate) fn screens(cx: &App) -> Vec<Screen> {
+    #[cfg(not(windows))]
+    {
+        let _ = cx;
+        Vec::new()
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::RECT;
+        use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
+        use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+        let edges = |r: RECT| [r.left, r.top, r.right, r.bottom];
+        cx.displays()
+            .into_iter()
+            .filter_map(|d| {
+                let monitor = u64::from(d.id()) as usize as HMONITOR;
+                // SAFETY: plain queries; a handle that names no monitor fails them.
+                unsafe {
+                    let mut info: MONITORINFO = std::mem::zeroed();
+                    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                    let (mut dpi, mut dpi_y) = (0, 0);
+                    if GetMonitorInfoW(monitor, &mut info) == 0
+                        || GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi, &mut dpi_y) != 0
+                    {
+                        return None;
+                    }
+                    Some(Screen {
+                        id: d.id(),
+                        area: edges(info.rcMonitor),
+                        work: edges(info.rcWork),
+                        scale: dpi.max(96) as f32 / 96.0,
+                    })
+                }
+            })
+            .collect()
+    }
+}
+
+/// Where a window of `size` (logical px) opens with its top left at `at`, a point in physical
+/// screen pixels (the Presets popup below the button that opened it): on the display that
+/// has the point, or the nearest one, in that display's logical pixels, inside its work area.
+/// The display's index in `screens` comes with it; `None` when there are none.
+pub(crate) fn popup_bounds(
+    at: (i32, i32),
+    size: Size<Pixels>,
+    screens: &[Screen],
+) -> Option<(usize, Bounds<Pixels>)> {
+    let away = |s: &Screen| {
+        let [left, top, right, bottom] = s.area;
+        let dx = i64::from((left - at.0).max(at.0 - (right - 1)).max(0));
+        let dy = i64::from((top - at.1).max(at.1 - (bottom - 1)).max(0));
+        dx * dx + dy * dy
+    };
+    let (i, screen) = screens.iter().enumerate().min_by_key(|(_, s)| away(s))?;
+    let logical = |v: i32| px(v as f32 / screen.scale);
+    let [left, top, right, bottom] = screen.work;
+    let work = Bounds::new(
+        point(logical(left), logical(top)),
+        gpui::size(logical(right - left), logical(bottom - top)),
+    );
+    let wanted = Bounds::new(point(logical(at.0), logical(at.1)), size);
+    Some((i, fit_bounds(wanted, work)))
+}
+
 pub(crate) fn fit_bounds(mut bounds: Bounds<Pixels>, work: Bounds<Pixels>) -> Bounds<Pixels> {
     bounds.size.width = bounds.size.width.min(work.size.width);
     bounds.size.height = bounds.size.height.min(work.size.height);
@@ -331,6 +437,109 @@ mod tests {
         assert_eq!(Kind::Channel.key(), Some(Key::Channel));
         assert_eq!(Kind::Macros.key(), Some(Key::Macros));
         assert_eq!(Kind::Presets.key(), None);
+    }
+
+    /// A 2560×1600 display at 150% (the primary one, a taskbar of 48 logical px at its
+    /// bottom), and a 2560×1440 one at 100% above it, 447 px further left.
+    fn two_screens() -> [Screen; 2] {
+        [
+            Screen {
+                id: DisplayId::new(1),
+                area: [0, 0, 2560, 1600],
+                work: [0, 0, 2560, 1528],
+                scale: 1.5,
+            },
+            Screen {
+                id: DisplayId::new(2),
+                area: [-447, -1440, 2113, 0],
+                work: [-447, -1440, 2113, 0],
+                scale: 1.0,
+            },
+        ]
+    }
+
+    const POPUP: Size<Pixels> = Size {
+        width: px(332.0),
+        height: px(420.0),
+    };
+
+    /// Where the popup opens for a press at `at`: the display's index and its top left.
+    fn popup_at(at: (i32, i32), screens: &[Screen]) -> (usize, (f32, f32)) {
+        let (i, b) = popup_bounds(at, POPUP, screens).expect("a display");
+        assert_eq!(b.size, POPUP);
+        // GPUI keeps the bounds only where its middle, in the display's physical pixels, is
+        // on that display; else it opens the window at its default place.
+        let [left, top, right, bottom] = screens[i].area;
+        let mid = b.center();
+        let (mx, my) = (
+            f32::from(mid.x) * screens[i].scale,
+            f32::from(mid.y) * screens[i].scale,
+        );
+        assert!(
+            (left as f32..right as f32).contains(&mx) && (top as f32..bottom as f32).contains(&my),
+            "{at:?} -> {b:?} is off display {i}"
+        );
+        let r = |v: Pixels| (f32::from(v) * 100.0).round() / 100.0;
+        (i, (r(b.origin.x), r(b.origin.y)))
+    }
+
+    #[test]
+    fn the_popup_opens_on_the_display_of_the_press_in_its_own_pixels() {
+        let screens = two_screens();
+        // On the display above: its scale is 1, whatever the primary one's is.
+        assert_eq!(popup_at((800, -1200), &screens), (1, (800.0, -1200.0)));
+        // On the primary one: 150%.
+        assert_eq!(popup_at((1200, 300), &screens), (0, (800.0, 200.0)));
+        // Past the bottom and the right of the display above: kept on it, not let onto
+        // the primary one.
+        assert_eq!(popup_at((2000, -100), &screens), (1, (1781.0, -420.0)));
+        // Past the bottom right of the primary one: above its taskbar.
+        assert_eq!(popup_at((2400, 1500), &screens), (0, (1374.67, 598.67)));
+        // Off every display: on the nearest one.
+        assert_eq!(popup_at((5000, 800), &screens), (0, (1374.67, 533.33)));
+        assert_eq!(popup_at((500, -3000), &screens), (1, (500.0, -1440.0)));
+        assert_eq!(popup_at((-2000, -100), &screens), (1, (-447.0, -420.0)));
+        // Either side of the edge between the two scales.
+        assert_eq!(popup_at((100, -1), &screens), (1, (100.0, -420.0)));
+        assert_eq!(popup_at((100, 0), &screens), (0, (66.67, 0.0)));
+        // Below the right end, where the display above does not reach.
+        assert_eq!(popup_at((2300, 10), &screens), (0, (1374.67, 6.67)));
+    }
+
+    #[test]
+    fn a_display_to_the_right_at_another_scale_keeps_its_own_pixels() {
+        // Side by side: the primary one at 150%, the other at 100% to its right. In logical
+        // pixels there is a gap between them (the primary one ends at 1706.67).
+        let screens = [
+            Screen {
+                id: DisplayId::new(1),
+                area: [0, 0, 2560, 1600],
+                work: [0, 0, 2560, 1528],
+                scale: 1.5,
+            },
+            Screen {
+                id: DisplayId::new(2),
+                area: [2560, 0, 5120, 1440],
+                work: [2560, 0, 5120, 1440],
+                scale: 1.0,
+            },
+        ];
+        assert_eq!(popup_at((2600, 500), &screens), (1, (2600.0, 500.0)));
+        assert_eq!(popup_at((2559, 500), &screens), (0, (1374.67, 333.33)));
+        assert_eq!(popup_at((5100, 1400), &screens), (1, (4788.0, 1020.0)));
+    }
+
+    #[test]
+    fn one_display_opens_the_popup_as_before_and_none_leaves_it_to_the_caller() {
+        let one = [Screen {
+            id: DisplayId::new(1),
+            area: [0, 0, 1920, 1080],
+            work: [0, 0, 1920, 1032],
+            scale: 1.0,
+        }];
+        assert_eq!(popup_at((640, 300), &one), (0, (640.0, 300.0)));
+        assert_eq!(popup_at((1900, 1000), &one), (0, (1588.0, 612.0)));
+        assert_eq!(popup_bounds((640, 300), POPUP, &[]), None);
     }
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> crate::studio::Rect {
