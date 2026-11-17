@@ -970,6 +970,8 @@ fn run_audio(
     up: mpsc::Sender<()>,
 ) -> Audio {
     let h = rings.header();
+    #[cfg(target_os = "macos")]
+    let _priority = xirius_engine::rt::ProAudioThread::join();
     #[cfg(windows)]
     {
         let mut task = 0u32;
@@ -990,7 +992,7 @@ fn run_audio(
     let mut controls: Vec<Control> = Vec::with_capacity(xirius_engine::sandbox::NOTE_CAPACITY);
     let mut params: Vec<ParamChange> = Vec::with_capacity(xirius_engine::sandbox::NOTE_CAPACITY);
     while !stop.load(Ordering::Acquire) {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         {
             let spin_started = Instant::now();
             while h.in_write.load(Ordering::Acquire) == h.in_read.load(Ordering::Relaxed)

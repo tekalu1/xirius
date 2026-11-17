@@ -1,5 +1,5 @@
-//! Plugins in the host process (OPEN-02, PLG-022/023/024/052/078). On Windows the host's
-//! output arrives in the same block; macOS retains the buffered path. A host that crashes,
+//! Plugins in the host process (OPEN-02, PLG-022/023/024/052/078). The host's
+//! output arrives in the same block. A host that crashes,
 //! hangs or cannot load leaves the dry signal playing, and a restart brings
 //! the plugin back with the state it had. Nothing goes to a device. Tests that need an
 //! installed plugin skip when it is missing.
@@ -32,10 +32,7 @@ use crash_records::CrashRecords;
 const RATE: f64 = 48_000.0;
 const BLOCK: usize = 256;
 const RT_LATENCY: usize = xirius_engine::server::DEFAULT_LATENCY as usize;
-#[cfg(windows)]
 const OFFLINE_LATENCY: usize = 0;
-#[cfg(target_os = "macos")]
-const OFFLINE_LATENCY: usize = BLOCK;
 /// kHs Gain's "Gain" parameter at 0.3 is -12 dB.
 const GAIN_PARAM: (u32, f64) = (1, 0.3);
 const SINE_RMS: f64 = 0.353_553;

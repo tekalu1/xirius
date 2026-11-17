@@ -1,7 +1,7 @@
-//! POSIX shared memory with a bounded, polling auto-reset notification.
-//! Audio-thread notification only stores an atomic; native waits are a stage 3 optimization.
+//! POSIX shared memory with a bounded cross-process auto-reset notification.
 use std::ffi::CString;
 use std::io;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -113,10 +113,44 @@ impl Drop for Mapping {
     }
 }
 
-/// Cross-process auto-reset event. Repeated signals coalesce just as Win32 events do.
+type WaitAddress = unsafe extern "C" fn(*mut libc::c_void, u64, usize, u32, u32, u64) -> i32;
+type WakeAddress = unsafe extern "C" fn(*mut libc::c_void, usize, u32) -> i32;
+
+struct AddressSync {
+    wait: WaitAddress,
+    wake: WakeAddress,
+}
+
+fn address_sync() -> Option<&'static AddressSync> {
+    static SYNC: OnceLock<Option<AddressSync>> = OnceLock::new();
+    SYNC.get_or_init(|| {
+        // Resolve once during event creation/opening, outside the audio callback. These
+        // functions are available from the system on macOS 14.4 and newer.
+        let wait = unsafe {
+            libc::dlsym(
+                libc::RTLD_DEFAULT,
+                c"os_sync_wait_on_address_with_timeout".as_ptr(),
+            )
+        };
+        let wake =
+            unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"os_sync_wake_by_address_any".as_ptr()) };
+        if wait.is_null() || wake.is_null() {
+            return None;
+        }
+        // SAFETY: both symbols have the signatures declared by the system headers.
+        Some(AddressSync {
+            wait: unsafe { std::mem::transmute::<*mut libc::c_void, WaitAddress>(wait) },
+            wake: unsafe { std::mem::transmute::<*mut libc::c_void, WakeAddress>(wake) },
+        })
+    })
+    .as_ref()
+}
+
+/// Cross-process auto-reset event. Repeated signals coalesce.
 pub struct Event(Mapping);
 impl Event {
     pub fn create(text: &str) -> io::Result<Self> {
+        let _ = address_sync();
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let text = if text.is_empty() {
             format!(
@@ -130,6 +164,7 @@ impl Event {
         Mapping::create(&text, std::mem::size_of::<AtomicU32>()).map(Self)
     }
     pub fn open(text: &str) -> io::Result<Self> {
+        let _ = address_sync();
         let mapping = Mapping::open(&format!("event-{text}"))?;
         // Darwin reports the page-rounded size through fstat.
         if mapping.len() < std::mem::size_of::<AtomicU32>() {
@@ -143,6 +178,10 @@ impl Event {
     }
     pub fn set(&self) {
         self.flag().store(1, Ordering::Release);
+        if let Some(sync) = address_sync() {
+            // SAFETY: the address is aligned shared memory and remains mapped for this call.
+            unsafe { (sync.wake)(self.0.pointer().cast(), 4, 1) };
+        }
     }
     pub fn wait(&self, ms: u32) -> bool {
         let deadline = Instant::now() + Duration::from_millis(u64::from(ms));
@@ -153,7 +192,17 @@ impl Event {
             if Instant::now() >= deadline {
                 return false;
             }
-            std::thread::sleep(Duration::from_millis(1));
+            if let Some(sync) = address_sync() {
+                // A compare-and-wait closes the gap between checking and sleeping.
+                // The short bound lets the caller detect a crashed host promptly.
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let ns = remaining.as_nanos().clamp(1, 1_000_000) as u64;
+                // SAFETY: the shared atomic is aligned and mapped for this call.
+                unsafe { (sync.wait)(self.0.pointer().cast(), 0, 4, 1, 32, ns) };
+            } else {
+                // Older systems lack address waits; retain bounded polling.
+                std::thread::sleep(Duration::from_micros(100));
+            }
         }
     }
 }

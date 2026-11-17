@@ -148,12 +148,10 @@ fn remote_impulse_has_no_added_latency() {
         None,
     )
     .unwrap();
-    #[cfg(windows)]
     assert_eq!(plan.latency(), 0);
     let (mut audio, control) = engine::create(plan, EngineConfig::default());
     let mut out = [0.0f32; 256];
     audio.render(&mut out, 2);
-    #[cfg(windows)]
     assert_eq!(out[0], 1.0, "the impulse moved after the first sample");
     assert_eq!(server.status(&link).misses, 0);
     drop(audio);
@@ -212,7 +210,6 @@ fn prefetched_remote_track_runs_on_its_worker() {
     file.cleanup();
 }
 
-#[cfg(windows)]
 fn fault_case(fault: Fault) -> (Duration, Duration, u64) {
     let _records = CrashRecords::new();
     let mut file = fixture();
@@ -270,7 +267,6 @@ fn fault_case(fault: Fault) -> (Duration, Duration, u64) {
 }
 
 #[test]
-#[cfg(windows)]
 fn a_hung_host_times_out_once_then_audio_continues() {
     let (failed, following, timeouts) = fault_case(Fault::Hang);
     assert!(failed >= Duration::from_millis(200));
@@ -280,7 +276,6 @@ fn a_hung_host_times_out_once_then_audio_continues() {
 }
 
 #[test]
-#[cfg(windows)]
 fn a_crashed_host_is_bypassed_without_waiting() {
     let (_failed, following, _) = fault_case(Fault::Crash);
     assert!(following < Duration::from_millis(100));

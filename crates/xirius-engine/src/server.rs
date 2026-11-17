@@ -7,9 +7,8 @@
 //! also carries what the instance reports (edits in its editor, state, latency) and counters
 //! the UI can read.
 //!
-//! On Windows the audio side waits for each block from the host, adding no latency of its own.
-//! A host that fails to answer within the stall bound is bypassed until restart. On macOS the
-//! current polling signal still uses the buffered path until its replacement is available.
+//! The audio side waits for each block from the host, adding no latency of its own.
+//! A host that fails to answer within the stall bound is bypassed until restart.
 //!
 //! A host that goes down is put on the plugin that took it down, when that can be told: the
 //! host marks the shared memory of the plugin it crashed in, and the audio side knows which
@@ -62,10 +61,9 @@ static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(1);
 /// Windows answers each block before returning to the audio callback.
 #[cfg(windows)]
 pub const DEFAULT_LATENCY: u32 = 0;
-/// The current macOS signal polls every millisecond; it retains the buffered path until
-/// a low-latency cross-process signal is available.
+/// macOS answers each block before returning to the audio callback.
 #[cfg(target_os = "macos")]
-pub const DEFAULT_LATENCY: u32 = 1024;
+pub const DEFAULT_LATENCY: u32 = 0;
 
 /// The `xirius-plugin-host` executable: `XIRIUS_PLUGIN_HOST`, else next to this program or
 /// one directory up (where `cargo test` puts it).
@@ -3113,9 +3111,6 @@ pub struct RemotePlugin {
     stalled: u64,
     stall_frames: u64,
     late_frames: u64,
-    /// Buffered macOS output owed by blocks that already went dry.
-    #[cfg(target_os = "macos")]
-    debt: u64,
     out_read: u64,
     /// Frames of a restarted instance still to cover with the dry signal, then the fade.
     warm: u64,
@@ -3197,8 +3192,6 @@ impl RemotePlugin {
             stalled: 0,
             stall_frames: 0,
             late_frames: 0,
-            #[cfg(target_os = "macos")]
-            debt: 0,
             out_read: 0,
             warm: 0,
             fade: FADE,
@@ -3408,9 +3401,6 @@ impl RemotePlugin {
             }
         };
 
-        #[cfg(target_os = "macos")]
-        let need = self.debt + n;
-        #[cfg(windows)]
         let need = n;
         let mut available = h.out_write.load(Ordering::Acquire) - self.out_read;
         if self.l == 0 || self.offline {
@@ -3447,15 +3437,6 @@ impl RemotePlugin {
         if self.l == 0 || self.offline {
             record_roundtrip();
         }
-        #[cfg(target_os = "macos")]
-        {
-            // Buffered frames for blocks that went dry are dropped when they arrive.
-            let stale = self.debt.min(available);
-            self.out_read += stale;
-            self.debt -= stale;
-            available -= stale;
-        }
-
         let wet = available >= n;
         let mut stalled = false;
         if wet {
@@ -3464,10 +3445,6 @@ impl RemotePlugin {
             self.out_read += n;
             self.late_frames = 0;
         } else {
-            #[cfg(target_os = "macos")]
-            {
-                self.debt += n;
-            }
             self.late_frames += n;
             self.link.misses.fetch_add(1, Ordering::Relaxed);
             stalled = self.late_frames > self.stall_frames;
@@ -3626,24 +3603,9 @@ impl RemotePlugin {
             .push((self.feed, producer));
         self.automation = Some(consumer);
         self.offline = setup.mode == RenderMode::Offline;
-        #[cfg(windows)]
-        {
-            self.l = 0;
-        }
-        #[cfg(target_os = "macos")]
-        {
-            self.l = if self.offline {
-                setup.max_block as u32
-            } else {
-                self.spec.latency.max(setup.max_block as u32)
-            };
-        }
+        self.l = 0;
         self.stall_frames = (setup.sample_rate / 2.0) as u64;
         self.late_frames = 0;
-        #[cfg(target_os = "macos")]
-        {
-            self.debt = 0;
-        }
         self.out_read = 0;
         self.epoch = 0;
         self.stalled = 0;
@@ -3733,10 +3695,6 @@ impl RemotePlugin {
         if ready != self.epoch {
             // A fresh instance: the first one, or one after a restart.
             self.out_read = h.out_read.load(Ordering::Acquire);
-            #[cfg(target_os = "macos")]
-            {
-                self.debt = 0;
-            }
             self.late_frames = 0;
             if self.late_first && self.epoch == 0 {
                 self.late_first = false;
