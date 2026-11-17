@@ -26,7 +26,7 @@ macOS は合図が低遅延の待機に対応するまで従来の先送り経�
 
 - VST3 は市販のプラグインの大半が出している形式で、ARA も VST3 のコンパニオン API（`IMainFactory`）から結び付けるので最初に作る。
 - CLAP は VST3 と同じ形（読み込み・パラメーター・状態・別プロセス）で足す。ARA の CLAP 版（ARACLAP）もこの上に乗る。
-- ARA は SDK の取り込み（LIC-004）とホストの形（PLG-039）を決めてから作る。それまでは、ARA のプラグインを別プロセスに出さないことだけを先に守る（PLG-025。段 3 の前に入れる）。
+- ARA は SDK の取り込み（LIC-004）とホストの形（PLG-039）を決めてから作る。現在は ARA の Service をプラグインホストで動かす（PLG-078）。
 
 ## 曲を開くときの開き方（ENG-064）
 
@@ -100,18 +100,18 @@ CLAP のホストは clack（`clack-host`・`clack-extensions` 0.2、MIT OR Apac
 
 ## ARA のプラグインの置き場所（PLG-025）
 
-ARA のプラグインは、ホストの ARA の物（曲の音の読み出し）を同じプロセスで受け取る。別プロセスに出すと届かないので、ARA のホスト（段 3）を作るまでも、ARA のプラグインは必ずこのプロセスで動かす。ARA の SDK はまだ取り込まない（LIC-004）。見分けは VST3 のクラスの一覧だけで足りる。
+ARA の Service とプラグインはホストのプロセスで動く。曲の音声は音源ごとに読み取り専用の共有メモリーで渡し、解析・編集・描画結果は粗い命令で同期する。描画した音も共有メモリーで本体へ渡す。
 
 - スキャンは、VST3 の束が分類 `ARA Main Factory Class` のクラスを持つか、音のクラスの副分類に `OnlyARA` があれば、その一覧の行に `ara: true` を付ける（`xirius_plugins::ara`）。一覧のキャッシュは版 2 になる。アプリは起動の後に版の古いキャッシュを見つけると、無いときと同じくスキャンし直す（`CacheFile::is_current`）。
 - CLAP は、プラグインの機能（features）に `ara:supported` か `ara:required` があれば `ara: true` を付ける（ARACLAP、PLG-033）。キャッシュの版は上げないので、それより前のキャッシュにある CLAP は、スキャンし直すまで `ara: false` のまま。
-- 曲が `shared`・`dedicated` を指していても、プレイヤーは ARA のプラグインをこのプロセスで動かし、「（名前）: ARA のプラグインのため、このプロセスで実行します（（指定）の指定）」の警告を出す。曲の指定は書き換えない。
-- プラグインのメニューの「動かす場所」は「アプリ内」だけを選べ、点いているのも「アプリ内」になる。落ちたときの「専用で動かす」も出さない。
+- 曲が `shared`・`dedicated` を指すと、そのホストで動く。旧曲が `in_process` を指しても `shared` に読み替え、曲の指定は書き換えない。ホストが見つからなければ読み込みを失敗させる。
+- プラグインのメニューの「動かす場所」は「共有」と「専用」を選べる。落ちたときも「専用で動かす」を選べる。
 
 試験:
 
 - `crates/xirius-plugins/src/ara.rs` はクラスの一覧から見分ける規則を確かめる。
-- `crates/xirius-session/tests/ara.rs` は、ARA の印の付いた一覧で `shared`・`dedicated` の曲を組むと別プロセスのホストを立てずに警告を 1 つ出し、印が無ければ曲の指定どおりに出すことを確かめる。
-- `crates/xirius-ui/src/health.rs` の `an_ara_plugin_runs_here_only` は、メニューに別プロセスの選択肢が出ないことを確かめる。
+- `crates/xirius-session/tests/ara.rs` は、ARA の印の付いた曲がホストを必須とし、ホストが無ければ読み込みを失敗させることを確かめる。
+- `crates/xirius-ui/src/health.rs` の `an_ara_plugin_uses_the_host` は、メニューがホストの選択肢を示すことを確かめる。
 - 2026-10-13 にこの PC の標準のフォルダー（491 束・741 個）をスキャンし、ARA と見分けたのは Melodyne・Synthesizer V Studio ARA Plugin・Synthesizer V Studio 2 ARA Plugin・VOCALOID Bridge（`OnlyARA`）・Gliss の 5 個だった。
 
 ## 試験道具（PLG-042）
@@ -164,8 +164,7 @@ EXT/clap-validator/clap-validator.exe validate --json EXT/bundles/xirius_test_cl
 
 ### ARA TestPlugIn
 
-ARA の SDK を取り込むまで動かさない（PLG-025・PLG-030）。ARA のホストを作るときに、この節へ手順と結果を足す。
-ホストの形（C のヘッダーを直に束縛する）と、同じプロセスでの落ちの囲いの試しは `docs/ara-host.md`（PLG-039）。
+ARA の SDK を使う検証用プラグインは、`docs/ara-verification.md` の手順で確かめる。ホストの形と、以前の同じプロセスでの囲いの試しは `docs/ara-host.md`（PLG-039）。
 
 ### 結果（2026-10-13、Windows 11・x64）
 

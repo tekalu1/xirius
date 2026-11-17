@@ -3819,11 +3819,11 @@ status = "done"
 
 [[item]]
 id = "PLG-025"
-title = "旧方針: ARA のプラグインは同じプロセスで動かす"
+title = "ARA のプラグインをホストのプロセスで動かす"
 area = "PLG"
 phase = "mvp"
 source = "reports/02-audio-plugin-license.md § 3.3 ; reports/02-audio-plugin-license.md § 3.7"
-done_when = "ARA のプラグインに別プロセスの選択肢が出ない"
+done_when = "ARA のプラグインが本体の中で動かず、ホストのプロセスで解析・編集・描画できる"
 status = "done"
 
 [[item]]

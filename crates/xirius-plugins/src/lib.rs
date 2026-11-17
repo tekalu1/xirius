@@ -9,8 +9,8 @@
 //! - [`Catalog`] is what the browser and the session read: the entries with their kind and
 //!   vendor, and the bundles that failed.
 //! - [`encode_state`] / [`decode_state`] turn a plugin's saved state into the text a song keeps.
-//! - [`Entry::ara`] marks the plugins that use ARA ([`ara`], PLG-025); they always run in the
-//!   song's process.
+//! - [`Entry::ara`] marks the plugins that use ARA ([`ara`], PLG-025); they run in a
+//!   plugin host process.
 
 pub mod ara;
 mod cache;
@@ -46,7 +46,7 @@ pub struct Entry {
     pub version: String,
     /// The bundle.
     pub path: PathBuf,
-    /// It uses ARA, so it runs in the song's process only (PLG-025).
+    /// It uses ARA and runs in a plugin host process (PLG-078).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ara: bool,
     /// A known compatibility requirement. Unknown plugins are tried on a local

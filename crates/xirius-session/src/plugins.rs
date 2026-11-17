@@ -26,7 +26,7 @@
 //! opened here too: they always run in this process, and their parameters move without a new
 //! mix like those of a plugin in a host (PLG-045).
 //!
-//! A plugin that uses ARA ([`xirius_plugins::Entry::ara`], PLG-025) always runs in this process,
+//! A plugin that uses ARA ([`xirius_plugins::Entry::ara`], PLG-078) runs in a plugin host process,
 //! with a warning when the song asked for another: ARA reads the song's audio here.
 //!
 //! A song's plugins can be opened before its mix is built ([`PluginLoader::preload`], ENG-064),
@@ -1267,14 +1267,24 @@ impl PluginLoader {
     ) -> (PluginIsolation, PathBuf) {
         let (requested, configured) = self.requested(x);
         if ara {
-            if requested.is_separate() {
+            // ARA instances are hosted even when an older song requests local placement.
+            let placement = if requested == PluginIsolation::Dedicated {
+                PluginIsolation::Dedicated
+            } else {
+                PluginIsolation::Shared
+            };
+            if requested == PluginIsolation::InProcess {
                 warnings.push(format!(
-                    "{}: ARA のプラグインのため、このプロセスで実行します（{} の指定）",
-                    x.name,
-                    requested.name()
+                    "{}: ARA requires a separate plugin host process",
+                    x.name
                 ));
             }
-            return (PluginIsolation::InProcess, PathBuf::new());
+            let host = match &self.isolation {
+                Isolation::Separate(host) | Isolation::PerPlugin(Some(host)) => host.clone(),
+                Isolation::PerPlugin(None) => PathBuf::new(),
+                Isolation::InProcess => find_host().unwrap_or_default(),
+            };
+            return (placement, host);
         }
         if configured {
             let host = match &self.isolation {

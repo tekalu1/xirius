@@ -248,7 +248,7 @@ impl Studio {
         let p = self.project();
         let x = p.tracks.get(&t)?.inserts.iter().find(|x| x.id == id)?;
         let builtin = x.format.eq_ignore_ascii_case("builtin");
-        // The player keeps an ARA plugin here whatever the song says; the menu shows where it runs.
+        // ARA plugins use the host even when older settings request local placement.
         let catalog = self.plugin_catalog();
         let ara =
             !builtin && xirius_session::plugin_policy::find(&catalog, x).is_some_and(|e| e.ara);
@@ -272,10 +272,11 @@ impl Studio {
             crashed: self.health.crashed(id),
             suggest: self.health.suggests(id)
                 && x.isolation != PluginIsolation::Dedicated
-                && !builtin
-                && !ara,
-            mode: if ara || builtin {
+                && !builtin,
+            mode: if builtin {
                 PluginIsolation::InProcess
+            } else if ara && mode != PluginIsolation::Dedicated {
+                PluginIsolation::Shared
             } else {
                 mode
             },
@@ -318,7 +319,13 @@ impl Studio {
                 run: crate::context::Run::Cmd("prefs.set", json!({"key":key,"value":value})),
                 ..crate::context::Item::title(label)
             }
-            .enabled(!(view.builtin || view.ara) || mode == PluginIsolation::InProcess)
+            .enabled(if view.builtin {
+                mode == PluginIsolation::InProcess
+            } else if view.ara {
+                mode != PluginIsolation::InProcess
+            } else {
+                true
+            })
             .on(view.mode == mode)
         })
         .collect()
@@ -616,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn an_ara_plugin_runs_here_only() {
+    fn an_ara_plugin_uses_the_host() {
         let (mut s, g, t, id) = with_effect();
         let (x, y) = s.mixer_center(&g, MixerHit::Open(t, id)).unwrap();
         assert!(s.context_press(&g, x, y));
@@ -641,7 +648,7 @@ mod tests {
         let (x, y) = s.mixer_center(&g, MixerHit::Open(t, id)).unwrap();
         assert!(s.context_press(&g, x, y));
         let all = crate::context::tests::all_rows(&s);
-        assert!(!all.iter().any(|r| r.label == "専用で動かす"));
+        assert!(all.iter().any(|r| r.label == "専用で動かす"));
         assert!(s.context_choose(&g, "動かす場所"));
         let modes = s.context_rows();
         assert_eq!(
@@ -650,7 +657,7 @@ mod tests {
                 .filter(|r| r.enabled && r.label != "戻る" && !r.gap)
                 .map(|r| r.label.as_str())
                 .collect::<Vec<_>>(),
-            ["アプリ内"]
+            ["共有", "専用"]
         );
         assert_eq!(
             modes
@@ -658,7 +665,7 @@ mod tests {
                 .filter(|r| r.on)
                 .map(|r| r.label.as_str())
                 .collect::<Vec<_>>(),
-            ["アプリ内"]
+            ["共有"]
         );
     }
 

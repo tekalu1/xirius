@@ -1,6 +1,5 @@
-//! A plugin the catalogue marks as ARA runs in this process whatever the song asks (PLG-025),
-//! with a warning; the same plugin without the mark goes to the host the song names. The
-//! host path does not exist: a non-ARA plugin must fail closed before loading (PLG-022).
+//! ARA inserts require a plugin host even when the song requests local placement.
+//! An unavailable host fails closed before the plugin module can load.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -51,7 +50,7 @@ fn builder(catalog: Catalog) -> Builder {
 }
 
 #[test]
-fn an_ara_plugin_stays_in_this_process() {
+fn an_ara_plugin_requires_a_host() {
     xirius_test_vst3::fixture_marker();
     let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     assert!(dll.exists(), "the fixture's cdylib is built with the tests");
@@ -68,12 +67,16 @@ fn an_ara_plugin_stays_in_this_process() {
             failures: Vec::new(),
         });
         let built = b.build(&p, Select::All);
-        assert_eq!(b.plugins().placement_of(PID), None, "{mode:?}: in process");
+        assert!(
+            b.plugins_mut()
+                .runs_apart(&p.tracks[&TrackId(100)].inserts[0])
+        );
+        assert_eq!(b.plugins().placement_of(PID), None);
         assert!(b.plugins().server().is_none());
-        let [w] = built.warnings.as_slice() else {
-            panic!("{mode:?}: {:?}", built.warnings);
-        };
-        assert!(w.contains("ARA") && w.contains(mode.name()), "{w}");
+        assert!(
+            !built.warnings.is_empty(),
+            "{mode:?}: missing host must fail closed"
+        );
 
         // Without the mark it requires the host the song names, and fails closed
         // before opening the module when that executable does not exist.
@@ -98,7 +101,7 @@ fn an_ara_plugin_stays_in_this_process() {
         );
     }
 
-    // Asked to run here, an ARA plugin says nothing.
+    // A legacy in-process request still requires a host.
     let p = song(&uid, PluginIsolation::InProcess);
     let mut ara = entries.clone();
     ara.iter_mut().for_each(|e| e.ara = true);
@@ -107,5 +110,10 @@ fn an_ara_plugin_stays_in_this_process() {
         failures: Vec::new(),
     });
     let built = b.build(&p, Select::All);
-    assert!(built.warnings.is_empty(), "{:?}", built.warnings);
+    assert!(
+        b.plugins_mut()
+            .runs_apart(&p.tracks[&TrackId(100)].inserts[0])
+    );
+    assert_eq!(b.plugins().placement_of(PID), None);
+    assert!(!built.warnings.is_empty(), "missing host must fail closed");
 }
