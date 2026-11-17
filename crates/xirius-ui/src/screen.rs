@@ -291,10 +291,12 @@ impl Screen {
     fn exited(&mut self, _ev: &MouseExitEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let _ = self.context_touch.release();
         let mut studio = self.studio.borrow_mut();
+        studio.seam_left(std::time::Instant::now());
         if studio.hover != Hit::None {
             studio.hover = Hit::None;
             cx.notify();
         }
+        cx.notify();
     }
 
     fn pressed(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1438,8 +1440,10 @@ impl Render for Screen {
                 Some(crate::context::key_more::WindowAsk::Quit) | None => {}
             }
             let menu_animating = studio.context_hover_tick(&g, std::time::Instant::now());
+            let seam_moving = studio.seam_tick(&g, std::time::Instant::now());
             if studio.tick()
                 || menu_animating
+                || seam_moving
                 || studio.motion.moving()
                 || crate::wait::pending()
                 || crate::repaint_shots::still_frames()

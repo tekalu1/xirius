@@ -145,7 +145,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
             MixerHit::BranchPan(..) => ("mixer.branch_pan", "branch.pan"),
             MixerHit::AddBranch(..) => ("mixer.add_branch", "branch.add"),
             MixerHit::Branch(..) => ("mixer.branch", "branch.row"),
-            MixerHit::After(..) => ("mixer.after", "insert.after"),
+            MixerHit::Seam(..) => ("mixer.seam", "insert.seam"),
             MixerHit::Widen(_) => ("mixer.widen", "strip.widen"),
             MixerHit::Color(_) => ("mixer.color", "track.color.menu"),
             MixerHit::Editor(_) => ("mixer.editor", "channel.editor"),

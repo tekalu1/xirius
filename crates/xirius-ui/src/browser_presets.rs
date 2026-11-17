@@ -12,6 +12,7 @@ use xirius_params::Kind;
 use crate::browser::{BRow, BrowserHit, RailTab};
 use crate::browser_inst::{Drop, LibDrag};
 use crate::instrument::window::DEFAULT;
+use crate::mixer::flow::Spot;
 use crate::studio::{Geometry, Studio};
 use crate::tree::RowKind;
 
@@ -393,15 +394,25 @@ impl Studio {
                         args["of"] = json!(p.to_string());
                     }
                 }
-                MixerHit::After(_, pick) => {
+                MixerHit::Seam(t, spot) => {
                     if !effect {
                         return None;
                     }
                     args["target"] = json!("insert");
-                    args["at"] = json!(match pick {
-                        Pick::Plugin(p) => format!("after:{p}"),
-                        Pick::Split(n) => format!("after:{n}"),
-                        Pick::Branch(n) => format!("branch:{n}"),
+                    args["at"] = json!(match spot {
+                        Spot::After(Pick::Plugin(p)) => format!("after:{p}"),
+                        Spot::After(Pick::Split(n)) => format!("after:{n}"),
+                        Spot::After(Pick::Branch(n)) => format!("branch:{n}"),
+                        // before a row: at its place in its chain, when the chain has an index
+                        Spot::Before(pick) => {
+                            let project = self.project();
+                            let track = project.tracks.get(&t)?;
+                            match crate::mixer::flow::spot(track, pick)? {
+                                (Some(n), k, _) => format!("branch:{n}:{k}"),
+                                (None, _, _) => return None,
+                            }
+                        }
+                        Spot::Drop(_) => return None,
                     });
                 }
                 MixerHit::AddInstrument(_) => {

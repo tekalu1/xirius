@@ -5,7 +5,7 @@ use xirius_core::rack::RackNode;
 
 use super::*;
 use crate::instrument::Pick as Effect;
-use crate::mixer::flow::{COARSE_H, Flow};
+use crate::mixer::flow::{COARSE_H, Flow, Spot};
 use crate::mixer::{STRIP_GAP, WIDE_W};
 use crate::studio::DrawerTab;
 
@@ -174,7 +174,9 @@ fn the_plus_after_a_row_puts_the_effect_right_after_it_and_picks_it() {
     add(&mut s, t, "Delay");
     s.instruments.open.clear();
     s.mixer.chosen = Some((t, Pick::Plugin(eq)));
-    let after = MixerHit::After(t, Pick::Plugin(eq));
+    let after = MixerHit::Seam(t, Spot::After(Pick::Plugin(eq)));
+    // a pointer that came slowly: the line is on show
+    s.seam_show(t, Spot::After(Pick::Plugin(eq)), true);
     let (x, y) = s.mixer_center(&g, after).unwrap();
     assert_eq!(s.hit(&g, x, y), Hit::Mixer(after));
     assert!(s.press(&g, Hit::Mixer(after)));
@@ -317,7 +319,7 @@ fn the_screen_reader_names_the_m_the_plus_the_level_and_the_name_buttons() {
     assert_eq!(level.node.role(), accesskit::Role::Slider);
     assert_eq!(level.node.label(), Some("Reverb の分岐の音量"));
     assert_eq!(level.node.numeric_value(), Some(0.0));
-    let after = find(MixerHit::After(t, Pick::Plugin(verb)));
+    let after = find(MixerHit::Seam(t, Spot::After(Pick::Plugin(verb))));
     assert_eq!(after.node.label(), Some("Reverb の後ろに挿す"));
     let editor = find(MixerHit::Editor(t));
     assert_eq!(editor.node.label(), Some("チャンネルエディターを開く"));

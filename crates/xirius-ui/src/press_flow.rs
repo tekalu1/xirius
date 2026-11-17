@@ -186,6 +186,9 @@ impl Studio {
             if self.edge_hover(g, x, y) | self.side_hover(g, x, y) {
                 notify = true;
             }
+            if self.mixer.fx_drag.is_none() {
+                self.seam_moved(g, x, y, std::time::Instant::now());
+            }
             if self.mixer.level_drag.is_some() || self.mixer.key_drag.is_some() {
                 return self.level_move(x, mods.shift) || notify;
             }
@@ -200,6 +203,9 @@ impl Studio {
                 // A browser row may be over an independent window: its drop's plan
                 // lights there (UI-353).
                 self.browser_row_over(mods.shift);
+                if self.mixer.fx_drag.is_some() || self.browser.drag.is_some() {
+                    self.seam_moved(g, x, y, std::time::Instant::now());
+                }
                 return true;
             }
         }
@@ -238,6 +244,7 @@ impl Studio {
             return false;
         }
         let mut notify = false;
+        self.mixer.seam.pressed = false;
         if self.mixer_bar_up() || self.zoom_box_up(g, x, y) {
             return true;
         }

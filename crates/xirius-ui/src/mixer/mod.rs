@@ -18,6 +18,7 @@ pub mod knob;
 pub mod meters;
 pub(crate) mod paint;
 pub mod scan;
+pub(crate) mod seam;
 
 pub use paint::paint;
 
@@ -141,8 +142,9 @@ pub enum MixerHit {
     AddBranch(TrackId, NodeId),
     /// The row of an empty branch: 「分岐 N」 (approved 2026-11-06).
     Branch(TrackId, NodeId),
-    /// The ＋ on a row's bottom edge: a plug-in after it (MIX-045).
-    After(TrackId, flow::Pick),
+    /// The line on the boundary between two rows, with its ＋: a plug-in there (UI-362, approved
+    /// 2026-11-17).
+    Seam(TrackId, flow::Spot),
     /// The button by the name that widens the strip or narrows it again (MIX-045).
     Widen(TrackId),
     /// The channel's icon, in its colour: opens the colour choice (not on the master).
@@ -182,7 +184,7 @@ impl MixerHit {
             | MixerHit::BranchPan(t, _)
             | MixerHit::AddBranch(t, _)
             | MixerHit::Branch(t, _)
-            | MixerHit::After(t, _)
+            | MixerHit::Seam(t, _)
             | MixerHit::Widen(t)
             | MixerHit::Color(t)
             | MixerHit::Editor(t)
@@ -628,6 +630,8 @@ pub struct Mixer {
     pub(crate) gr_watched: Vec<PluginId>,
     /// The node the open plug-in list puts its pick after (the ＋ on a row's edge).
     pub insert_after: Option<(TrackId, flow::Pick)>,
+    /// The insert point on show, and how the pointer came to it (UI-362).
+    pub seam: seam::Live,
     /// The channel editor's ＋ the insert list was opened from, when nothing is before it in
     /// its chain (MIX-042): the new effect is moved there.
     pub insert_into: Option<(TrackId, crate::channel::flow::Chain, usize)>,
@@ -1433,10 +1437,15 @@ impl Studio {
                         && l.target.is_some_and(|x| x.id == n)
                 })
                 .map(|(_, r)| *r),
-            MixerHit::After(_, pick) => flow
-                .picked(pick)
-                .filter(|(_, r)| seen(*r))
-                .and_then(|_| flow.after(pick)),
+            MixerHit::Seam(t, spot) => {
+                let project = self.project();
+                let track = project.tracks.get(&t)?;
+                let seam = flow.seam(track, spot)?;
+                let p = seam::place(&flow, &seam)?;
+                let (d, _) = seam::plus_size(flow.coarse());
+                let mid = (p.left + p.right) / 2.0;
+                Some(Rect::new(mid - d / 2.0, p.y - d / 2.0, d, d)).filter(|r| seen(*r))
+            }
             MixerHit::Widen(_) => Some(paint::name_tools(&s).1),
             MixerHit::Color(_) => Some(paint::name_icon(&s)),
             MixerHit::Editor(_) => Some(paint::name_tools(&s).0),
@@ -1453,6 +1462,10 @@ impl Studio {
     /// once for both (review 2, M4).
     pub(crate) fn mixer_seen(&self, g: &Geometry, hit: MixerHit) -> Option<Rect> {
         let r = self.mixer_rect(g, hit)?;
+        // a line is under the pointer only while it shows; a screen reader presses it anyway
+        if matches!(hit, MixerHit::Seam(..)) {
+            return Some(r);
+        }
         let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         (self.mixer_hit(g, at.0, at.1) == Some(hit)).then_some(r)
     }
@@ -1607,11 +1620,16 @@ impl Studio {
                 // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("rack.branch.add", json!({ "split": id.to_string() }))
             }
-            MixerHit::After(t, pick) => {
+            MixerHit::Seam(t, spot) => {
                 let Some(anchor) = self.mixer_rect(g, hit) else {
                     return false;
                 };
-                self.insert_after(t, pick, anchor);
+                self.mixer.seam.pressed = true;
+                match spot {
+                    flow::Spot::After(pick) => self.insert_after(t, pick, anchor),
+                    flow::Spot::Before(pick) => self.insert_before(t, pick, anchor),
+                    flow::Spot::Drop(_) => return false,
+                }
                 true
             }
             MixerHit::Widen(t) => {

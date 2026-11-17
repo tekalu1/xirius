@@ -5,8 +5,9 @@
 //! branch (there is no merge dot).
 //!
 //! A row is picked with a press (MIX-045): it fills with the primary colour and, when it heads a
-//! branch or is a layer, a row under it moves that level. The pointer on a row shows its M and,
-//! at its bottom edge, the ＋ that puts a plug-in after it. Rows are 32 high for touch.
+//! branch or is a layer, a row under it moves that level. The pointer on a row shows its M; the
+//! pointer on the seam between two rows shows the line with the ＋ that puts a plug-in there
+//! (`seam.rs`). Rows are 32 high for touch.
 
 use std::collections::{HashMap, HashSet};
 
@@ -27,12 +28,12 @@ use crate::studio::{Hit, Rect, Studio};
 
 /// Inside an area: above the heading, at its sides and under its last row.
 const AREA_TOP: f32 = 2.0;
-const AREA_SIDE: f32 = 3.0;
+pub(super) const AREA_SIDE: f32 = 3.0;
 const AREA_BOTTOM: f32 = 3.0;
 /// Between the instrument area and the insert area.
 const AREA_GAP: f32 = 6.0;
 /// How far a row steps in for each level it is nested.
-const INDENT: f32 = Space::X4.px();
+pub(super) const INDENT: f32 = Space::X4.px();
 /// Where a row's power dot starts, after the indent.
 const DOT_X: f32 = 5.0;
 const DOT_BUTTON: f32 = 16.0;
@@ -60,8 +61,6 @@ pub const COARSE_H: f32 = 32.0;
 const MM_W: f32 = 18.0;
 const MM_H: f32 = 16.0;
 const MM_COARSE: f32 = 24.0;
-/// The ＋ on a row's bottom edge, half over the next row.
-const AFTER: f32 = 16.0;
 /// A receiving plug-in's sidechain mark after its name (MIX-048).
 const KEY_MARK: f32 = 12.0;
 /// The gain reduction meter at a receiving row's right edge, as the mock's `.grm`: so wide, so
@@ -71,10 +70,9 @@ const GR_IN: f32 = 3.0;
 const GR_TB: f32 = 4.0;
 /// The reduction the meter's full height stands for, in dB (as the device's meter, UI-327).
 const GR_SPAN: f32 = 24.0;
-const AFTER_COARSE: f32 = 24.0;
 /// The level row under a picked row: its margins, its inner room and its value's width.
 const SUB_TOP: f32 = 1.0;
-const SUB_BOTTOM: f32 = 6.0;
+pub(super) const SUB_BOTTOM: f32 = 6.0;
 const SUB_PAD: f32 = 4.0;
 const SUB_VAL: f32 = 26.0;
 pub(crate) const SUB_PAN: f32 = 30.0;
@@ -135,6 +133,27 @@ pub enum Pick {
     Split(NodeId),
     /// A branch with nothing in it, by its own id (review 1, M1): picking it opens its level row.
     Branch(NodeId),
+}
+
+/// Where a seam puts a plug-in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Spot {
+    /// Right after a row, in its chain.
+    After(Pick),
+    /// Right before a row: the first of the insert area, or the head of a branch.
+    Before(Pick),
+    /// Where a row let go lands: this place among the track's inserts.
+    Drop(usize),
+}
+
+/// One boundary between two rows of the insert area (or its top and its end).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Seam {
+    pub spot: Spot,
+    /// The boundary's height on screen.
+    pub y: f32,
+    /// How deep the row the line runs in under is nested.
+    pub depth: u8,
 }
 
 /// The level a row's M and level row move: the branch it heads, or its layer.
@@ -534,8 +553,14 @@ impl Flow {
         let mut panels = Vec::new();
         let mut rows = Vec::new();
         let mut area: Option<(Area, f32)> = None;
-        let close = |area: (Area, f32), y: f32, panels: &mut Vec<(Area, Rect)>| {
-            let bottom = y + AREA_BOTTOM;
+        let mut seamed = false;
+        let close = |area: (Area, f32), y: f32, seamed: bool, panels: &mut Vec<(Area, Rect)>| {
+            // the last seam's ＋ is half under it: room for it inside the panel
+            let bottom = y + if seamed {
+                super::seam::TAIL
+            } else {
+                AREA_BOTTOM
+            };
             panels.push((
                 area.0,
                 Rect::new(region.x, area.1, region.w, bottom - area.1),
@@ -545,8 +570,9 @@ impl Flow {
         for l in lines {
             if area.map(|a| a.0) != Some(l.area) {
                 if let Some(a) = area.take() {
-                    y = close(a, y, &mut panels) + AREA_GAP;
+                    y = close(a, y, seamed, &mut panels) + AREA_GAP;
                 }
+                seamed = false;
                 area = Some((l.area, y));
                 y += AREA_TOP;
             }
@@ -558,6 +584,7 @@ impl Flow {
                 y += SUB_TOP + row_h + SUB_BOTTOM;
                 continue;
             }
+            seamed |= l.area == Area::Insert && l.pick().is_some();
             rows.push((
                 *l,
                 Rect::new(
@@ -570,7 +597,7 @@ impl Flow {
             y += row_h;
         }
         if let Some(a) = area {
-            y = close(a, y, &mut panels);
+            y = close(a, y, seamed, &mut panels);
         }
         Flow {
             panels,
@@ -600,22 +627,100 @@ impl Flow {
     }
 
     /// Whether rows are for touch.
-    fn coarse(&self) -> bool {
+    pub(super) fn coarse(&self) -> bool {
         self.rows
             .iter()
             .any(|(l, r)| l.kind != Kind::Level && r.h > ROW_H)
     }
 
-    /// The ＋ that puts a plug-in after `pick`'s row: on the bottom edge of its level row
-    /// when it has one.
-    pub fn after(&self, pick: Pick) -> Option<Rect> {
-        let (l, row) = self.picked(pick)?;
-        let (x, edge) = match self.level() {
-            Some((sl, sub)) if l.target.is_some() && sl.target == l.target => (sub.x, sub.bottom()),
-            _ => (row.x + l.indent() + 2.0, row.bottom()),
+    /// The seams of the insert area, top to bottom: above its first row, and under each row
+    /// (with its level row, when it has one). Inside a splitter, the one under its row is
+    /// the head of its first branch.
+    pub fn seams(&self) -> Vec<Seam> {
+        let ids: Vec<usize> = (0..self.rows.len())
+            .filter(|&i| {
+                let l = &self.rows[i].0;
+                l.area == Area::Insert
+                    && !matches!(l.kind, Kind::Head { .. } | Kind::Level)
+                    && l.pick().is_some()
+            })
+            .collect();
+        let before = |l: &Line, pick: Pick| match l.kind {
+            // an empty branch takes it in
+            Kind::Empty { .. } => Spot::After(pick),
+            _ => Spot::Before(pick),
         };
-        let d = if self.coarse() { AFTER_COARSE } else { AFTER };
-        Some(Rect::new(x, edge - d / 2.0, d, d))
+        let mut out = Vec::new();
+        for (n, &i) in ids.iter().enumerate() {
+            let (l, r) = &self.rows[i];
+            let Some(pick) = l.pick() else { continue };
+            if n == 0 {
+                out.push(Seam {
+                    spot: before(l, pick),
+                    y: r.y,
+                    depth: l.depth,
+                });
+            }
+            let next = ids.get(n + 1).map(|&j| &self.rows[j]);
+            let edge = match (next, self.rows.get(i + 1)) {
+                (Some((_, nr)), _) => nr.y,
+                (None, Some((sl, sub)))
+                    if sl.kind == Kind::Level && l.target.is_some() && sl.target == l.target =>
+                {
+                    sub.bottom() + SUB_BOTTOM
+                }
+                _ => r.bottom(),
+            };
+            out.push(match next {
+                Some((nl, _)) if matches!(l.kind, Kind::Split { .. }) && nl.depth > l.depth => {
+                    let np = nl.pick().unwrap_or(pick);
+                    Seam {
+                        spot: before(nl, np),
+                        y: edge,
+                        depth: nl.depth,
+                    }
+                }
+                _ => Seam {
+                    spot: Spot::After(pick),
+                    y: edge,
+                    depth: l.depth,
+                },
+            });
+        }
+        out
+    }
+
+    /// The seam a row let go goes to: before the plug-in at `index` among `t`'s inserts, or
+    /// at the end of the chain.
+    pub fn drop_seam(&self, t: &Track, index: usize) -> Option<Seam> {
+        match t.inserts.get(index) {
+            Some(p) => self.plugin(p.id).map(|(l, r)| Seam {
+                spot: Spot::Drop(index),
+                y: r.y,
+                depth: l.depth,
+            }),
+            None => self.insert_end().map(|y| Seam {
+                spot: Spot::Drop(index),
+                y,
+                depth: 0,
+            }),
+        }
+    }
+
+    /// `spot`'s seam in this flow.
+    pub fn seam(&self, t: &Track, spot: Spot) -> Option<Seam> {
+        match spot {
+            Spot::Drop(i) => self.drop_seam(t, i),
+            _ => self.seams().into_iter().find(|s| s.spot == spot),
+        }
+    }
+
+    /// The insert area's panel.
+    pub fn insert_panel(&self) -> Option<Rect> {
+        self.panels
+            .iter()
+            .find(|(a, _)| *a == Area::Insert)
+            .map(|(_, r)| *r)
     }
 
     /// The row of a plug-in.
@@ -873,14 +978,7 @@ fn picked(s: &Studio, t: TrackId, l: &Line) -> bool {
 
 /// Whether the pointer is on `l` (on any part of it).
 fn hovered(s: &Studio, t: TrackId, l: &Line) -> bool {
-    matches!(s.hover, Hit::Mixer(h) if h.track() == t && on(l, h))
-}
-
-/// Whether a row shows its ＋ after it: picked, or under the pointer.
-fn shows_after(s: &Studio, t: TrackId, l: &Line) -> bool {
-    !matches!(l.kind, Kind::Level | Kind::Empty { .. })
-        && l.pick().is_some()
-        && (picked(s, t, l) || hovered(s, t, l))
+    !super::seam::on_show(s, t) && matches!(s.hover, Hit::Mixer(h) if h.track() == t && on(l, h))
 }
 
 /// Whether a row shows its M: one with a level, not picked (the picked row's M is on its
@@ -916,16 +1014,9 @@ pub fn empty_name(index: usize, channel: bool) -> String {
 
 /// What a point on a row of `t`'s flow is.
 pub fn hit(s: &Studio, t: &Track, flow: &Flow, x: f32, y: f32) -> MixerHit {
-    // the ＋ after a row lies over the top of the next
-    if t.frozen.is_none() {
-        for (l, _) in &flow.rows {
-            if let Some(pick) = l.pick()
-                && shows_after(s, t.id, l)
-                && flow.after(pick).is_some_and(|r| r.contains(x, y))
-            {
-                return MixerHit::After(t.id, pick);
-            }
-        }
+    // the line of a seam lies over the top of the rows
+    if let Some(h) = s.seam_hit(t, flow, x, y) {
+        return h;
     }
     let Some((l, row)) = flow.at(x, y) else {
         return MixerHit::Strip(t.id);
@@ -990,7 +1081,6 @@ fn on(l: &Line, h: MixerHit) -> bool {
             | MixerHit::Branch(_, n),
         ) => l.target.is_some_and(|x| x.id == n),
         (Kind::Split { id, .. }, MixerHit::AddBranch(_, s)) => id == s,
-        (_, MixerHit::After(_, p)) => l.pick() == Some(p),
         (Kind::Instrument { id, .. } | Kind::Effect(id), MixerHit::Open(_, p))
         | (Kind::Instrument { id, .. } | Kind::Effect(id), MixerHit::Bypass(_, p)) => id == p,
         (Kind::Split { id, .. }, MixerHit::Fold(_, s)) => id == s,
@@ -1224,26 +1314,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
         }
         structure(pen, flow);
         if !frozen {
-            for (l, _) in &flow.rows {
-                if let Some(pick) = l.pick()
-                    && shows_after(s, t.id, l)
-                    && let Some(r) = flow.after(pick)
-                {
-                    let lit = picked(s, t.id, l);
-                    let (face, ink) = if lit {
-                        c.primary
-                    } else {
-                        (c.surface_3, c.ink_strong)
-                    };
-                    pen.floating(r, face, Radius::Pill);
-                    let i = (r.w * 0.625).round();
-                    pen.icon(
-                        "plus",
-                        Rect::new(r.x + (r.w - i) / 2.0, r.y + (r.h - i) / 2.0, i, i),
-                        ink,
-                    );
-                }
-            }
+            super::seam::paint(pen, s, t, flow);
         }
     });
 }

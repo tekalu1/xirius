@@ -1315,10 +1315,24 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             }
             if let Some(pick) = l.pick() {
                 parts.push((
-                    MixerHit::After(t, pick),
+                    MixerHit::Seam(t, crate::mixer::flow::Spot::After(pick)),
                     button(&format!("{name} の後ろに挿す")),
                 ));
             }
+        }
+        // the boundary above the first row, and above a branch's first
+        for seam in flow.seams() {
+            let crate::mixer::flow::Spot::Before(pick) = seam.spot else {
+                continue;
+            };
+            let Some((l, _)) = flow.picked(pick) else {
+                continue;
+            };
+            let name = crate::mixer::flow::row_name(track, l);
+            parts.push((
+                MixerHit::Seam(t, seam.spot),
+                button(&format!("{name} の前に挿す")),
+            ));
         }
         for key in crate::mixer::keys::key_sends(&p, t) {
             let whom = crate::mixer::keys::key_label(&p, &key);

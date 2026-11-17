@@ -146,7 +146,7 @@ impl Studio {
             | MixerHit::AddLayer(_)
             | MixerHit::RowMute(..)
             | MixerHit::Branch(..)
-            | MixerHit::After(..)
+            | MixerHit::Seam(..)
             | MixerHit::KeySend(..)
             | MixerHit::KeyLevel(..) => return None,
             MixerHit::Bypass(t, id) | MixerHit::Open(t, id) => {
@@ -1089,7 +1089,9 @@ impl Studio {
 
     /// The list of effects that go after a row of the flow (its ＋ after).
     pub(super) fn pick_after(&mut self, g: &Geometry, t: TrackId, pick: Pick) -> bool {
-        let Some(anchor) = self.strip_anchor(g, MixerHit::After(t, pick)) else {
+        let Some(anchor) =
+            self.strip_anchor(g, MixerHit::Seam(t, crate::mixer::flow::Spot::After(pick)))
+        else {
             return false;
         };
         self.insert_after(t, pick, anchor);
