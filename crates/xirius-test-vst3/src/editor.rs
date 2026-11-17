@@ -247,6 +247,15 @@ impl IPlugViewTrait for View {
     }
 
     unsafe fn attached(&self, parent: *mut std::ffi::c_void, _: FIDString) -> tresult {
+        if let Some(ms) = std::env::var("XIRIUS_TEST_VST3_EDITOR_OPEN_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+        {
+            std::thread::sleep(std::time::Duration::from_millis(ms.min(1_000)));
+        }
+        if std::env::var_os("XIRIUS_TEST_VST3_EDITOR_FAIL").is_some() {
+            return kResultFalse;
+        }
         if parent.is_null() || self.hwnd.get() != 0 {
             return kResultFalse;
         }

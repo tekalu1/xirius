@@ -1,5 +1,10 @@
 # プラグインのホスト
 
+The ordinary host reports `EditorOpening`, `EditorOpened { origin, size }`, or
+`EditorOpenFailed { reason }` to `PluginLink::take_editor_open_events` in that order.
+Opening an editor still occupies its host's control thread; other plugins in that process
+wait for it to finish. Process grouping limits the affected plugins.
+
 ## 別プロセスの音声処理（PLG-078）
 
 別プロセスのプラグインは、音声ブロックを送った同じ呼び出しの中で結果を待つ。ホスト自身の遅れだけを PDC に申告し、受け渡しによる遅れは足さない。30 µs の短いスピンの後は完了イベントを待ち、正常だが重い処理はブロックの期限を越えても待つ。250 ms 返らない場合は停止と見なし、エフェクトは元の音、楽器は無音にして再起動の操作へ渡す。書き出しの待ち時間の上限は従来の 10 秒とする。

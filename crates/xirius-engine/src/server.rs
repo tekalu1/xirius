@@ -17,7 +17,7 @@
 
 use crate::plugin_updates::{Field, Origin, Stamp, UpdateGate};
 use crate::rt_lock::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -109,6 +109,19 @@ pub enum EditPhase {
     Begin,
     Change,
     End,
+}
+
+/// Editor opening reports for a loading view owned by the app.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditorOpenEvent {
+    Opening,
+    Opened {
+        origin: (i32, i32),
+        size: (i32, i32),
+    },
+    Failed {
+        reason: String,
+    },
 }
 
 /// What the plugin changed since the last [`PluginLink::take_edits`].
@@ -248,11 +261,18 @@ struct LinkInner {
     play_requests: u32,
     editor_actions: Vec<xirius_vst3::EditorAction>,
     editor_origin: Option<(i32, i32)>,
+    editor_open_events: VecDeque<EditorOpenEvent>,
     editor_area: Option<xirius_vst3::EditorArea>,
     editor_bar: Option<xirius_vst3::EditorBar>,
 }
 
 impl LinkInner {
+    fn editor_open_event(&mut self, event: EditorOpenEvent) {
+        if self.editor_open_events.len() == 16 {
+            self.editor_open_events.pop_front();
+        }
+        self.editor_open_events.push_back(event);
+    }
     /// The seat of the instance that plays, or of the one a new mix opens meanwhile.
     fn seat(&mut self, coming: bool) -> &mut Seat {
         if coming {
@@ -296,6 +316,10 @@ impl PluginLink {
     }
     pub fn editor_origin(&self) -> Option<(i32, i32)> {
         self.lock().editor_origin
+    }
+    /// Drains editor opening reports in host order. Call from the UI thread.
+    pub fn take_editor_open_events(&self) -> Vec<EditorOpenEvent> {
+        self.lock().editor_open_events.drain(..).collect()
     }
     #[cfg(test)]
     fn begin_capture(&self) -> u64 {
@@ -2421,6 +2445,31 @@ impl Inner {
                 if let Some(link) = link {
                     let mut inner = link.lock();
                     inner.play_requests = inner.play_requests.saturating_add(1).min(32);
+                }
+            }
+            FromHost::EditorOpening { slot } => {
+                if let Some(rec) = st.slots.get(&slot)
+                    && st.seat_of(&rec.link, slot).is_some()
+                {
+                    rec.link.lock().editor_open_event(EditorOpenEvent::Opening);
+                }
+            }
+            FromHost::EditorOpened { slot, origin, size } => {
+                if let Some(rec) = st.slots.get(&slot)
+                    && st.seat_of(&rec.link, slot).is_some()
+                {
+                    let mut inner = rec.link.lock();
+                    inner.editor_origin = Some(origin);
+                    inner.editor_open_event(EditorOpenEvent::Opened { origin, size });
+                }
+            }
+            FromHost::EditorOpenFailed { slot, reason } => {
+                if let Some(rec) = st.slots.get(&slot)
+                    && st.seat_of(&rec.link, slot).is_some()
+                {
+                    rec.link
+                        .lock()
+                        .editor_open_event(EditorOpenEvent::Failed { reason });
                 }
             }
             FromHost::EditorPosition { slot, origin } => {

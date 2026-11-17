@@ -586,16 +586,38 @@ impl Host {
                 title,
                 caption,
             } => {
-                let Some(inst) = self.instances.get_mut(&slot) else {
+                if !self.instances.contains_key(&slot) {
+                    self.send(&FromHost::EditorOpenFailed {
+                        slot,
+                        reason: "plugin instance is no longer available".into(),
+                    });
                     return;
+                }
+                self.send(&FromHost::EditorOpening { slot });
+                let result: Result<_, String> = {
+                    let inst = self.instances.get_mut(&slot).unwrap();
+                    let opened = if inst.editor.is_some() {
+                        Ok(())
+                    } else {
+                        inst.plugin.open_editor(&title, caption).map(|editor| {
+                            inst.editor = Some(editor);
+                        })
+                    };
+                    opened
+                        .map(|()| {
+                            let editor = inst.editor.as_ref().unwrap();
+                            (editor.origin(), editor.size())
+                        })
+                        .map_err(|error| error.to_string())
                 };
-                if inst.editor.is_none() {
-                    match inst.plugin.open_editor(&title, caption) {
-                        Ok(e) => inst.editor = Some(e),
-                        Err(e) => {
-                            eprintln!("xirius-plugin-host: slot {slot}: {e}");
-                            self.send(&FromHost::EditorClosed { slot });
-                        }
+                match result {
+                    Ok((origin, size)) => {
+                        self.send(&FromHost::EditorOpened { slot, origin, size });
+                    }
+                    Err(reason) => {
+                        eprintln!("xirius-plugin-host: slot {slot}: {reason}");
+                        self.send(&FromHost::EditorOpenFailed { slot, reason });
+                        self.send(&FromHost::EditorClosed { slot });
                     }
                 }
             }

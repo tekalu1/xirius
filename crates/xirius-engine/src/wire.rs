@@ -12,7 +12,7 @@ use xirius_vst3::{Caption, PluginState};
 
 /// The version of these messages and of the shared memory's layout together. Bump it with
 /// any change to either.
-pub const PROTOCOL: u32 = 15;
+pub const PROTOCOL: u32 = 16;
 /// Starts the encoded [`FromHost::Hello`], so a stray first message is not taken for one.
 const HELLO_MAGIC: u32 = u32::from_le_bytes(*b"XPHH");
 
@@ -118,6 +118,21 @@ pub struct OpenSlot {
 /// What the host tells the engine.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FromHost {
+    /// Sent before the host enters the editor's potentially slow open call.
+    EditorOpening {
+        slot: u32,
+    },
+    /// The editor is ready; coordinates and dimensions are in screen pixels.
+    EditorOpened {
+        slot: u32,
+        origin: (i32, i32),
+        size: (i32, i32),
+    },
+    /// The editor could not be opened. The reason is the plugin's error text.
+    EditorOpenFailed {
+        slot: u32,
+        reason: String,
+    },
     EditorPosition {
         slot: u32,
         origin: (i32, i32),
@@ -683,6 +698,20 @@ impl FromHost {
             } => {
                 o.u8(11).u32(*slot).u32(*x as u32).u32(*y as u32);
             }
+            FromHost::EditorOpening { slot } => {
+                o.u8(12).u32(*slot);
+            }
+            FromHost::EditorOpened { slot, origin, size } => {
+                o.u8(13)
+                    .u32(*slot)
+                    .u32(origin.0 as u32)
+                    .u32(origin.1 as u32)
+                    .u32(size.0 as u32)
+                    .u32(size.1 as u32);
+            }
+            FromHost::EditorOpenFailed { slot, reason } => {
+                o.u8(14).u32(*slot).str(reason);
+            }
             FromHost::NoteNames { slot, names } => {
                 o.u8(7).u32(*slot).note_names(names);
             }
@@ -696,6 +725,16 @@ impl FromHost {
     pub fn decode(b: &[u8]) -> io::Result<FromHost> {
         let mut i = In(b);
         Ok(match i.u8()? {
+            12 => FromHost::EditorOpening { slot: i.u32()? },
+            13 => FromHost::EditorOpened {
+                slot: i.u32()?,
+                origin: (i.u32()? as i32, i.u32()? as i32),
+                size: (i.u32()? as i32, i.u32()? as i32),
+            },
+            14 => FromHost::EditorOpenFailed {
+                slot: i.u32()?,
+                reason: i.str()?,
+            },
             11 => FromHost::EditorPosition {
                 slot: i.u32()?,
                 origin: (i.u32()? as i32, i.u32()? as i32),
@@ -926,6 +965,16 @@ mod tests {
             assert_eq!(ToHost::decode(&m.encode()).unwrap(), m);
         }
         let from = [
+            FromHost::EditorOpening { slot: 4 },
+            FromHost::EditorOpened {
+                slot: 4,
+                origin: (-1200, -400),
+                size: (640, 480),
+            },
+            FromHost::EditorOpenFailed {
+                slot: 4,
+                reason: "editor unavailable".into(),
+            },
             FromHost::EditorPosition {
                 slot: 4,
                 origin: (-1200, -400),
