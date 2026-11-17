@@ -342,6 +342,7 @@ fn pad_output_uses_the_searchable_pick_list() {
     let mut list = s.pick_view(PopupKind::PadOutput(id)).unwrap();
     let rows = list.visible();
     assert_eq!(rows.first().unwrap().label, "Main");
+    assert_eq!(rows.first().unwrap().icon, Some("output"));
     assert_eq!(rows.last().unwrap().label, "New Bus");
     list.field.value = "new".into();
     let found = list.visible();

@@ -909,6 +909,7 @@ impl Studio {
                 let current = plugin.pad_outputs.get(&w.pick).map(ToString::to_string);
                 let mut rows = vec![
                     PickRow::new("Main")
+                        .icon("output")
                         .on(current.is_none())
                         .act(Action::PadOutput("Main".into())),
                 ];
