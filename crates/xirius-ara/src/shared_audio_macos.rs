@@ -13,7 +13,7 @@ const PROT_WRITE: c_int = 2;
 const MAP_SHARED: c_int = 1;
 
 unsafe extern "C" {
-    fn shm_open(name: *const c_char, flags: c_int, mode: u32) -> c_int;
+    fn shm_open(name: *const c_char, flags: c_int, ...) -> c_int;
     fn shm_unlink(name: *const c_char) -> c_int;
     fn ftruncate(fd: c_int, size: i64) -> c_int;
     fn mmap(
@@ -48,7 +48,7 @@ impl Mapping {
     pub(super) fn create(text: &str, len: usize) -> io::Result<Self> {
         let name = name(text);
         // SAFETY: terminated private name and exclusive creation.
-        let fd = unsafe { shm_open(name.as_ptr(), O_CREAT | O_EXCL | O_RDWR, 0o600) };
+        let fd = unsafe { shm_open(name.as_ptr(), O_CREAT | O_EXCL | O_RDWR, 0o600 as c_int) };
         if fd < 0 {
             let error = io::Error::last_os_error();
             return Err(io::Error::new(
@@ -73,7 +73,7 @@ impl Mapping {
     pub(super) fn open(text: &str) -> io::Result<Self> {
         let name = name(text);
         // SAFETY: terminated name; the returned descriptor belongs here.
-        let fd = unsafe { shm_open(name.as_ptr(), O_RDWR, 0) };
+        let fd = unsafe { shm_open(name.as_ptr(), O_RDWR) };
         if fd < 0 {
             let error = io::Error::last_os_error();
             return Err(io::Error::new(

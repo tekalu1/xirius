@@ -95,6 +95,9 @@ create an archive with `python scripts/ci_tests.py --archive tests.tar.zst`, the
 affected test from that archive with `cargo nextest run -P ci --archive-file tests.tar.zst
 --workspace-remap <checkout> --extract-to <empty-directory> -E 'test(<test-name>)'`.
 Use an empty extraction directory outside the build tree and remove it after the run.
+An extracted archive does not hide absolute build paths embedded in a test binary while the
+original build tree still exists. Check for build-time `CARGO_TARGET_TMPDIR` references in a
+new test, and use the separate CI shard jobs to confirm that no build-only path is required.
 
 Each shard publishes separate JUnit and context observations. The aggregate requires every
 build and shard to succeed and all four observation artifacts to be present before checking

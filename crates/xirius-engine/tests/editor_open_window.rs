@@ -9,6 +9,9 @@ use std::time::{Duration, Instant};
 use xirius_engine::server::{EditorOpenEvent, PluginLink, PluginServer, RemotePlugin, RemoteSpec};
 use xirius_engine::{ProcessSetup, Processor, RenderMode};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 fn wait_for(link: &PluginLink, wanted: impl Fn(&EditorOpenEvent) -> bool) -> Vec<EditorOpenEvent> {
     let until = Instant::now() + Duration::from_secs(15);
     let mut events = Vec::new();
@@ -73,6 +76,7 @@ fn open_fixture(fail: bool) -> (PluginServer, Arc<PluginLink>, RemotePlugin) {
 
 #[test]
 fn slow_editor_reports_start_then_dimensions_and_failure_reports_reason() {
+    let _records = CrashRecords::new();
     let (host, link, _remote) = open_fixture(false);
     host.open_editor(&link, "Fixture", None);
     let events = wait_for(&link, |event| {
