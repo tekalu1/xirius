@@ -19,8 +19,6 @@ use crate::title_bar;
 const RAIL: f32 = 3.0;
 const CAP_W: f32 = 4.0;
 const CAP_H: f32 = 10.0;
-/// The ring round a bypassed device's dot.
-const RING: f32 = 1.5;
 /// The ring of a value that has the keys.
 const FOCUS_W: f32 = 2.0;
 /// A crossover's line.
@@ -797,15 +795,12 @@ fn paint_card(
             };
             if let Some(d) = cp.dot {
                 let glyph = Rect::new(d.x + 2.0, d.y + 2.0, 12.0, 12.0);
-                let dot = Rect::new(d.x + 4.0, d.y + 4.0, 8.0, 8.0);
                 if s.health.crashed(p.id) {
                     pen.icon("alert", glyph, if chosen { c.primary.1 } else { c.alert });
                 } else if p.deactivated {
                     pen.icon("power", glyph, soft);
-                } else if p.bypass {
-                    pen.outline(dot, c.line[0], Radius::Pill, RING);
                 } else {
-                    pen.round(dot, c.solo_on.0, Radius::Pill);
+                    pen.power(d, p.bypass, chosen);
                 }
             }
             if let (Some(chip), CardKind::Instrument { layer: Some(i) }) = (cp.chip, card.kind) {

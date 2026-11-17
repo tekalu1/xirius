@@ -152,10 +152,10 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, list: Rect, rows: usize) {
                 c.ink,
             );
         } else {
-            pen.round(
-                Rect::new(dot.x + 6.0, dot.y + 6.5, 9.0, 9.0),
-                if p.bypass { c.thumb } else { c.solo_on.0 },
-                Radius::Pill,
+            pen.power(
+                Rect::new(dot.x + 3.0, dot.y + 4.0, 14.0, 14.0),
+                p.bypass,
+                false,
             );
         }
         let remove = remove_part(row);

@@ -323,6 +323,7 @@ pub mod tree;
 mod ui_io;
 mod unsaved;
 pub mod update_shots;
+pub mod ux_points_shots;
 pub mod view_motion;
 pub mod viewport;
 pub mod wait;
@@ -511,6 +512,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("trackmenu", trackmenu_shots::TRACKMENU),
     ("update", update_shots::SHOTS),
     ("update-check", manual_update_shots::SHOTS),
+    ("ux-points", ux_points_shots::SHOTS),
     ("wait", wait_shots::WAIT),
     ("wave-mod", wave_mod_shots::SHOTS),
     ("wave-zoom", wave_zoom_shots::SHOTS),

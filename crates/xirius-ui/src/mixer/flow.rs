@@ -49,8 +49,6 @@ const HEAD_X: f32 = 5.0;
 const FOCUS_W: f32 = 2.0;
 /// The room around a glyph in a row's button.
 const GLYPH_INSET: f32 = 2.0;
-/// The ring of a plug-in that is switched off.
-const RING: f32 = 1.5;
 /// The room of the heavy plugin's gauge before the close, and its size.
 const HEAVY_W: f32 = 14.0;
 const GAUGE: f32 = 12.0;
@@ -1097,7 +1095,6 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         c.ink_strong
                     };
                     let soft = if chosen { c.primary.1 } else { c.ink };
-                    pen.round(dot(row, l), c.solo_on.0, Radius::Pill);
                     // the chevron follows the name, as a folder's does; a narrow strip cuts
                     // the name, not the chevron or the count
                     let mut end = row.right() - END - DOT_BUTTON;
@@ -1173,9 +1170,6 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         }
                         c.ink
                     };
-                    if !frozen {
-                        pen.round(dot(row, l), c.solo_on.0, Radius::Pill);
-                    }
                     let mute = !frozen && shows_mute(s, t.id, l);
                     let mut end = row.right() - END;
                     if mute {
@@ -1416,10 +1410,8 @@ fn plugin_row(
         pen.icon("alert", glyph, alert);
     } else if p.deactivated {
         pen.icon("power", glyph, locked);
-    } else if p.bypass {
-        pen.outline(dot(row, l), c.line[0], Radius::Pill, RING);
     } else {
-        pen.round(dot(row, l), c.solo_on.0, Radius::Pill);
+        pen.power(b, p.bypass, chosen);
     }
     if let Some(color) = chip {
         let x = row.x + l.indent() + NAME_X;

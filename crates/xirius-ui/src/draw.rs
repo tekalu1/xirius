@@ -397,6 +397,28 @@ impl Pen<'_> {
         self.svg(icon(name), r, color);
     }
 
+    /// The power mark of an effect that runs or is bypassed: the device window's icon, green
+    /// while it runs and the line's grey while it is bypassed. On a picked row's fill it wears
+    /// the fill's ink (the name's strike tells the bypass). `r` is the mark's box; the icon is
+    /// drawn 14 square at its centre.
+    pub fn power(&mut self, r: Rect, bypass: bool, chosen: bool) {
+        let c = self.c;
+        let ink = if chosen {
+            c.primary.1
+        } else if bypass {
+            c.line[0]
+        } else {
+            c.ok
+        };
+        let at = Rect::new(
+            r.x + (r.w - 14.0) / 2.0,
+            r.y + (r.h - 14.0) / 2.0,
+            14.0,
+            14.0,
+        );
+        self.icon("power", at, ink);
+    }
+
     /// A bundled SVG mask, including the brand artwork.
     pub fn svg(&mut self, path: SharedString, r: Rect, color: Hsla) {
         let _ = self.window.paint_svg(
