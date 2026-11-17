@@ -142,6 +142,8 @@ fn ending_the_host_during_analysis_keeps_the_client_alive_and_allows_restart() {
     );
     slow.sync(&song);
     until("analysis", || {
+        assert!(slow.crashed().is_none(), "{:?}", slow.crashed());
+        assert!(slow.failed().is_none(), "{:?}", slow.failed());
         slow.state(42).is_some_and(|s| s.phase == Phase::Analysing)
     });
     slow.terminate_host_for_test();
@@ -168,6 +170,8 @@ fn ending_the_host_during_render_keeps_the_client_alive_and_allows_restart() {
     );
     slow.sync(&song);
     until("render", || {
+        assert!(slow.crashed().is_none(), "{:?}", slow.crashed());
+        assert!(slow.failed().is_none(), "{:?}", slow.failed());
         slow.state(42).is_some_and(|s| s.phase == Phase::Rendering)
     });
     slow.terminate_host_for_test();

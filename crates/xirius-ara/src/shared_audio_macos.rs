@@ -51,7 +51,11 @@ impl Mapping {
         // SAFETY: terminated private name and exclusive creation.
         let fd = unsafe { shm_open(name.as_ptr(), O_CREAT | O_EXCL | O_RDWR, 0o600) };
         if fd < 0 {
-            return Err(io::Error::last_os_error());
+            let error = io::Error::last_os_error();
+            return Err(io::Error::new(
+                error.kind(),
+                format!("ARA audio shm_open(create): {error}"),
+            ));
         }
         if unsafe { ftruncate(fd, len as i64) } != 0 {
             let error = io::Error::last_os_error();
@@ -59,7 +63,10 @@ impl Mapping {
                 close(fd);
                 shm_unlink(name.as_ptr());
             }
-            return Err(error);
+            return Err(io::Error::new(
+                error.kind(),
+                format!("ARA audio ftruncate: {error}"),
+            ));
         }
         Self::map(fd, len, PROT_READ | PROT_WRITE, Some(name))
     }
@@ -69,7 +76,11 @@ impl Mapping {
         // SAFETY: terminated name; the returned descriptor belongs here.
         let fd = unsafe { shm_open(name.as_ptr(), O_RDONLY, 0) };
         if fd < 0 {
-            return Err(io::Error::last_os_error());
+            let error = io::Error::last_os_error();
+            return Err(io::Error::new(
+                error.kind(),
+                format!("ARA audio shm_open(open): {error}"),
+            ));
         }
         let len = unsafe { lseek(fd, 0, SEEK_END) };
         if len < super::HEADER as i64 || len > isize::MAX as i64 {
@@ -97,7 +108,10 @@ impl Mapping {
                     shm_unlink(name.as_ptr());
                 }
             }
-            return Err(error);
+            return Err(io::Error::new(
+                error.kind(),
+                format!("ARA audio mmap: {error}"),
+            ));
         }
         Ok(Self { view, len, owner })
     }

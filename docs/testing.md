@@ -90,6 +90,12 @@ not elapsed time. Source checkout and archive must have the same revision. The c
 uses the same checkout layout on build and execution runners because some tests reference
 source paths embedded at compile time.
 
+To catch files that are present in a build directory but absent from the test archive,
+create an archive with `python scripts/ci_tests.py --archive tests.tar.zst`, then run the
+affected test from that archive with `cargo nextest run -P ci --archive-file tests.tar.zst
+--workspace-remap <checkout> --extract-to <empty-directory> -E 'test(<test-name>)'`.
+Use an empty extraction directory outside the build tree and remove it after the run.
+
 Each shard publishes separate JUnit and context observations. The aggregate requires every
 build and shard to succeed and all four observation artifacts to be present before checking
 the complete catalog. Equal filenames in different shards are preserved. The stable

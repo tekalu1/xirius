@@ -130,6 +130,9 @@ def nextest_version():
 def prepare():
     # --tests unifies the same dev features as the workspace test build, including test DLLs.
     run(["cargo", "build", "--locked", "--workspace", "--bins", "--tests", "-j", "6"])
+    # The test targets link fixture rlibs, while the host loads their dynamic libraries.
+    # Cargo does not necessarily produce those cdylibs from --tests alone.
+    run(["cargo", "build", "--locked", "-p", "xirius-test-clap", "-p", "xirius-test-vst3", "--lib", "-j", "6"])
 
 
 JUNIT = Path("target/nextest/ci/junit.xml")
