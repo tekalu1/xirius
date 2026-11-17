@@ -281,20 +281,21 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
         .params
         .insert("1".into(), 0.9);
     host.sync(&parameter_song);
-    audio.render(&mut [0.0; 960], 2);
-    // The prefetched worker may still be applying the lane while the main callback
-    // consumes the queued audio. Its completion is the receipt for this assertion.
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while audio.prefetch(0).unwrap().lent {
-        assert!(
-            std::time::Instant::now() < end,
-            "prefetched lane did not finish"
-        );
-        std::thread::yield_now();
+    // The song's explicit value is delivered on the control channel, while the
+    // lane is delivered with an audio block. A returned prefetch chain does not
+    // acknowledge that the host has consumed the lane event. Drive blocks and
+    // inspect captured host state until that event has actually taken effect.
+    let mut heard = 0.0;
+    for _ in 0..=xirius_engine::prefetch::DEPTH + 2 {
+        audio.render(&mut [0.0; 512], 2);
+        heard = remote_param(&mut host, &parameter_song, PluginId(201));
+        if heard == 0.25 {
+            break;
+        }
     }
     assert_eq!(
-        remote_param(&mut host, &parameter_song, PluginId(201)),
-        0.25
+        heard, 0.25,
+        "the automated value did not reach the host after audio advanced"
     );
     assert!(
         !audio.prefetch(0).unwrap().lent,
