@@ -107,9 +107,11 @@ pub enum Hit {
     Monitor(TrackId),
     /// The keys button of an instrument track: its instrument's window (UI-098).
     Keys(TrackId),
-    /// The colour square of a track: opens the colour choice.
+    /// The kind icon of a track, in its colour: opens the colour choice.
     TrackColor(TrackId),
-    /// The kind icon of a track; only a crashed plugin's bolt answers it.
+    /// The folder icon, in the folder's colour: opens the colour choice.
+    FolderColor(FolderId),
+    /// The alert icon of a track whose plugin went down: restarts it.
     TrackIcon(TrackId),
     /// The pill after a track's name with its transpose and velocity (UI-312): its hover tip
     /// says the values; a press selects the row.
@@ -471,8 +473,7 @@ impl Geometry {
 pub struct RowParts {
     /// A folder's open / shut chevron.
     pub chevron: Option<Rect>,
-    /// The track's colour square, left of its kind icon; a track only.
-    pub swatch: Option<Rect>,
+    /// The kind icon, in the row's colour; a press on it opens the colour choice.
     pub icon: Rect,
     pub name_x: f32,
     /// Where the name has to stop: before the widen chevron, or the row's right edge.
@@ -523,7 +524,6 @@ impl RowParts {
                 let icon_x = chevron.right() + Space::X1.px();
                 RowParts {
                     chevron: Some(chevron),
-                    swatch: None,
                     icon: Rect::new(icon_x, icon_y, Layout::ROW_ICON, Layout::ROW_ICON),
                     name_x: icon_x + Layout::ROW_ICON + Space::X2.px(),
                     name_right: right,
@@ -541,18 +541,7 @@ impl RowParts {
                 }
             }
             RowKind::Track(_) => {
-                let swatch = Rect::new(
-                    x,
-                    Self::LINE_1_Y + (Layout::ROW_ICON - Self::SWATCH_CELL) / 2.0,
-                    Self::SWATCH_CELL,
-                    Self::SWATCH_CELL,
-                );
-                let icon = Rect::new(
-                    swatch.right(),
-                    Self::LINE_1_Y,
-                    Layout::ROW_ICON,
-                    Layout::ROW_ICON,
-                );
+                let icon = Rect::new(x, Self::LINE_1_Y, Layout::ROW_ICON, Layout::ROW_ICON);
                 let name_x = icon.right() + Space::X2.px();
                 let meter = Rect::new(
                     right - Self::METER_W,
@@ -584,7 +573,6 @@ impl RowParts {
                     .then(|| Rect::new(fader_from, Self::LINE_2_Y, fader_to - fader_from, t));
                 RowParts {
                     chevron: None,
-                    swatch: Some(swatch),
                     icon,
                     name_x,
                     name_right: crate::automation_track_mode::rect(auto).x - Space::X1.px(),
@@ -612,8 +600,7 @@ impl RowParts {
     }
 
     pub const LINE_1_Y: f32 = 6.0;
-    /// The colour square's hit cell; the square drawn in it is [`Self::SWATCH_MARK`].
-    pub const SWATCH_CELL: f32 = 16.0;
+    /// The colour square of the pick lists.
     pub const SWATCH_MARK: f32 = 12.0;
     pub const METER_W: f32 = 6.0;
     /// The volume fader is left out when it would be shorter than this (the first thing to go
@@ -1308,7 +1295,8 @@ impl Studio {
             Hit::Freeze(t) => part(RowKind::Track(t), |p| p.freeze),
             Hit::HeadFader(t) => part(RowKind::Track(t), |p| p.fader),
             Hit::Output(t) => part(RowKind::Track(t), |p| p.output),
-            Hit::TrackColor(t) => part(RowKind::Track(t), |p| p.swatch),
+            Hit::TrackColor(t) => part(RowKind::Track(t), |p| Some(p.icon)),
+            Hit::FolderColor(f) => part(RowKind::Folder(f), |p| Some(p.icon)),
             Hit::TrackIcon(t) => part(RowKind::Track(t), |p| Some(p.icon)),
             Hit::TrackMark(t) => {
                 let row = self.tree.row_of(RowKind::Track(t))?;
@@ -1522,8 +1510,14 @@ impl Studio {
                 }
                 RowKind::Track(t) if on(parts.widen) => return Hit::Widen(t),
                 RowKind::Track(t) if on(parts.output) => return Hit::Output(t),
-                RowKind::Track(t) if on(parts.swatch) => return Hit::TrackColor(t),
-                RowKind::Track(t) if parts.icon.contains(lx, ly) => return Hit::TrackIcon(t),
+                RowKind::Track(t) if parts.icon.contains(lx, ly) => {
+                    return if self.crashed_on(t).is_some() {
+                        Hit::TrackIcon(t)
+                    } else {
+                        Hit::TrackColor(t)
+                    };
+                }
+                RowKind::Folder(f) if parts.icon.contains(lx, ly) => return Hit::FolderColor(f),
                 RowKind::Track(t) if on(parts.ear) && self.is_audio(t) => return Hit::Monitor(t),
                 RowKind::Track(_) if on(parts.ear) || on(parts.keys) => return Hit::None,
                 _ => {}
@@ -1835,8 +1829,7 @@ impl Studio {
                 };
                 let parts = g.parts(row);
                 let (kind, r) = if hit == Hit::TrackColor(t) {
-                    let Some(r) = parts.swatch else { return false };
-                    (PopupKind::Color(t), r)
+                    (PopupKind::Color(t), parts.icon)
                 } else {
                     let Some(r) = parts.output else { return false };
                     (PopupKind::Output(t), r)
@@ -1864,6 +1857,15 @@ impl Studio {
             Hit::Mute(t) => self.track_toggle("track.mute", t),
             Hit::Solo(t) => self.track_toggle("track.solo", t),
             Hit::FolderBus(f) => self.open_folder_bus(g, f),
+            Hit::FolderColor(f) => {
+                let Some(row) = self.tree.row_of(RowKind::Folder(f)) else {
+                    return false;
+                };
+                let r = g.parts(row).icon;
+                let anchor = Rect::new(g.column.x + r.x, self.row_y(g, row) + r.y, r.w, r.h);
+                self.open_popup(PopupKind::FolderColor(f), anchor);
+                true
+            }
             Hit::Chevron(f) => {
                 if !self.collapsed.remove(&f) {
                     self.collapsed.insert(f);
@@ -2423,12 +2425,13 @@ impl Studio {
                 }
             }
         }
-        if let PopupKind::Color(t) = p.kind
-            && let Some(t) = project.tracks.get(&t)
-        {
-            p.color = t
-                .color
-                .as_deref()
+        let current = match p.kind {
+            PopupKind::Color(t) => project.tracks.get(&t).map(|t| t.color.as_deref()),
+            PopupKind::FolderColor(f) => project.folders.get(&f).map(|f| f.color.as_deref()),
+            _ => None,
+        };
+        if let Some(color) = current {
+            p.color = color
                 .and_then(crate::song::palette_color)
                 .map(TrackColor::index);
         }
@@ -2517,8 +2520,12 @@ impl Studio {
                 self.refresh_popup();
             }
             Action::Color(color) => {
-                if let PopupKind::Color(t) = p.kind {
-                    let ids = self.track_ids(t);
+                if let PopupKind::Color(_) | PopupKind::FolderColor(_) = p.kind {
+                    let ids = match p.kind {
+                        PopupKind::FolderColor(f) => self.folder_nodes(f),
+                        PopupKind::Color(t) => self.track_ids(t),
+                        _ => unreachable!(),
+                    };
                     let color =
                         color.map_or("none".to_string(), |c| crate::song::hex(TrackColor::new(c)));
                     self.command(|s| {

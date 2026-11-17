@@ -145,6 +145,8 @@ pub enum MixerHit {
     After(TrackId, flow::Pick),
     /// The button by the name that widens the strip or narrows it again (MIX-045).
     Widen(TrackId),
+    /// The channel's icon, in its colour: opens the colour choice (not on the master).
+    Color(TrackId),
     /// The button by the name that opens the channel editor (MIX-042).
     Editor(TrackId),
     /// An area's heading in the flow: the insert heading drags the inserts to other channels
@@ -182,6 +184,7 @@ impl MixerHit {
             | MixerHit::Branch(t, _)
             | MixerHit::After(t, _)
             | MixerHit::Widen(t)
+            | MixerHit::Color(t)
             | MixerHit::Editor(t)
             | MixerHit::Heading(t, _) => t,
         }
@@ -1277,7 +1280,9 @@ impl Studio {
         let track = p.tracks.get(&t)?;
         let on = |r: Option<Rect>| r.is_some_and(|r| r.contains(x, y));
         let (editor, widen) = paint::name_tools(&s);
-        let hit = if editor.contains(x, y) {
+        let hit = if track.kind != TrackKind::Master && paint::name_icon(&s).contains(x, y) {
+            MixerHit::Color(t)
+        } else if editor.contains(x, y) {
             MixerHit::Editor(t)
         } else if widen.contains(x, y) {
             MixerHit::Widen(t)
@@ -1433,6 +1438,7 @@ impl Studio {
                 .filter(|(_, r)| seen(*r))
                 .and_then(|_| flow.after(pick)),
             MixerHit::Widen(_) => Some(paint::name_tools(&s).1),
+            MixerHit::Color(_) => Some(paint::name_icon(&s)),
             MixerHit::Editor(_) => Some(paint::name_tools(&s).0),
         }
     }
@@ -1613,6 +1619,13 @@ impl Studio {
                     self.mixer.wide.insert(t);
                 }
                 self.mixer.scroll = self.mixer.scroll.min(self.mixer_max_scroll(g));
+                true
+            }
+            MixerHit::Color(t) => {
+                let Some(anchor) = self.mixer_rect(g, hit) else {
+                    return false;
+                };
+                self.open_popup(PopupKind::Color(t), anchor);
                 true
             }
             MixerHit::Editor(t) => {

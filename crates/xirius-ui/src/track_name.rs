@@ -168,8 +168,8 @@ mod tests {
                 serde_json::json!({"ids": [t.to_string()], "percent": 10}),
             )
             .unwrap();
-        // A long name with both values large: the name keeps its 3 characters, the mark turns
-        // into the dot, and neither reaches the right buttons (UI-312).
+        // A long name with both values large: the name keeps its 3 characters, the mark takes
+        // the room that is left, and neither reaches the right buttons (UI-312).
         s.song
             .run(
                 "track.rename",
@@ -194,8 +194,8 @@ mod tests {
         let mark = s.row_mark(&row, row.head_w, track);
         assert_eq!(
             mark.text.as_deref(),
-            Some("−64"),
-            "the one-value form fits, the whole one does not"
+            Some("−64 +100%"),
+            "the name has the colour square's 16 px (UI-361): the whole form fits beside 3 characters"
         );
         let area = crate::draw::track_name_rect(&row, row.head_w, &mark);
         assert!(

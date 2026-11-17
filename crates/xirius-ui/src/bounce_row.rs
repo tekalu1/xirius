@@ -105,30 +105,18 @@ fn color(pen: &Pen, project: &Project, planned: &Planned) -> gpui::Hsla {
     }
 }
 
-/// The track column's part: the colour, the kind and the name of each new track, faint.
+/// The track column's part: the kind icon (in the track's colour) and the name of each new track, faint.
 pub fn paint_head(pen: &mut Pen, studio: &Studio, project: &Project, g: &Geometry, row: &Row) {
     for place in places(studio, row) {
         let parts = g.parts(&place.row);
         let top = studio.row_y(g, &place.row);
         let at = |r: Rect| Rect::new(g.column.x + r.x, top + r.y, r.w, r.h);
-        let c = pen.c;
         let faint = 0.6;
-        if let Some(cell) = parts.swatch {
-            let cell = at(cell);
-            let m = RowParts::SWATCH_MARK;
-            let mark = Rect::new(
-                cell.x + (cell.w - m) / 2.0,
-                cell.y + (cell.h - m) / 2.0,
-                m,
-                m,
-            );
-            pen.round(
-                mark,
-                color(pen, project, place.planned).opacity(faint),
-                Radius::Xs,
-            );
-        }
-        pen.icon("audio", at(parts.icon), c.ink.opacity(faint));
+        pen.icon(
+            "audio",
+            at(parts.icon),
+            color(pen, project, place.planned).opacity(faint),
+        );
         let name_r = Rect::new(
             g.column.x + parts.name_x,
             top + RowParts::LINE_1_Y,

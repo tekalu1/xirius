@@ -1,5 +1,5 @@
-//! The colour square at the left of a track's head, and the colour choice it opens (the feel
-//! pass, item 09), pressed the way the window presses them.
+//! The kind icon of a track's head in the track's colour, and the colour choice it opens (the
+//! feel pass, item 09; UI-361), pressed the way the window presses them.
 
 use crate::arrange::probe::track;
 use crate::draw::track_color;
@@ -29,55 +29,56 @@ fn centre(r: Rect) -> (f32, f32) {
 }
 
 #[test]
-fn the_head_is_16_px_wider_and_the_square_sits_left_of_the_kind_icon() {
-    assert_eq!(Layout::TRACK_HEAD_W, 216.0);
+fn the_kind_icon_starts_the_head_and_the_name_takes_the_square_s_16_px() {
+    assert_eq!(Layout::TRACK_HEAD_W, 216.0, "the head is as wide as before");
     let (s, _) = studio();
     let row = *s.tree().row_of(RowKind::Track(track(&s, "Vocal"))).unwrap();
     let p = RowParts::of(&row);
-    let sw = p.swatch.expect("a track has the square");
-    assert_eq!(sw.x, row.content_x());
-    assert_eq!((sw.w, sw.h), (RowParts::SWATCH_CELL, RowParts::SWATCH_CELL));
-    assert_eq!(sw.right(), p.icon.x, "the icon follows the square");
-    let mid = |r: Rect| r.y + r.h / 2.0;
-    assert_eq!(mid(sw), mid(p.icon), "on the icon's line");
+    assert_eq!(p.icon.x, row.content_x(), "no square before the icon");
     assert_eq!(p.name_x, p.icon.right() + Space::X2.px());
     assert_eq!(
         p.mute.unwrap().x,
         p.name_x,
         "the buttons start under the name"
     );
-    // The name has as much room as before: the square took the 16 px the head gained.
-    let before = row.content_x() + Layout::ROW_ICON + Space::X2.px();
-    assert_eq!(p.name_right - p.name_x, (p.name_right - 16.0) - before);
+    // The name has 16 px more than when the square sat left of the icon.
+    let before = row.content_x() + 16.0 + Layout::ROW_ICON + Space::X2.px();
+    assert_eq!(p.name_x, before - 16.0);
 }
 
 #[test]
-fn a_folder_has_no_colour_square() {
-    let (s, _) = studio();
+fn the_kind_icon_is_the_press_target_and_a_crashed_one_keeps_its_restart() {
+    let (s, g) = studio();
+    let t = track(&s, "Vocal");
+    let (x, y) = centre(on_screen(&s, &g, "Vocal", |p| p.icon));
+    assert_eq!(s.hit(&g, x, y), Hit::TrackColor(t));
+}
+
+#[test]
+fn a_folder_icon_is_a_press_target_too() {
+    let (s, g) = studio();
     let f = *s
         .tree()
         .rows
         .iter()
         .find(|r| matches!(r.kind, RowKind::Folder(_)))
         .expect("a folder");
-    assert!(RowParts::of(&f).swatch.is_none());
+    let RowKind::Folder(id) = f.kind else {
+        unreachable!()
+    };
+    let r = RowParts::of(&f).icon;
+    let (x, y) = (
+        g.column.x + r.x + r.w / 2.0,
+        s.row_y(&g, &f) + r.y + r.h / 2.0,
+    );
+    assert_eq!(s.hit(&g, x, y), Hit::FolderColor(id));
 }
 
 #[test]
-fn the_square_and_the_icon_are_two_targets() {
-    let (s, g) = studio();
-    let t = track(&s, "Vocal");
-    let (x, y) = centre(on_screen(&s, &g, "Vocal", |p| p.swatch.unwrap()));
-    assert_eq!(s.hit(&g, x, y), Hit::TrackColor(t));
-    let (x, y) = centre(on_screen(&s, &g, "Vocal", |p| p.icon));
-    assert_eq!(s.hit(&g, x, y), Hit::TrackIcon(t));
-}
-
-#[test]
-fn pressing_the_square_opens_the_colour_choice_under_it() {
+fn pressing_the_icon_opens_the_colour_choice_under_it() {
     let (mut s, g) = studio();
     let t = track(&s, "Vocal");
-    let sq = on_screen(&s, &g, "Vocal", |p| p.swatch.unwrap());
+    let sq = on_screen(&s, &g, "Vocal", |p| p.icon);
     let (x, y) = centre(sq);
     let hit = s.hit(&g, x, y);
     assert!(s.press(&g, hit));
@@ -87,12 +88,33 @@ fn pressing_the_square_opens_the_colour_choice_under_it() {
 }
 
 #[test]
-fn the_icon_does_not_open_the_colour_choice() {
+fn choosing_a_square_paints_a_folder_in_one_step() {
     let (mut s, g) = studio();
-    let (x, y) = centre(on_screen(&s, &g, "Vocal", |p| p.icon));
-    let hit = s.hit(&g, x, y);
-    assert!(!s.press(&g, hit));
-    assert!(s.popup.is_none());
+    let f = *s
+        .tree()
+        .rows
+        .iter()
+        .find(|r| matches!(r.kind, RowKind::Folder(_)))
+        .expect("a folder");
+    let RowKind::Folder(id) = f.kind else {
+        unreachable!()
+    };
+    assert!(s.press(&g, Hit::FolderColor(id)));
+    assert_eq!(s.popup.as_ref().unwrap().kind, PopupKind::FolderColor(id));
+    let cell = s
+        .popup
+        .as_ref()
+        .unwrap()
+        .layout(g.size)
+        .cells
+        .iter()
+        .position(|c| c.action == Some(Action::Color(Some(5))))
+        .unwrap();
+    assert!(s.press(&g, Hit::Item(cell)));
+    assert_eq!(
+        s.project().folders[&id].color,
+        Some(crate::song::hex(xirius_design::TrackColor::new(5)))
+    );
 }
 
 #[test]

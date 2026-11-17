@@ -23,7 +23,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
         Hit::None | Hit::PopupBody | Hit::SearchClear | Hit::Item(_) => return None,
         // The toast takes its presses before the rest of the window.
         Hit::Toast(_) => return None,
-        // The kind icon only answers a crashed plugin's bolt.
+        // The alert icon of a track whose plugin went down.
         Hit::TrackIcon(_) => return None,
         // The mark says its values on hover; a press is the row's.
         Hit::TrackMark(_) => return None,
@@ -42,7 +42,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
         Hit::Arm(_) => ("head.arm", "track.arm"),
         Hit::Monitor(_) => ("head.monitor", "track.monitor"),
         Hit::Keys(_) => ("head.keys", "instrument.open"),
-        Hit::TrackColor(_) => ("head.color", "track.color.menu"),
+        Hit::TrackColor(_) | Hit::FolderColor(_) => ("head.color", "track.color.menu"),
         Hit::Widen(_) => ("head.widen", "track.widen"),
         Hit::Freeze(_) => ("head.freeze", "track.freeze"),
         Hit::HeadFader(_) => ("head.fader", "track.volume"),
@@ -147,6 +147,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
             MixerHit::Branch(..) => ("mixer.branch", "branch.row"),
             MixerHit::After(..) => ("mixer.after", "insert.after"),
             MixerHit::Widen(_) => ("mixer.widen", "strip.widen"),
+            MixerHit::Color(_) => ("mixer.color", "track.color.menu"),
             MixerHit::Editor(_) => ("mixer.editor", "channel.editor"),
             MixerHit::KeySend(..) => ("mixer.key_send", "sidechain.open"),
             MixerHit::KeyLevel(..) => ("mixer.key_level", "sidechain.level"),
@@ -285,6 +286,11 @@ pub const APPROVED: &[Approved] = &[
         op: "track.mute",
         places: &["head.mute", "mixer.mute"],
         ground: "トラックの頭とミキサーの帯の M: モックの daw-main.html が両方を描く（同じトラックの同じ状態を指す）",
+    },
+    Approved {
+        op: "track.color.menu",
+        places: &["head.color", "mixer.color"],
+        ground: "トラックの頭とミキサーの帯の種類アイコン（トラックの色）: 2026-11-17 に承認したモックが両方を描く（同じトラックの同じ色の選びを開く）",
     },
     Approved {
         op: "track.solo",
@@ -520,6 +526,12 @@ mod tests {
     fn popup_name(kind: &PopupKind) -> String {
         let d = format!("{kind:?}");
         let head = d.split(['(', ' ']).next().unwrap_or("").to_lowercase();
+        // A folder's colour choice is the track's (one place).
+        let head = if head == "foldercolor" {
+            "color".into()
+        } else {
+            head
+        };
         format!("popup.{head}")
     }
 
@@ -631,6 +643,7 @@ mod tests {
             Hit::Bar(BarButton::Export),
             Hit::AddTrack,
             Hit::TrackColor(track),
+            Hit::FolderColor(folder),
             Hit::Output(track),
             Hit::FolderBus(folder),
             Hit::Browser(BrowserHit::ViewButton),

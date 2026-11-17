@@ -172,6 +172,7 @@ impl Studio {
             | MixerHit::Output(t)
             | MixerHit::Input(t)
             | MixerHit::Widen(t)
+            | MixerHit::Color(t)
             | MixerHit::Editor(t) => Spot::Head(t),
             MixerHit::Control(..) => return None,
         })

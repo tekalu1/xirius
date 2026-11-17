@@ -13,6 +13,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `record.preroll` | `bar.preroll`, `rec.preroll` | 下の帯のプリロールのボタンと録音パネルのスイッチ: モックの recording.html の 04 が両方を描く（ボタンは UI-300 で下の帯へ移した） |
 | `view.snap` | `bar.snap`, `popup.grid` | 上の帯のスナップのスイッチとグリッドのメニューのオン・オフ: モックの ui-feedback.html の 04（B）が、スイッチを分け、値のボタンは今のグリッドのメニューを開く形にした（UI-302） |
 | `track.mute` | `head.mute`, `mixer.mute` | トラックの頭とミキサーの帯の M: モックの daw-main.html が両方を描く（同じトラックの同じ状態を指す） |
+| `track.color.menu` | `head.color`, `mixer.color` | トラックの頭とミキサーの帯の種類アイコン（トラックの色）: 2026-11-17 に承認したモックが両方を描く（同じトラックの同じ色の選びを開く） |
 | `track.solo` | `head.solo`, `mixer.solo` | トラックの頭とミキサーの帯の S: 同上 |
 | `track.arm` | `head.arm`, `mixer.arm` | トラックの頭とミキサーの帯の R: 同上 |
 | `track.output.menu` | `head.output`, `mixer.output` | トラックの頭（広げたとき）とミキサーの帯の出力: 同上 |
@@ -104,7 +105,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `track.add` | `popup.addtrack` |
 | `track.add.menu` | `head.add` |
 | `track.arm` | `head.arm`, `mixer.arm` |
-| `track.color.menu` | `head.color` |
+| `track.color.menu` | `head.color`, `mixer.color` |
 | `track.color.set` | `popup.color` |
 | `track.freeze` | `head.freeze` |
 | `track.input.menu` | `mixer.input` |
@@ -140,7 +141,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `view.zoom.out` | `head.zoom_out` |
 | `view.zoom.wave` | `head.wave_zoom` |
 
-操作 112 件、うち 2 か所にあるもの 14 件（すべて承認済み）。
+操作 112 件、うち 2 か所にあるもの 15 件（すべて承認済み）。
 
 保存（UI-288）: Ctrl+S と曲のメニューは同じ保存を開始する。場所が未定なら別名保存の窓を開く。書き込み中の印は少なくとも 450 ms 保ち、200 ms を超える待ちは幕に載せる。別名保存の幕だけに進捗の棒と「中止 Esc」を置く。保存の警告の札の「別名で保存…」は同じ窓を開き、「もう一度」は同じ保存を再試行する。札を閉じても、保存成功まで警告の印を保つ。
 

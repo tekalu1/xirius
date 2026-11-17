@@ -52,6 +52,8 @@ pub enum PopupKind {
     Song,
     Versions,
     Color(TrackId),
+    /// The colour choice of a folder.
+    FolderColor(FolderId),
     Output(TrackId),
     /// A Drum Kit pad's song-level output.
     PadOutput(PluginId),
@@ -787,7 +789,7 @@ impl Popup {
             PopupKind::Song => (Layout::MENU_W, self.song_cells(Layout::MENU_W)),
             PopupKind::NoDevice => (Layout::MENU_W, no_device_cells(Layout::MENU_W)),
             PopupKind::Versions => (380.0, self.version_cells(380.0)),
-            PopupKind::Color(_) => {
+            PopupKind::Color(_) | PopupKind::FolderColor(_) => {
                 let w = pad * 2.0
                     + SWATCH_COLUMNS as f32 * SWATCH
                     + (SWATCH_COLUMNS - 1) as f32 * SWATCH_GAP;

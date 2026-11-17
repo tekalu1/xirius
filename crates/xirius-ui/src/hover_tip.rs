@@ -12,7 +12,7 @@ pub fn command(hit: Hit) -> Option<String> {
             Hit::Arm(_) => "track.arm",
             Hit::Monitor(_) => "track.monitor",
             Hit::Keys(_) => "view.instrument",
-            Hit::TrackColor(_) => "track.color.set",
+            Hit::TrackColor(_) | Hit::FolderColor(_) => "track.color.set",
             Hit::Widen(_) => "view.track-details",
             Hit::Freeze(_) => "track.freeze",
             Hit::HeadFader(_) => "track.volume.set",
@@ -87,6 +87,7 @@ pub fn command(hit: Hit) -> Option<String> {
                     crate::mixer::MixerHit::After(..) => Some("plugin.add".into()),
                     crate::mixer::MixerHit::KeySend(..) => Some("plugin.open".into()),
                     crate::mixer::MixerHit::KeyLevel(..) => Some("plugin.sidechain.set".into()),
+                    crate::mixer::MixerHit::Color(_) => Some("track.color.set".into()),
                     crate::mixer::MixerHit::Widen(_) | crate::mixer::MixerHit::Editor(_) => None,
                 };
             }

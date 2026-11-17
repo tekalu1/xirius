@@ -18,6 +18,14 @@ const fn stage(n: u8) -> Act {
 
 pub const SHOTS: &[Shot] = &[
     Shot {
+        name: "ux-channel",
+        acts: &[Act::Reset, stage(2)],
+    },
+    Shot {
+        name: "ux-head",
+        acts: &[Act::Reset, stage(1)],
+    },
+    Shot {
         name: "ux-mixer",
         acts: &[Act::Reset, stage(0)],
     },
@@ -28,14 +36,6 @@ pub const SHOTS: &[Shot] = &[
             stage(0),
             Act::Hover(Target::Strip(Part::Insert, "Vocal")),
         ],
-    },
-    Shot {
-        name: "ux-head",
-        acts: &[Act::Reset, stage(1)],
-    },
-    Shot {
-        name: "ux-channel",
-        acts: &[Act::Reset, stage(2)],
     },
     Shot {
         name: "ux-mixer-kinds",

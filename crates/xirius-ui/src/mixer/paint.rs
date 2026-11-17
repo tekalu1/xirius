@@ -75,6 +75,18 @@ fn tools_shown(studio: &Studio, t: TrackId, hover: Option<MixerHit>) -> bool {
         || studio.mixer.wide.contains(&t)
 }
 
+/// The channel's icon at the start of its name: 16 px, in the channel's colour, and the press
+/// target of the colour choice.
+pub fn name_icon(s: &StripLayout) -> Rect {
+    Rect::new(
+        s.name.x,
+        s.name.y + (s.name.h - NAME_ICON) / 2.0,
+        NAME_ICON,
+        NAME_ICON,
+    )
+}
+
+const NAME_ICON: f32 = 16.0;
 const TOOL: f32 = 22.0;
 const TOOL_GAP: f32 = 2.0;
 /// Room left of the buttons, where the name stops.
@@ -103,10 +115,13 @@ fn paint_strip(
     // The name, with the track's icon in its colour.
     let ink = if selected { c.ink_strong } else { c.ink };
     let icon_ink = match track.kind {
-        TrackKind::Audio | TrackKind::Instrument => crate::draw::color_of(c, track),
-        _ => c.ink,
+        TrackKind::Master => c.ink,
+        _ => crate::draw::color_of(c, track),
     };
-    let icon_r = Rect::new(s.name.x, s.name.y + (s.name.h - 12.0) / 2.0, 12.0, 12.0);
+    let icon_r = name_icon(s);
+    if hover == Some(MixerHit::Color(t)) {
+        pen.round(icon_r, c.hover, Radius::S);
+    }
     pen.icon(track_icon(track), icon_r, icon_ink);
     // A frozen track's name is followed by the snowflake (EXP-004).
     let flake = if track.frozen.is_some() {

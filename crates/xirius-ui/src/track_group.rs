@@ -33,6 +33,24 @@ impl Studio {
         )
     }
 
+    /// The rows a folder's colour is set on: the selection when the folder is among it (tracks
+    /// and folders alike), the folder alone otherwise.
+    pub(crate) fn folder_nodes(&self, clicked: xirius_core::id::FolderId) -> Value {
+        let rows = if self.arrange.tracks.contains(&RowKind::Folder(clicked)) {
+            self.arrange.tracks.clone()
+        } else {
+            vec![RowKind::Folder(clicked)]
+        };
+        json!(
+            rows.iter()
+                .map(|r| match r {
+                    RowKind::Track(t) => t.to_string(),
+                    RowKind::Folder(f) => f.to_string(),
+                })
+                .collect::<Vec<_>>()
+        )
+    }
+
     pub(crate) fn track_toggle(&mut self, command: &str, clicked: TrackId) -> bool {
         // Alt changes the pressed track alone (MIX-050).
         let ids = if self.arrange.mods.alt {

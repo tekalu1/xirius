@@ -1168,7 +1168,16 @@ fn paint_row_parts(
                 let hot = studio.hover == Hit::Chevron(f);
                 pen.icon(name, at(chevron), if hot { c.ink_strong } else { c.ink });
             }
-            pen.icon("folder", at(parts.icon), c.ink);
+            let cell = at(parts.icon);
+            if studio.hover == Hit::FolderColor(f) {
+                pen.round(cell, c.hover, Radius::S);
+            }
+            let ink = folder
+                .color
+                .as_deref()
+                .and_then(crate::song::palette_color)
+                .map_or(c.ink, |k| c.tracks[k.index() % c.tracks.len()]);
+            pen.icon("folder", cell, ink);
             // The name stops before the output bus button (EDT-073).
             let bus = studio.folder_bus_rect(row, g.column.w, f);
             let name_right = parts.name_right.min(bus.x - Space::X1.px());
@@ -1194,27 +1203,17 @@ fn paint_row_parts(
             let Some(track) = project.tracks.get(&t) else {
                 return;
             };
-            // The colour square: the one place a track's colour is read from; it opens the
-            // colour choice. The kind icon beside it stays neutral.
-            if let Some(cell) = parts.swatch {
-                let cell = at(cell);
-                if studio.hover == Hit::TrackColor(t) {
-                    pen.round(cell, c.hover, Radius::S);
-                }
-                let m = RowParts::SWATCH_MARK;
-                let mark = Rect::new(
-                    cell.x + (cell.w - m) / 2.0,
-                    cell.y + (cell.h - m) / 2.0,
-                    m,
-                    m,
-                );
-                pen.round(mark, color_of(c, track), Radius::Xs);
-            }
             // A plugin of the track went down: a bolt that starts it again (PLG-053).
             if studio.crashed_on(t).is_some() {
                 pen.icon("alert", at(parts.icon), c.alert);
             } else {
-                pen.icon(track_icon(track), at(parts.icon), c.ink);
+                // The icon is the one place a track's colour shows in its head; it opens the
+                // colour choice.
+                let cell = at(parts.icon);
+                if studio.hover == Hit::TrackColor(t) {
+                    pen.round(cell, c.hover, Radius::S);
+                }
+                pen.icon(track_icon(track), cell, color_of(c, track));
             }
             // A transpose or velocity of the track's own: one pill after the name. Measure both
             // the name and the pill's texts here, so the drawing, the hit test and the name's
