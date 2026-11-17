@@ -9,10 +9,14 @@ use xirius_core::{
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{build::Builder, export, graph::Select, plugins::Isolation};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 const PID: PluginId = PluginId(1);
 
 #[test]
 fn each_offline_render_plays_the_instance_it_opened() {
+    let _records = CrashRecords::new();
     xirius_test_vst3::fixture_marker();
     let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     assert!(dll.exists(), "a DLL on Windows, a bundle on macOS");

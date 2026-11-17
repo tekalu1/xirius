@@ -269,6 +269,7 @@ fn pull_check(isolation: Isolation, mode: PluginIsolation) {
 
 #[test]
 fn a_silent_patch_change_in_a_default_host_reaches_the_song_when_it_is_asked() {
+    let _records = CrashRecords::new();
     pull_check(
         Isolation::PerPlugin(xirius_engine::server::find_host()),
         PluginIsolation::Shared,

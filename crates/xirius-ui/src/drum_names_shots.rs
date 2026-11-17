@@ -101,6 +101,7 @@ mod tests {
 
     #[test]
     fn edt_134_the_drum_rows_take_the_instruments_names_after_the_users() {
+        let _records = crate::shot::CrashRecords::new();
         let mut s = Studio::sample();
         let g = s.geometry(1440.0, 900.0);
         part(&mut s, &g, 0);

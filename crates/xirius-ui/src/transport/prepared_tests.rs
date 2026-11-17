@@ -434,6 +434,7 @@ fn missing_plugin(s: &mut Studio, track: serde_json::Value) {
 
 #[test]
 fn missing_hosted_plugin_is_an_explicit_failure_without_changing_the_song() {
+    let _records = crate::shot::CrashRecords::new();
     let mut s = Studio::new(Song::empty());
     let track = s
         .song
