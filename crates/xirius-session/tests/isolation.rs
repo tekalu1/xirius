@@ -265,7 +265,7 @@ fn the_export_through_the_host_is_faster_than_real_time() {
 }
 
 #[test]
-fn a_host_that_goes_down_during_an_export_leaves_the_dry_signal() {
+fn a_host_that_goes_down_during_an_export_recovers_without_silence() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("crash");
     let _records = CrashRecords::new();
@@ -321,11 +321,15 @@ fn a_host_that_goes_down_during_an_export_leaves_the_dry_signal() {
     );
     assert!(quiet >= 4, "{levels:?}");
     assert!(dry >= 4, "{levels:?}");
-    // Every window is the plugin or the dry sine, except the one it went down in: never silence.
-    assert!(quiet + dry + 1 >= levels.len(), "{levels:?}");
-    assert!(levels.last().unwrap().abs() < 0.1);
+    // Both transitions can straddle a measurement window. Neither may be silent.
+    assert!(quiet + dry + 2 >= levels.len(), "{levels:?}");
+    assert!(levels.iter().all(|level| *level > g.quiet_db - 0.2));
+    assert!((levels.last().unwrap() - g.quiet_db).abs() < 0.1);
     let st = builder.plugins().statuses();
-    assert!(st.iter().all(|(_, _, s)| s.crashed), "{st:?}");
+    assert!(
+        st.iter().all(|(_, _, s)| !s.crashed && s.crashes == 1),
+        "{st:?}"
+    );
 }
 
 /// Pulls the engine at the pace of a device, into memory. Like a device, it does not make up
@@ -486,7 +490,7 @@ fn wait_for(host: &mut SessionHost, what: &str, f: impl Fn(&mut SessionHost) -> 
 }
 
 #[test]
-fn while_playing_a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_back() {
+fn while_playing_a_killed_host_recovers_the_state_automatically() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("kill");
     let _records = CrashRecords::new();
@@ -500,28 +504,25 @@ fn while_playing_a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_ba
     let before = steady(&host, &pull, 0.5);
 
     let server = host.plugins().server().unwrap().clone();
+    let old_pid = server.pid();
     server.kill();
     assert!(server.wait_down(GUARD));
-    let killed = steady(&host, &pull, 0.5);
-    let st = host.plugin_statuses();
-    assert!(st[0].2.crashed, "{st:?}");
-    let exit = st[0].2.exit_code;
-
     let begun = Instant::now();
-    host.restart_plugins().unwrap();
-    wait_for(&mut host, "the restarted plugin", |h| {
+    wait_for(&mut host, "the automatically restarted plugin", |h| {
         let st = h.plugin_statuses();
-        !st[0].2.crashed && h.plugins().link(st[0].0).unwrap().opened().is_some()
+        !st[0].2.crashed
+            && st[0].2.crashes == 1
+            && h.plugins().server().unwrap().pid() != old_pid
+            && h.plugins().link(st[0].0).unwrap().opened().is_some()
     });
     let restart_ms = begun.elapsed().as_millis();
     let after = steady(&host, &pull, 0.5);
     let st = host.plugin_statuses();
     eprintln!(
-        "playing: {before:.2} dB; host killed (exit {exit:?}): {killed:.2} dB; restarted in {restart_ms} ms: {after:.2} dB; latency {} frames, wet {} dry {} late {} crashes {}",
+        "playing: {before:.2} dB; automatically restarted in {restart_ms} ms: {after:.2} dB; latency {} frames, wet {} dry {} late {} crashes {}",
         st[0].2.latency, st[0].2.wet_blocks, st[0].2.dry_blocks, st[0].2.misses, st[0].2.crashes
     );
     assert!((before - g.quiet_db).abs() < 0.1, "{before}");
-    assert!(killed.abs() < 0.1, "the dry sine plays on: {killed}");
     assert!(
         (after - g.quiet_db).abs() < 0.1,
         "the state came back: {after}"
@@ -813,48 +814,78 @@ fn a_host_that_goes_down_leaves_the_plugins_on_the_other_hosts_playing() {
 
     // The two sines add up in phase: both quiet, or one dry and one quiet.
     let q = 10f64.powf(g.quiet_db / 20.0);
-    let (both, one_dry) = (db(2.0 * q), db(1.0 + q));
+    let both = db(2.0 * q);
     let playing = steady(&host, &pull, 0.5);
 
-    // The dedicated host goes down: only its plugin plays dry.
+    // The dedicated host goes down while the other host keeps processing.
     dedicated.kill();
     assert!(dedicated.wait_down(GUARD));
     let wet_before = status(&host, ib).wet_blocks;
-    let dedicated_down = steady(&host, &pull, 0.5);
+    wait_for(&mut host, "the dedicated host to return", |h| {
+        !status(h, ia).crashed && status(h, ia).crashes == 1
+    });
+    let dedicated_returned = steady(&host, &pull, 0.5);
     assert!(
         status(&host, ib).wet_blocks > wet_before,
         "the shared host plays on"
     );
-    assert_eq!(crashed(&host), (true, false));
+    assert_eq!(crashed(&host), (false, false));
     assert!(!shared.crashed());
 
-    // A restart brings back the host that went down, and only that one.
+    // Only the affected host restarted.
     let shared_pid = shared.pid();
-    host.restart_plugins().unwrap();
-    wait_for(&mut host, "the dedicated host back", |h| {
-        crashed(h) == (false, false)
-    });
     assert_eq!(shared.pid(), shared_pid, "the shared host was left alone");
-    let restarted = steady(&host, &pull, 0.5);
 
     // And the reverse: the shared host goes down, the dedicated one plays on.
     shared.kill();
     assert!(shared.wait_down(GUARD));
     let wet_before = status(&host, ia).wet_blocks;
-    let shared_down = steady(&host, &pull, 0.5);
+    wait_for(&mut host, "the shared host to return", |h| {
+        !status(h, ib).crashed && status(h, ib).crashes == 1
+    });
+    let shared_returned = steady(&host, &pull, 0.5);
     assert!(
         status(&host, ia).wet_blocks > wet_before,
         "the dedicated host plays on"
     );
-    assert_eq!(crashed(&host), (false, true));
+    assert_eq!(crashed(&host), (false, false));
     assert!(!dedicated.crashed());
     eprintln!(
-        "two hosts: both playing {playing:.2} dB (expected {both:.2}); dedicated killed {dedicated_down:.2} dB, restarted {restarted:.2} dB, shared killed {shared_down:.2} dB (expected {one_dry:.2})"
+        "two hosts: both playing {playing:.2} dB (expected {both:.2}); dedicated returned {dedicated_returned:.2} dB, shared returned {shared_returned:.2} dB"
     );
     assert!((playing - both).abs() < 0.1, "{playing}");
-    assert!((dedicated_down - one_dry).abs() < 0.1, "{dedicated_down}");
-    assert!((restarted - both).abs() < 0.1, "{restarted}");
-    assert!((shared_down - one_dry).abs() < 0.1, "{shared_down}");
+    assert!(
+        (dedicated_returned - both).abs() < 0.1,
+        "{dedicated_returned}"
+    );
+    assert!((shared_returned - both).abs() < 0.1, "{shared_returned}");
+    // A second failure recovers automatically; the third in one minute waits
+    // for the existing manual restart command. The unaffected host keeps working.
+    shared.kill();
+    assert!(shared.wait_down(GUARD));
+    wait_for(&mut host, "the second automatic recovery", |h| {
+        !status(h, ib).crashed && status(h, ib).crashes == 2
+    });
+    let wet_before = status(&host, ia).wet_blocks;
+    shared.kill();
+    assert!(shared.wait_down(GUARD));
+    wait_for(&mut host, "the third failure to stay down", |h| {
+        status(h, ib).crashed && status(h, ib).crashes == 3
+    });
+    assert!(status(&host, ia).wet_blocks > wet_before);
+    assert!(shared.pid().is_none());
+    let one_dry = db(1.0 + q);
+    let paused = steady(&host, &pull, 0.5);
+    assert!((paused - one_dry).abs() < 0.1, "{paused}");
+    host.restart_plugins().unwrap();
+    wait_for(&mut host, "the manual restart", |h| {
+        !status(h, ib).crashed && shared.pid().is_some()
+    });
+    let manually_restarted = steady(&host, &pull, 0.5);
+    assert!(
+        (manually_restarted - both).abs() < 0.1,
+        "{manually_restarted}"
+    );
     // Killed from outside, neither plugin is to blame.
     assert!(
         host.plugins()

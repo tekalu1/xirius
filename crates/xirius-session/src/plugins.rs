@@ -1349,12 +1349,12 @@ impl PluginLoader {
             PluginIsolation::Dedicated => self
                 .dedicated
                 .entry(id)
-                .or_insert_with(|| PluginServer::new(Some(host)))
+                .or_insert_with(|| PluginServer::automatic(Some(host)))
                 .clone(),
             _ => self
                 .groups
                 .entry(Self::host_group(entry, self.catalog.as_deref()))
-                .or_insert_with(|| PluginServer::new(Some(host)))
+                .or_insert_with(|| PluginServer::automatic(Some(host)))
                 .clone(),
         }
     }

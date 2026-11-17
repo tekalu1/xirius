@@ -1386,6 +1386,7 @@ pub struct PluginServer {
 
 struct Inner {
     host: Option<PathBuf>,
+    auto_restart: bool,
     state: Mutex<State>,
     changed: Condvar,
     /// The newest host generation that has gone down; 0 when none has.
@@ -1400,8 +1401,10 @@ struct State {
     epoch: u64,
     starting: bool,
     crashed: bool,
+    recovering: bool,
     exit_code: Option<u32>,
     crashes: u64,
+    recent_crashes: VecDeque<Instant>,
     /// The newest host generation whose start was refused (wrong protocol, no greeting): its
     /// ending is not a crash, whenever it is seen.
     refused: u64,
@@ -1482,9 +1485,19 @@ impl SlotRec {
 impl PluginServer {
     /// A server that runs `host`; `None` makes every plugin fail to open.
     pub fn new(host: Option<PathBuf>) -> PluginServer {
+        Self::with_restart(host, false)
+    }
+
+    /// A product host returns automatically after its first two crashes in a minute.
+    pub fn automatic(host: Option<PathBuf>) -> PluginServer {
+        Self::with_restart(host, true)
+    }
+
+    fn with_restart(host: Option<PathBuf>, auto_restart: bool) -> PluginServer {
         PluginServer {
             inner: Arc::new(Inner {
                 host,
+                auto_restart,
                 state: Mutex::new(State {
                     next_slot: 1,
                     ..State::default()
@@ -1533,7 +1546,7 @@ impl PluginServer {
         let rings = st.slots.get(&slot).and_then(|s| s.rings.as_ref());
         let l = link.lock();
         PluginStatus {
-            crashed: st.crashed || poisoned,
+            crashed: st.crashed || st.recovering || poisoned,
             error: l.heard.error.clone(),
             exit_code: st.exit_code,
             crashes: st.crashes,
@@ -2136,7 +2149,8 @@ impl PluginServer {
     /// Starts a new host and opens every plugin again with its last state and parameters.
     /// The plugins take over from the dry signal as they come back.
     pub fn restart(&self) -> Result<(), String> {
-        let st = self.inner.lock();
+        let mut st = self.inner.lock();
+        st.recent_crashes.clear();
         self.inner.restart(st, true)
     }
 
@@ -2145,14 +2159,22 @@ impl PluginServer {
     /// is back, and a plugin that cannot be opened says so in its link, as it does when it is
     /// opened first.
     pub fn restart_later(&self) -> Result<(), String> {
+        self.queue_restart(true)
+    }
+
+    fn queue_restart(&self, manual: bool) -> Result<(), String> {
         let inner = self.inner.clone();
         std::thread::Builder::new()
             .name("xirius-plugin-restart".into())
             .spawn(move || {
-                let st = inner.lock();
+                let mut st = inner.lock();
+                if manual {
+                    st.recent_crashes.clear();
+                }
                 if let Err(error) = inner.restart(st, false) {
                     let mut st = inner.lock();
                     st.crashed = true;
+                    st.recovering = false;
                     for (&slot, rec) in &st.slots {
                         rec.link
                             .set_open_result(st.seat_of(&rec.link, slot), &Err(error.clone()));
@@ -2344,9 +2366,10 @@ impl Inner {
         })
     }
 
-    fn went_down(&self, epoch: u64, code: Option<u32>, asked: bool, hung: bool) {
+    fn went_down(self: &Arc<Self>, epoch: u64, code: Option<u32>, asked: bool, hung: bool) {
         self.down_epoch.fetch_max(epoch, Ordering::AcqRel);
         let mut st = self.lock();
+        let mut restart = false;
         if st.epoch == epoch {
             if st.starting {
                 st.ended_early = Some((code, asked, hung));
@@ -2354,10 +2377,19 @@ impl Inner {
                 // A refused start's host ends as asked for, whatever the watcher saw.
                 let asked = asked || st.refused == epoch;
                 st.count_down(epoch, code, asked, hung);
+                if !asked && self.auto_restart {
+                    restart = st.record_auto_restart(Instant::now());
+                }
             }
         }
         drop(st);
         self.changed.notify_all();
+        if restart {
+            let server = PluginServer {
+                inner: self.clone(),
+            };
+            let _ = server.queue_restart(false);
+        }
     }
 
     fn dispatch(&self, epoch: u64, msg: FromHost) {
@@ -2586,6 +2618,7 @@ impl Inner {
             }
         }
         st.crashed = false;
+        st.recovering = true;
         st.exit_code = None;
         st.replies.clear();
         let mut slots: Vec<u32> = st
@@ -2595,10 +2628,18 @@ impl Inner {
             .map(|(&s, _)| s)
             .collect();
         if slots.is_empty() {
+            st.recovering = false;
+            return Ok(());
+        }
+        st = self.spawn(st)?;
+        // The lock is released while the process starts. A caller may close a
+        // plugin in that interval, so reopen only slots that still exist.
+        slots.retain(|slot| st.slots.get(slot).is_some_and(|rec| !rec.poisoned));
+        if slots.is_empty() {
+            st.recovering = false;
             return Ok(());
         }
         slots.sort_unstable();
-        st = self.spawn(st)?;
         let epoch = st.epoch;
         st.fresh_instances(&slots);
         for &slot in &slots {
@@ -2642,8 +2683,10 @@ impl Inner {
             }
         }
         if errors.is_empty() {
+            st.recovering = false;
             Ok(())
         } else {
+            st.recovering = false;
             Err(errors.join("; "))
         }
     }
@@ -2732,10 +2775,19 @@ fn merge_state(
     replay
 }
 impl State {
+    /// The third crash within a minute needs an explicit restart.
+    fn record_auto_restart(&mut self, now: Instant) -> bool {
+        self.recent_crashes
+            .retain(|at| now.duration_since(*at) < Duration::from_secs(60));
+        self.recent_crashes.push_back(now);
+        self.recent_crashes.len() < 3
+    }
+
     /// The host of generation `epoch` is gone: the plugins in it play dry, and unless it was
     /// asked to end, that was a crash.
     fn count_down(&mut self, epoch: u64, code: Option<u32>, asked: bool, hung: bool) {
         self.proc = None;
+        self.recovering = false;
         self.retire_process();
         self.closing.clear();
         if !asked {
@@ -3078,6 +3130,21 @@ impl State {
             p.stop.store(KILL, Ordering::Release);
             false
         })
+    }
+}
+
+#[cfg(test)]
+mod auto_restart_tests {
+    use super::*;
+
+    #[test]
+    fn third_crash_in_a_minute_requires_a_manual_restart() {
+        let mut state = State::default();
+        let start = Instant::now();
+        assert!(state.record_auto_restart(start));
+        assert!(state.record_auto_restart(start + Duration::from_secs(10)));
+        assert!(!state.record_auto_restart(start + Duration::from_secs(20)));
+        assert!(state.record_auto_restart(start + Duration::from_secs(80)));
     }
 }
 
