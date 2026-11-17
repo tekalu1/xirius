@@ -1,22 +1,21 @@
 //! Page-backed POSIX shared memory for immutable ARA audio.
 
 use std::ffi::{CString, c_char, c_int, c_void};
+use std::fs::File;
 use std::io;
+use std::os::fd::{FromRawFd, IntoRawFd};
 
-const O_RDONLY: c_int = 0;
 const O_RDWR: c_int = 2;
 const O_CREAT: c_int = 0x0200;
 const O_EXCL: c_int = 0x0800;
 const PROT_READ: c_int = 1;
 const PROT_WRITE: c_int = 2;
 const MAP_SHARED: c_int = 1;
-const SEEK_END: c_int = 2;
 
 unsafe extern "C" {
     fn shm_open(name: *const c_char, flags: c_int, mode: u32) -> c_int;
     fn shm_unlink(name: *const c_char) -> c_int;
     fn ftruncate(fd: c_int, size: i64) -> c_int;
-    fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64;
     fn mmap(
         addr: *mut c_void,
         len: usize,
@@ -74,7 +73,7 @@ impl Mapping {
     pub(super) fn open(text: &str) -> io::Result<Self> {
         let name = name(text);
         // SAFETY: terminated name; the returned descriptor belongs here.
-        let fd = unsafe { shm_open(name.as_ptr(), O_RDONLY, 0) };
+        let fd = unsafe { shm_open(name.as_ptr(), O_RDWR, 0) };
         if fd < 0 {
             let error = io::Error::last_os_error();
             return Err(io::Error::new(
@@ -82,17 +81,16 @@ impl Mapping {
                 format!("ARA audio shm_open(open): {error}"),
             ));
         }
-        let len = unsafe { lseek(fd, 0, SEEK_END) };
-        if len < super::HEADER as i64 || len > isize::MAX as i64 {
-            unsafe {
-                close(fd);
-            }
+        // The size of a shared memory object is metadata, not its seek position.
+        let file = unsafe { File::from_raw_fd(fd) };
+        let len = file.metadata()?.len();
+        if len < super::HEADER as u64 || len > isize::MAX as u64 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "short ARA audio mapping",
+                format!("invalid ARA audio mapping length: {len}"),
             ));
         }
-        Self::map(fd, len as usize, PROT_READ, None)
+        Self::map(file.into_raw_fd(), len as usize, PROT_READ, None)
     }
 
     fn map(fd: c_int, len: usize, prot: c_int, owner: Option<CString>) -> io::Result<Self> {

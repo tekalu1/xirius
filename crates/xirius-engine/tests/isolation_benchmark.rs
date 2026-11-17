@@ -52,7 +52,7 @@ impl Drop for FixtureFile {
 
 fn fixture() -> FixtureFile {
     xirius_test_clap::fixture_marker();
-    let bundle = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+    let bundle = std::env::temp_dir().join(format!(
         "isolation-{}-{}.clap",
         std::process::id(),
         COPY.fetch_add(1, Ordering::Relaxed)
