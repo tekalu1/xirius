@@ -3242,7 +3242,7 @@ status = "done"
 
 [[item]]
 id = "SET-008"
-title = "編集の設定の既定を合わせる（空白部分のクリックで再生位置を移動＝入、edit.arrange.link＝切で新しい曲の Link と合わせる）。まだ効かない設定は、作るまで設定の画面から隠す（再生位置を編集位置に合わせる・MCP の接続を受け付ける範囲・プラグインの既定のプロセス）"
+title = "編集の設定の既定を合わせ、まだ効かない設定は作るまで画面から隠す"
 area = "SET"
 phase = "v1"
 source = "reports/06-editing-feel.md § 3.7"
@@ -3792,7 +3792,7 @@ status = "done"
 
 [[item]]
 id = "PLG-022"
-title = "旧方針: プラグインは同じプロセスを既定とし、不安定なものだけ別プロセス（共有か専用）を選べる"
+title = "旧方針: プラグインの実行方式を選べる。既定の分け方は PLG-078 で更新する"
 area = "PLG"
 phase = "v1"
 source = "reports/02-audio-plugin-license.md § 3.3"
@@ -6669,7 +6669,7 @@ phase = "v1"
 source = "2026-11-17 の持ち主の決定"
 done_when = "VST3・CLAP・ARA が別プロセスだけで動き、48 kHz・128 サンプル・試験用プラグイン 20 個の生演奏 10 分で音切れ 0 回、追加遅延 0 サンプルになる"
 status = "partial"
-remaining = "音声装置での検証、macOS の CI と実機検証、既定の分け方と自動再起動、アプリ内経路の撤去が残る。同じホストに続くプラグインの一往復処理はこの作業の外とし、測定で必要になったときに検討する"
+remaining = "音声装置と macOS 実機での検証、メーカーごとの既定の分け方と専用の選択、古い設定の読み替え、落ちたホストの自動再起動、アプリ内経路の撤去が残る。同じホストに続くプラグインの一往復処理はこの作業の外とし、測定で必要になったときに検討する"
 
 [[open]]
 id = "OPEN-01"
@@ -6681,8 +6681,8 @@ source = "reports/01-ui-framework.md"
 id = "OPEN-02"
 title = "プラグインを動かすプロセスの単位"
 proposal = "種類ごとに 1 プロセス（VST3 用・CLAP 用）。ARA は同じプロセスで動かす"
-decided = "2026-10-19: 種類ごとに 1 プロセス（PluginIsolation: inprocess / shared / dedicated。ARA は同じプロセス）"
-source = "reports/02-audio-plugin-license.md"
+decided = "2026-11-17: 外部プラグインはメーカーごとに 1 プロセス。空のメーカーはファイルの親フォルダーごと。個別に専用を選べる。ARA は専用の制御経路を使う"
+source = "2026-11-17 の持ち主の決定"
 [[open]]
 id = "OPEN-03"
 title = "ASIO の契約"
