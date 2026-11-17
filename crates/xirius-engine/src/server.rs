@@ -7,16 +7,9 @@
 //! also carries what the instance reports (edits in its editor, state, latency) and counters
 //! the UI can read.
 //!
-//! The audio side never waits in real time. Each block it writes the input into the "in" ring,
-//! wakes the host and reads the same number of frames from the "out" ring, which runs `L`
-//! frames ahead. The host has that long for each block; the plugin is reported to the mix as
-//! `L` plus its own latency, so delay compensation (ENG-010) lines the other tracks up. When
-//! the host has not delivered, the block gets the dry input delayed by the same amount, so the
-//! sound goes on in time. When the host process ends or stays late for half a second, every
-//! plugin of the server plays dry until [`PluginServer::restart`], which starts a new host
-//! and opens every instance again with its last state. Offline rendering waits for the host
-//! instead, with `L` of one block, so the host works on one block while the mix works on the
-//! next (PLG-024) and the result is exact.
+//! On Windows the audio side waits for each block from the host, adding no latency of its own.
+//! A host that fails to answer within the stall bound is bypassed until restart. On macOS the
+//! current polling signal still uses the buffered path until its replacement is available.
 //!
 //! A host that goes down is put on the plugin that took it down, when that can be told: the
 //! host marks the shared memory of the plugin it crashed in, and the audio side knows which
@@ -40,7 +33,7 @@ use xirius_vst3::{Caption, ParamChange, PluginState};
 
 use crate::processor::{AudioIo, NoteEvent, NoteKind, ProcessSetup, Processor, RenderMode};
 use crate::sandbox::{
-    Event, NOTE_CAPACITY, NOTE_CONTROL, NOTE_PARAM, NoteRecord, Ring, SharedRings,
+    Event, NOTE_CAPACITY, NOTE_CONTROL, NOTE_PARAM, NoteRecord, Ring, SharedRings, TimingSnapshot,
 };
 use crate::wire::{self, Fault, FromHost, Gesture, OpenSlot, Opened, ToHost};
 
@@ -57,12 +50,21 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(30);
 /// can hold a working host back for seconds; giving up on it would leave the rest of the
 /// render dry.
 const OFFLINE_TIMEOUT: Duration = Duration::from_secs(10);
+/// A host that does not answer within this bound is treated as stalled. A normally slow
+/// plugin is still awaited inside its block.
+const LIVE_TIMEOUT: Duration = Duration::from_millis(250);
+const SPIN_WAIT: Duration = Duration::from_micros(30);
 /// Frames over which a restarted plugin takes over from the dry signal.
 const FADE: u32 = 256;
 /// Parameter edits kept for the caller before the oldest are dropped.
 const MAX_PARAM_EDITS: usize = 65_536;
 static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(1);
-/// The real-time `L` when none is given: two of the session's blocks.
+/// Windows answers each block before returning to the audio callback.
+#[cfg(windows)]
+pub const DEFAULT_LATENCY: u32 = 0;
+/// The current macOS signal polls every millisecond; it retains the buffered path until
+/// a low-latency cross-process signal is available.
+#[cfg(target_os = "macos")]
 pub const DEFAULT_LATENCY: u32 = 1024;
 
 /// The `xirius-plugin-host` executable: `XIRIUS_PLUGIN_HOST`, else next to this program or
@@ -136,12 +138,16 @@ pub struct PluginStatus {
     /// Host processes this plugin took down: it crashed inside the plugin, or the plugin
     /// stalled the audio until the host was stopped.
     pub faults: u64,
-    /// Frames the plugin adds to the mix: `L` plus the plugin's own latency.
+    /// Frames the plugin adds to the mix.
     pub latency: u32,
     pub wet_blocks: u64,
     pub dry_blocks: u64,
     /// Blocks the host had not delivered in time while it was in use.
     pub misses: u64,
+    pub deadline_overruns: u64,
+    pub timeouts: u64,
+    pub roundtrip: TimingSnapshot,
+    pub host_time: TimingSnapshot,
     pub editor_open: bool,
 }
 
@@ -1502,6 +1508,7 @@ impl PluginServer {
         let st = self.inner.lock();
         let slot = link.slot.load(Ordering::Acquire);
         let poisoned = st.slots.get(&slot).is_some_and(|s| s.poisoned);
+        let rings = st.slots.get(&slot).and_then(|s| s.rings.as_ref());
         let l = link.lock();
         PluginStatus {
             crashed: st.crashed || poisoned,
@@ -1513,6 +1520,15 @@ impl PluginServer {
             wet_blocks: link.wet_blocks.load(Ordering::Relaxed),
             dry_blocks: link.dry_blocks.load(Ordering::Relaxed),
             misses: link.misses.load(Ordering::Relaxed),
+            deadline_overruns: rings
+                .map_or(0, |r| r.header().deadline_overruns.load(Ordering::Relaxed)),
+            timeouts: rings.map_or(0, |r| r.header().timeouts.load(Ordering::Relaxed)),
+            roundtrip: rings.map_or(TimingSnapshot::default(), |r| {
+                r.header().roundtrip.snapshot()
+            }),
+            host_time: rings.map_or(TimingSnapshot::default(), |r| {
+                r.header().host_time.snapshot()
+            }),
             editor_open: l.editor_open,
         }
     }
@@ -3097,7 +3113,8 @@ pub struct RemotePlugin {
     stalled: u64,
     stall_frames: u64,
     late_frames: u64,
-    /// Out frames owed by blocks that already went dry; dropped when they arrive.
+    /// Buffered macOS output owed by blocks that already went dry.
+    #[cfg(target_os = "macos")]
     debt: u64,
     out_read: u64,
     /// Frames of a restarted instance still to cover with the dry signal, then the fade.
@@ -3180,6 +3197,7 @@ impl RemotePlugin {
             stalled: 0,
             stall_frames: 0,
             late_frames: 0,
+            #[cfg(target_os = "macos")]
             debt: 0,
             out_read: 0,
             warm: 0,
@@ -3305,8 +3323,8 @@ impl RemotePlugin {
             .store(self.epoch, Ordering::Release);
     }
 
-    /// Sends this block to the host and fills `io` with what it returned `L` frames ago. False
-    /// when that is not there (the caller plays the dry signal).
+    /// Sends this block to the host. Windows waits for its answer; the buffered path reads
+    /// output `L` frames behind. False means the caller plays the dry signal.
     fn pull_wet(&mut self, io: &mut AudioIo<'_>, events: &[NoteEvent]) -> bool {
         let n = io.frames() as u64;
         let Some(conn) = &self.conn else {
@@ -3379,30 +3397,64 @@ impl RemotePlugin {
             conn.rings.push_note(event);
         }
         h.in_write.store(w + n, Ordering::Release);
+        let requested_at = Instant::now();
         conn.req.set();
 
+        let record_roundtrip = || {
+            let ns = requested_at.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+            h.roundtrip.record(ns);
+            if ns as f64 > n as f64 * 1_000_000_000.0 / h.sample_rate {
+                h.deadline_overruns.fetch_add(1, Ordering::Relaxed);
+            }
+        };
+
+        #[cfg(target_os = "macos")]
         let need = self.debt + n;
+        #[cfg(windows)]
+        let need = n;
         let mut available = h.out_write.load(Ordering::Acquire) - self.out_read;
-        if self.offline {
-            // Rendering offline may wait; give up after a while so a hung host cannot hang it.
+        if self.l == 0 || self.offline {
+            // Wait for this block, with a short spin before sleeping on the host's signal.
+            // A slow but live plugin is given the full stall bound, even if it misses the
+            // device deadline. The down check keeps a crashed host from holding the callback.
             let started = Instant::now();
+            let timeout = if self.offline {
+                OFFLINE_TIMEOUT
+            } else {
+                LIVE_TIMEOUT
+            };
             while available < need {
                 if self.server.inner.down_epoch.load(Ordering::Acquire) >= self.epoch {
+                    record_roundtrip();
                     return false;
                 }
-                if started.elapsed() > OFFLINE_TIMEOUT {
+                let elapsed = started.elapsed();
+                if elapsed >= timeout {
+                    self.link.misses.fetch_add(1, Ordering::Relaxed);
+                    h.timeouts.fetch_add(1, Ordering::Relaxed);
+                    record_roundtrip();
                     self.stall();
                     return false;
                 }
-                conn.done.wait(10);
+                if elapsed >= SPIN_WAIT {
+                    conn.done.wait(1);
+                } else {
+                    std::hint::spin_loop();
+                }
                 available = h.out_write.load(Ordering::Acquire) - self.out_read;
             }
         }
-        // Frames for blocks that already went dry are dropped as they arrive.
-        let stale = self.debt.min(available);
-        self.out_read += stale;
-        self.debt -= stale;
-        available -= stale;
+        if self.l == 0 || self.offline {
+            record_roundtrip();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // Buffered frames for blocks that went dry are dropped when they arrive.
+            let stale = self.debt.min(available);
+            self.out_read += stale;
+            self.debt -= stale;
+            available -= stale;
+        }
 
         let wet = available >= n;
         let mut stalled = false;
@@ -3412,7 +3464,10 @@ impl RemotePlugin {
             self.out_read += n;
             self.late_frames = 0;
         } else {
-            self.debt += n;
+            #[cfg(target_os = "macos")]
+            {
+                self.debt += n;
+            }
             self.late_frames += n;
             self.link.misses.fetch_add(1, Ordering::Relaxed);
             stalled = self.late_frames > self.stall_frames;
@@ -3571,14 +3626,24 @@ impl RemotePlugin {
             .push((self.feed, producer));
         self.automation = Some(consumer);
         self.offline = setup.mode == RenderMode::Offline;
-        self.l = if self.offline {
-            setup.max_block as u32
-        } else {
-            self.spec.latency.max(setup.max_block as u32)
-        };
+        #[cfg(windows)]
+        {
+            self.l = 0;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            self.l = if self.offline {
+                setup.max_block as u32
+            } else {
+                self.spec.latency.max(setup.max_block as u32)
+            };
+        }
         self.stall_frames = (setup.sample_rate / 2.0) as u64;
         self.late_frames = 0;
-        self.debt = 0;
+        #[cfg(target_os = "macos")]
+        {
+            self.debt = 0;
+        }
         self.out_read = 0;
         self.epoch = 0;
         self.stalled = 0;
@@ -3668,7 +3733,10 @@ impl RemotePlugin {
         if ready != self.epoch {
             // A fresh instance: the first one, or one after a restart.
             self.out_read = h.out_read.load(Ordering::Acquire);
-            self.debt = 0;
+            #[cfg(target_os = "macos")]
+            {
+                self.debt = 0;
+            }
             self.late_frames = 0;
             if self.late_first && self.epoch == 0 {
                 self.late_first = false;

@@ -1,6 +1,6 @@
-//! Plugins in the host process (OPEN-02, PLG-022/023/024/052). Offline they match the plugin
-//! in-process exactly, delayed by one block that delay compensation lines up; in real time a
-//! host that crashes, hangs or cannot load leaves the dry signal playing, and a restart brings
+//! Plugins in the host process (OPEN-02, PLG-022/023/024/052/078). On Windows the host's
+//! output arrives in the same block; macOS retains the buffered path. A host that crashes,
+//! hangs or cannot load leaves the dry signal playing, and a restart brings
 //! the plugin back with the state it had. Nothing goes to a device. Tests that need an
 //! installed plugin skip when it is missing.
 //!
@@ -31,8 +31,11 @@ use crash_records::CrashRecords;
 
 const RATE: f64 = 48_000.0;
 const BLOCK: usize = 256;
-/// `L` in real time.
-const RT_LATENCY: usize = 1024;
+const RT_LATENCY: usize = xirius_engine::server::DEFAULT_LATENCY as usize;
+#[cfg(windows)]
+const OFFLINE_LATENCY: usize = 0;
+#[cfg(target_os = "macos")]
+const OFFLINE_LATENCY: usize = BLOCK;
 /// kHs Gain's "Gain" parameter at 0.3 is -12 dB.
 const GAIN_PARAM: (u32, f64) = (1, 0.3);
 const SINE_RMS: f64 = 0.353_553;
@@ -383,7 +386,7 @@ fn offline_the_remote_plugin_matches_the_plugin_in_process_faster_than_real_time
         let took = t.elapsed();
         ((wet, latency, opened, took), server.status(&link))
     });
-    assert_eq!(latency as usize, BLOCK, "one block of delay offline");
+    assert_eq!(latency as usize, OFFLINE_LATENCY);
 
     let (mut audio, _) = engine_for(
         vec![sine_track(
@@ -395,8 +398,8 @@ fn offline_the_remote_plugin_matches_the_plugin_in_process_faster_than_real_time
     let mut dry = Vec::new();
     render(&mut audio, &mut dry, frames, false, |_| {});
 
-    assert!(wet[..BLOCK].iter().all(|&x| x == 0.0));
-    let max_diff = wet[BLOCK..]
+    assert!(wet[..OFFLINE_LATENCY].iter().all(|&x| x == 0.0));
+    let max_diff = wet[OFFLINE_LATENCY..]
         .iter()
         .zip(&dry)
         .map(|(a, b)| (a - b).abs())
@@ -425,7 +428,7 @@ fn delay_compensation_lines_the_remote_plugin_up_to_the_sample() {
         return;
     };
     for (mode, l) in [
-        (RenderMode::Offline, BLOCK),
+        (RenderMode::Offline, OFFLINE_LATENCY),
         (RenderMode::Realtime, RT_LATENCY),
     ] {
         let run = || {
@@ -488,7 +491,7 @@ fn offline_a_crash_leaves_the_dry_signal_playing() {
     assert!(st.crashed);
     // STATUS_ACCESS_VIOLATION
     assert_eq!(st.exit_code, Some(0xC000_0005));
-    assert_continuous(&out, BLOCK);
+    assert_continuous(&out, OFFLINE_LATENCY);
     // Wet (-12 dB) before the crash, dry (unity) after it.
     let early = rms(&out[BLOCK + 2048..BLOCK + 4096]);
     let tail = rms(&out[frames - RATE as usize / 2..]);
@@ -515,7 +518,7 @@ fn a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_back(mode: Rende
     let server = server();
     let (plugin, link) = remote(&server, bundle, &[]);
     let (mut audio, latency) = engine_for(vec![sine_track(0.5, Some(Box::new(plugin)))], mode);
-    let l = if paced { RT_LATENCY } else { BLOCK };
+    let l = if paced { RT_LATENCY } else { OFFLINE_LATENCY };
     assert_eq!(latency as usize, l);
     let mut out = Vec::new();
     render(&mut audio, &mut out, RATE as usize / 2, paced, |_| {});
@@ -636,7 +639,7 @@ fn a_hung_host_is_killed_and_bypassed() {
     // Down means the watcher killed it.
     render_until_down(&mut audio, &mut out, &server, RATE as usize / 2);
     assert!(server.status(&link).crashed);
-    assert_continuous(&out, BLOCK);
+    assert_continuous(&out, OFFLINE_LATENCY);
     assert!((rms(&out[out.len() - RATE as usize / 2..]) / SINE_RMS - 1.0).abs() < 1e-3);
 }
 

@@ -137,6 +137,9 @@ fn a_clap_plugin_plays_in_the_host_with_its_parameters() {
     let server = PluginServer::new(Some(env!("CARGO_BIN_EXE_xirius-plugin-host").into()));
     let (plugin, link) = remote(&server, bundle("params"), &[("Gain", 0.5)]);
     let (mut audio, latency) = engine_for(plugin);
+    #[cfg(windows)]
+    assert_eq!(latency, 0);
+    #[cfg(target_os = "macos")]
     assert_eq!(latency as usize, BLOCK);
     let mut out = Vec::new();
     let wet = wet_level(&mut audio, &mut out, &server, &link);

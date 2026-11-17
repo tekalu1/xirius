@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_design::{FontSize, Layout, Radius, Weight};
+use xirius_engine::server::PluginStatus;
 use xirius_engine::timing::Timings;
 use xirius_session::perf::{Heavy, PluginLoad, Run, loads};
 
@@ -34,7 +35,7 @@ pub const W: f32 = 452.0;
 /// The most rows shown at once; the wheel moves on.
 pub const ROWS: usize = 10;
 const PAD: f32 = 12.0;
-const ROW_H: f32 = 26.0;
+const ROW_H: f32 = 38.0;
 const CHECK_W: f32 = 32.0;
 const TRACK_W: f32 = 108.0;
 const LOAD_W: f32 = 96.0;
@@ -49,6 +50,8 @@ pub struct Perf {
     pub xruns: u64,
     /// The song's plugins, the heaviest first.
     pub rows: Vec<PluginLoad>,
+    /// Remote timing read outside the audio callback.
+    pub remote: BTreeMap<PluginId, PluginStatus>,
     pub heavy: Heavy,
     /// Readings in place of the host's, for tests and screenshots.
     pub fake: Option<Fake>,
@@ -93,6 +96,7 @@ pub struct Row {
     pub id: PluginId,
     pub track: TrackId,
     pub name: String,
+    pub roundtrip_p99_us: Option<u64>,
     pub track_name: String,
     pub run: Run,
     pub percent: u32,
@@ -133,6 +137,7 @@ pub enum CLook {
     },
     Row {
         track: String,
+        roundtrip_p99_us: Option<u64>,
         percent: u32,
         run: Run,
         heavy: bool,
@@ -194,6 +199,7 @@ pub fn cells(v: Option<&View>, offset: usize) -> Vec<Cell> {
                 Rect::new(PAD + CHECK_W, y, inner - CHECK_W, ROW_H),
                 Look::Cpu(CLook::Row {
                     track: r.track_name.clone(),
+                    roundtrip_p99_us: r.roundtrip_p99_us,
                     percent: r.percent,
                     run: r.run,
                     heavy: r.heavy,
@@ -246,6 +252,7 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &CLook, hot: bool) {
         }
         CLook::Row {
             track,
+            roundtrip_p99_us,
             percent,
             run,
             heavy,
@@ -263,7 +270,7 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &CLook, hot: bool) {
             } else {
                 c.ink
             };
-            let name = Rect::new(r.x + 4.0, r.y, name_w - 8.0, r.h);
+            let name = Rect::new(r.x + 4.0, r.y, name_w - 8.0, 24.0);
             pen.mask(name, |pen| {
                 pen.text(
                     &cell.text,
@@ -274,6 +281,16 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &CLook, hot: bool) {
                     Align::Left,
                 );
             });
+            if let Some(us) = roundtrip_p99_us {
+                pen.text(
+                    &format!("往復 p99 {us} µs"),
+                    FontSize::Micro,
+                    Weight::Regular,
+                    c.ink,
+                    Rect::new(name.x, r.y + 20.0, name.w, 16.0),
+                    Align::Left,
+                );
+            }
             let mut x = r.x + name_w;
             if *run == Run::Frozen {
                 pen.icon("freeze", Rect::new(x, r.y + 6.0, 14.0, 14.0), c.ink);
@@ -366,7 +383,7 @@ impl Studio {
 
     fn read_perf(&mut self) -> bool {
         let project = self.project();
-        let (load, xruns, mut rows) = match self.perf.fake.clone() {
+        let (load, xruns, mut rows, remote) = match self.perf.fake.clone() {
             Some(f) => {
                 let mut rows = loads(&project, &Timings::new(), None);
                 for r in &mut rows {
@@ -378,15 +395,25 @@ impl Studio {
                     }
                 }
                 order(&mut rows);
-                (f.load, f.xruns, rows)
+                (f.load, f.xruns, rows, BTreeMap::new())
             }
             None => match self.transport.host_mut() {
                 Some(h) => {
                     let cpu = h.cpu();
                     let timings = h.plugin_timings();
-                    (cpu.load, cpu.xruns, loads(&project, &timings, None))
+                    let remote = h
+                        .plugin_statuses()
+                        .into_iter()
+                        .map(|(id, _, status)| (id, status))
+                        .collect();
+                    (cpu.load, cpu.xruns, loads(&project, &timings, None), remote)
                 }
-                None => (0.0, 0, loads(&project, &Timings::new(), None)),
+                None => (
+                    0.0,
+                    0,
+                    loads(&project, &Timings::new(), None),
+                    BTreeMap::new(),
+                ),
             },
         };
         let heavy_before = self.perf.heavy.len();
@@ -404,7 +431,7 @@ impl Studio {
             .map(|r| (r.id, percent(r.reading.load), r.run))
             .collect();
         // The rows show on screen only in the open list; the bar and the marks show the rest.
-        let listed = signature != self.perf.signature
+        let listed = (signature != self.perf.signature || remote != self.perf.remote)
             && self.popup.as_ref().map(|p| p.kind) == Some(PopupKind::Perf);
         let changed = listed
             || percent(load) != percent(self.perf.load)
@@ -414,6 +441,7 @@ impl Studio {
         self.perf.load = load;
         self.perf.xruns = xruns;
         self.perf.rows = std::mem::take(&mut rows);
+        self.perf.remote = remote;
         self.perf.signature = signature;
         if changed && self.popup.as_ref().map(|p| p.kind) == Some(PopupKind::Perf) {
             self.refresh_popup();
@@ -434,6 +462,12 @@ impl Studio {
                     id: r.id,
                     track: r.track,
                     name: r.name.clone(),
+                    roundtrip_p99_us: self
+                        .perf
+                        .remote
+                        .get(&r.id)
+                        .filter(|s| s.roundtrip.count > 0)
+                        .map(|s| s.roundtrip.p99_ns / 1_000),
                     track_name: r.track_name.clone(),
                     run: r.run,
                     percent: percent(r.reading.load),

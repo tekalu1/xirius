@@ -1232,21 +1232,36 @@ pub(crate) fn stats_on(
     {
         return Err(CmdError::not_found(format!("トラック {t} がありません")));
     }
-    let (timings, crashed) = match &host {
-        Some(h) => (
-            h.plugin_timings(),
-            h.plugin_statuses()
-                .into_iter()
-                .filter(|(_, _, s)| s.crashed)
-                .map(|(id, _, _)| id)
-                .collect(),
-        ),
-        None => (Default::default(), Default::default()),
+    let (timings, statuses) = match &host {
+        Some(h) => (h.plugin_timings(), h.plugin_statuses()),
+        None => (Default::default(), Vec::new()),
     };
+    let crashed = statuses
+        .iter()
+        .filter(|(_, _, s)| s.crashed)
+        .map(|(id, _, _)| *id)
+        .collect();
     let rows = crate::perf::loads(p, &timings, only);
+    let mut plugin_rows = crate::perf::rows_json(&rows, &crashed);
+    for (row, value) in rows.iter().zip(&mut plugin_rows) {
+        let Some((_, _, status)) = statuses.iter().find(|(id, _, _)| *id == row.id) else {
+            continue;
+        };
+        let Some(object) = value.as_object_mut() else {
+            continue;
+        };
+        for (name, timing) in [("roundtrip", status.roundtrip), ("host", status.host_time)] {
+            object.insert(format!("{name}_count"), json!(timing.count));
+            object.insert(format!("{name}_p50_us"), json!(timing.p50_ns / 1_000));
+            object.insert(format!("{name}_p99_us"), json!(timing.p99_ns / 1_000));
+            object.insert(format!("{name}_max_us"), json!(timing.max_ns / 1_000));
+        }
+        object.insert("deadline_overruns".into(), json!(status.deadline_overruns));
+        object.insert("host_timeouts".into(), json!(status.timeouts));
+    }
     let data = json!({
         "playing": host.is_some(),
-        "plugins": crate::perf::rows_json(&rows, &crashed),
+        "plugins": plugin_rows,
     });
     let msg = if rows.is_empty() {
         "プラグインがありません".to_string()
@@ -1272,6 +1287,21 @@ pub(crate) fn stats_on(
                 r.reading.mean_us,
                 r.reading.max_us
             ));
+            if let Some((_, _, status)) = statuses.iter().find(|(id, _, _)| *id == r.id)
+                && status.roundtrip.count > 0
+            {
+                lines.push(format!(
+                    "  往復 p50/p99/最大 {} / {} / {} µs、ホスト {} / {} / {} µs、期限超過 {}、上限到達 {}",
+                    status.roundtrip.p50_ns / 1_000,
+                    status.roundtrip.p99_ns / 1_000,
+                    status.roundtrip.max_ns / 1_000,
+                    status.host_time.p50_ns / 1_000,
+                    status.host_time.p99_ns / 1_000,
+                    status.host_time.max_ns / 1_000,
+                    status.deadline_overruns,
+                    status.timeouts
+                ));
+            }
         }
         lines.join(
             "

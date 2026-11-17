@@ -4,8 +4,8 @@
 //! the notes and sets "req"; the host processes, writes the output and sets "done".
 //!
 //! Each ring has one writer and one reader, which publish their stream positions (in frames
-//! since the mapping was made) in the header. The out ring runs [`Header::latency`] frames
-//! ahead of the in ring, so the host has that long for every block (see [`crate::server`]).
+//! since the mapping was made) in the header. Windows waits for each block's output; the
+//! buffered path uses [`Header::latency`] frames of lead (see [`crate::server`]).
 
 use std::io;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -26,11 +26,75 @@ use windows_sys::Win32::System::Threading::{
 use crate::processor::{ProcessSetup, RenderMode};
 
 pub const MAGIC: u32 = u32::from_le_bytes(*b"XSBX");
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 /// The rings start here; the header fits well below.
 const RING_OFFSET: usize = 4096;
 /// Notes the engine can be ahead of the host.
 pub const NOTE_CAPACITY: usize = 1024;
+
+/// Lock-free, allocation-free timing distribution. Percentiles use powers-of-two nanosecond
+/// buckets; the maximum remains exact.
+#[repr(C)]
+pub struct Timing {
+    pub count: AtomicU64,
+    pub total_ns: AtomicU64,
+    pub max_ns: AtomicU64,
+    buckets: [AtomicU64; 64],
+}
+
+impl Timing {
+    fn new() -> Self {
+        Self {
+            count: AtomicU64::new(0),
+            total_ns: AtomicU64::new(0),
+            max_ns: AtomicU64::new(0),
+            buckets: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+
+    pub fn record(&self, ns: u64) {
+        let bucket = (63 - ns.max(1).leading_zeros()) as usize;
+        self.buckets[bucket].fetch_add(1, Ordering::Relaxed);
+        self.total_ns.fetch_add(ns, Ordering::Relaxed);
+        self.max_ns.fetch_max(ns, Ordering::Relaxed);
+        self.count.fetch_add(1, Ordering::Release);
+    }
+
+    pub fn snapshot(&self) -> TimingSnapshot {
+        let count = self.count.load(Ordering::Acquire);
+        let percentile = |numerator: u64| {
+            if count == 0 {
+                return 0;
+            }
+            let rank = count.saturating_mul(numerator).div_ceil(100);
+            let mut sum = 0;
+            for (i, bucket) in self.buckets.iter().enumerate() {
+                sum += bucket.load(Ordering::Relaxed);
+                if sum >= rank {
+                    return 1u64.checked_shl((i + 1) as u32).unwrap_or(u64::MAX);
+                }
+            }
+            0
+        };
+        let max_ns = self.max_ns.load(Ordering::Relaxed);
+        TimingSnapshot {
+            count,
+            total_ns: self.total_ns.load(Ordering::Relaxed),
+            p50_ns: percentile(50).min(max_ns),
+            p99_ns: percentile(99).min(max_ns),
+            max_ns,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TimingSnapshot {
+    pub count: u64,
+    pub total_ns: u64,
+    pub p50_ns: u64,
+    pub p99_ns: u64,
+    pub max_ns: u64,
+}
 
 #[repr(C)]
 pub struct Header {
@@ -61,6 +125,13 @@ pub struct Header {
     /// The time the plugin has spent processing them in the host, in ns (ENG-060). Added
     /// before `in_read` is published, so a reader that sees the frames sees their time.
     pub host_ns: AtomicU64,
+    /// Engine request-to-reply duration and host processing duration, per plugin instance.
+    pub roundtrip: Timing,
+    pub host_time: Timing,
+    /// Requests exceeding their block's nominal device time, including those eventually served.
+    pub deadline_overruns: AtomicU64,
+    /// Requests abandoned after the stall bound.
+    pub timeouts: AtomicU64,
     /// Notes the engine dropped because the note ring was full.
     pub notes_dropped: AtomicU64,
     /// The host process generation that crashed inside this instance's plugin, written by the
@@ -172,6 +243,10 @@ impl SharedRings {
                 note_read: AtomicU64::new(0),
                 host_blocks: AtomicU64::new(0),
                 host_ns: AtomicU64::new(0),
+                roundtrip: Timing::new(),
+                host_time: Timing::new(),
+                deadline_overruns: AtomicU64::new(0),
+                timeouts: AtomicU64::new(0),
                 notes_dropped: AtomicU64::new(0),
                 faulted: AtomicU64::new(0),
             });

@@ -42,8 +42,8 @@ use windows_sys::Win32::System::Diagnostics::Debug::{
 use windows_sys::Win32::System::ErrorReporting::{WER_FAULT_REPORTING_NO_UI, WerSetFlags};
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
-    AvSetMmThreadCharacteristicsW, GetCurrentProcess, OpenProcess, PROCESS_SYNCHRONIZE,
-    WaitForSingleObject,
+    AVRT_PRIORITY_HIGH, AvSetMmThreadCharacteristicsW, AvSetMmThreadPriority, GetCurrentProcess,
+    OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
 };
 #[cfg(windows)]
 use windows_sys::Win32::UI::HiDpi::{
@@ -971,11 +971,15 @@ fn run_audio(
 ) -> Audio {
     let h = rings.header();
     #[cfg(windows)]
-    if h.offline == 0 {
+    {
         let mut task = 0u32;
         let name: Vec<u16> = "Pro Audio".encode_utf16().chain(Some(0)).collect();
         // SAFETY: the name is NUL-terminated. Failing leaves a normal priority.
-        unsafe { AvSetMmThreadCharacteristicsW(name.as_ptr(), &mut task) };
+        let mmcss = unsafe { AvSetMmThreadCharacteristicsW(name.as_ptr(), &mut task) };
+        if !mmcss.is_null() {
+            // SAFETY: the handle was returned for this thread by MMCSS.
+            unsafe { AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_HIGH) };
+        }
     }
     let _ = up.send(());
     let max_block = h.max_block as usize;
@@ -986,7 +990,19 @@ fn run_audio(
     let mut controls: Vec<Control> = Vec::with_capacity(xirius_engine::sandbox::NOTE_CAPACITY);
     let mut params: Vec<ParamChange> = Vec::with_capacity(xirius_engine::sandbox::NOTE_CAPACITY);
     while !stop.load(Ordering::Acquire) {
-        req.wait(50);
+        #[cfg(windows)]
+        {
+            let spin_started = Instant::now();
+            while h.in_write.load(Ordering::Acquire) == h.in_read.load(Ordering::Relaxed)
+                && !stop.load(Ordering::Acquire)
+                && spin_started.elapsed() < Duration::from_micros(30)
+            {
+                std::hint::spin_loop();
+            }
+        }
+        if h.in_write.load(Ordering::Acquire) == h.in_read.load(Ordering::Relaxed) {
+            req.wait(50);
+        }
         loop {
             let read = h.in_read.load(Ordering::Relaxed);
             let n = (h.in_write.load(Ordering::Acquire) - read).min(max_block as u64) as usize;
@@ -1028,6 +1044,7 @@ fn run_audio(
             audio.process(&mut l[..n], &mut r[..n], &notes, &controls, &params);
             let ns = start.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
             h.host_ns.fetch_add(ns, Ordering::Relaxed);
+            h.host_time.record(ns);
             let write = h.out_write.load(Ordering::Relaxed);
             while write + n as u64 - h.out_read.load(Ordering::Acquire) > capacity {
                 if stop.load(Ordering::Acquire) {
