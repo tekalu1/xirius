@@ -253,11 +253,15 @@ mod tests {
         assert_eq!(reader.channel(0), &[1.0, 2.0]);
         assert_eq!(reader.channel(1), &[3.0, 4.0]);
         assert_eq!(reader.rate(), 48_000.0);
+        let mapped = crate::host::SourceAudio::mapped(std::sync::Arc::new(reader));
+        assert_eq!(mapped.channel_count(), 2);
+        assert_eq!(mapped.channel(0), Some(&[1.0, 2.0][..]));
+        assert_eq!(mapped.frames(), 2);
         let new_name = name();
         let replacement = SharedAudio::create(&new_name, 44_100.0, &[5.0], &[6.0]).unwrap();
         drop(old);
-        assert_eq!(reader.channel(0), &[1.0, 2.0]);
-        drop(reader);
+        assert_eq!(mapped.channel(0), Some(&[1.0, 2.0][..]));
+        drop(mapped);
         assert!(SharedAudio::open(&old_name).is_err());
         drop(replacement);
         assert!(SharedAudio::open(&new_name).is_err());

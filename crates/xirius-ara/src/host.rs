@@ -25,10 +25,11 @@ use std::thread::ThreadId;
 use crate::sys::{self, Bool, ContentTimeRange, ContentType, FALSE, Ref, TRUE};
 
 /// A source's samples at one rate, one `Vec` per channel.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 pub struct SourceAudio {
     pub rate: f64,
     pub channels: Vec<Vec<f32>>,
+    mapped: Option<Arc<crate::shared_audio::SharedAudio>>,
 }
 
 impl SourceAudio {
@@ -36,11 +37,58 @@ impl SourceAudio {
         SourceAudio {
             rate,
             channels: vec![left, right],
+            mapped: None,
+        }
+    }
+
+    /// Uses the immutable source buffer published by the song process.
+    pub fn mapped(audio: Arc<crate::shared_audio::SharedAudio>) -> SourceAudio {
+        SourceAudio {
+            rate: audio.rate(),
+            channels: Vec::new(),
+            mapped: Some(audio),
+        }
+    }
+
+    pub fn channel_count(&self) -> usize {
+        if self.mapped.is_some() {
+            2
+        } else {
+            self.channels.len()
+        }
+    }
+
+    pub fn channel(&self, index: usize) -> Option<&[f32]> {
+        if let Some(mapped) = &self.mapped {
+            (index < 2).then(|| mapped.channel(index))
+        } else {
+            self.channels.get(index).map(Vec::as_slice)
         }
     }
 
     pub fn frames(&self) -> usize {
-        self.channels.iter().map(Vec::len).min().unwrap_or(0)
+        self.mapped
+            .as_ref()
+            .map(|m| m.frames())
+            .unwrap_or_else(|| self.channels.iter().map(Vec::len).min().unwrap_or(0))
+    }
+}
+
+impl std::fmt::Debug for SourceAudio {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SourceAudio")
+            .field("rate", &self.rate)
+            .field("channels", &self.channel_count())
+            .field("frames", &self.frames())
+            .finish()
+    }
+}
+
+impl PartialEq for SourceAudio {
+    fn eq(&self, other: &Self) -> bool {
+        self.rate == other.rate
+            && self.channel_count() == other.channel_count()
+            && (0..self.channel_count()).all(|i| self.channel(i) == other.channel(i))
     }
 }
 
@@ -276,7 +324,8 @@ unsafe extern "C" fn read_audio_samples(
     let skip = (from - position).clamp(0, count as i64) as usize;
     let inside = (to - from).max(0) as usize;
     let ok = if inside == count { TRUE } else { FALSE };
-    for (ch, data) in r.audio.channels.iter().enumerate() {
+    for ch in 0..r.audio.channel_count() {
+        let data = r.audio.channel(ch).unwrap_or_default();
         // SAFETY: the plugin passes one buffer per channel of the source.
         let out = unsafe { *buffers.add(ch) };
         if out.is_null() {

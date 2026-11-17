@@ -683,8 +683,8 @@ const ARCHIVE_MAGIC: &[u8] = b"XiriusARA\0\x01";
 fn fingerprint(audio: &SourceAudio) -> String {
     let mut hash = Sha256::new();
     hash.update(audio.rate.to_le_bytes());
-    hash.update((audio.channels.len() as u64).to_le_bytes());
-    for channel in &audio.channels {
+    hash.update((audio.channel_count() as u64).to_le_bytes());
+    for channel in (0..audio.channel_count()).filter_map(|i| audio.channel(i)) {
         hash.update((channel.len() as u64).to_le_bytes());
         for sample in channel {
             hash.update(sample.to_bits().to_le_bytes());
@@ -1477,7 +1477,7 @@ impl Ara {
                 s.fingerprint = fingerprint(&spec.audio);
                 s.props.frames = spec.audio.frames() as i64;
                 s.props.rate = spec.audio.rate;
-                s.props.channels = spec.audio.channels.len() as i32;
+                s.props.channels = spec.audio.channel_count() as i32;
                 self.side.set_source(s.key, s.audio.clone());
                 self.doc.update_audio_source_properties(s.r, &s.props);
                 self.doc.update_audio_source_content(s.r);
@@ -1497,7 +1497,7 @@ impl Ara {
             persistent_id: spec.source.clone(),
             frames: spec.audio.frames() as i64,
             rate: spec.audio.rate,
-            channels: spec.audio.channels.len() as i32,
+            channels: spec.audio.channel_count() as i32,
         };
         self.side.set_source(key, spec.audio.clone());
         let r = self.doc.create_audio_source(key, &props)?;
