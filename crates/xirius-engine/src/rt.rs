@@ -6,6 +6,8 @@ pub struct ProAudioThread {
     handle: windows_sys::Win32::Foundation::HANDLE,
     #[cfg(target_os = "macos")]
     thread: u32,
+    #[cfg(target_os = "macos")]
+    _same_thread: std::marker::PhantomData<*const ()>,
 }
 
 // The handle is only used to revert the thread it was taken on, which is where the guard lives.
@@ -51,7 +53,7 @@ impl ProAudioThread {
         }
         let mut base = Timebase { numer: 0, denom: 0 };
         // SAFETY: the output points to a valid timebase value.
-        if unsafe { mach_timebase_info(&mut base) } != 0 || base.numer == 0 {
+        if unsafe { mach_timebase_info(&mut base) } != 0 || base.numer == 0 || base.denom == 0 {
             return None;
         }
         let ticks = |ns: u32| {
@@ -60,7 +62,7 @@ impl ProAudioThread {
         };
         let policy = TimeConstraint {
             period: ticks(2_000_000),
-            computation: ticks(500_000),
+            computation: ticks(750_000),
             constraint: ticks(1_500_000),
             preemptible: 1,
         };
@@ -71,7 +73,10 @@ impl ProAudioThread {
         {
             return None;
         }
-        Some(Self { thread })
+        Some(Self {
+            thread,
+            _same_thread: std::marker::PhantomData,
+        })
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
@@ -86,9 +91,8 @@ impl Drop for ProAudioThread {
         unsafe extern "C" {
             fn thread_policy_set(thread: u32, flavor: i32, policy: *const i32, count: u32) -> i32;
         }
-        let standard = 0i32;
         // SAFETY: the guard is dropped by the thread that joined this policy.
-        unsafe { thread_policy_set(self.thread, 1, &standard, 1) };
+        unsafe { thread_policy_set(self.thread, 1, std::ptr::null(), 0) };
     }
 }
 
