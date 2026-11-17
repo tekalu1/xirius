@@ -141,7 +141,7 @@ pub enum Notice {
 }
 
 /// A request from the plugin to the app's transport (the playback controller).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Request {
     Start,
     Stop,

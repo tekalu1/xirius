@@ -1105,6 +1105,13 @@ fn main() {
         // the system (blurred) from 100 %.
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
+    if std::env::args().nth(1).as_deref() == Some("--ara-worker") {
+        if let Err(e) = xirius_ara::remote::run_worker() {
+            eprintln!("xirius-plugin-host: ARA worker: {e}");
+            std::process::exit(2);
+        }
+        return;
+    }
     // For tests of the engine's check: claim another protocol, or none at all ("none", as a
     // host from before the check, which did not know `--protocol`).
     let claim = std::env::var("XIRIUS_PLUGIN_HOST_PROTOCOL").ok();

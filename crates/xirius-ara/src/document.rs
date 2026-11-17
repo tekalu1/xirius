@@ -21,7 +21,7 @@ use crate::sys::{self, Bool, ContentType, FALSE, Ref, TRUE};
 use crate::{Error, contain, error};
 
 /// A note the plugin found in a source or modification (`ARAContentNote`).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Note {
     /// Hertz; 0 when the note has no pitch.
     pub frequency: f32,
@@ -179,7 +179,7 @@ unsafe fn initialize_within(
 }
 
 /// What a factory says about itself.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct FactoryInfo {
     pub factory_id: String,
     pub plugin_name: String,
@@ -237,7 +237,7 @@ pub struct SourceProps {
 }
 
 /// The properties of a playback region, in seconds.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RegionProps {
     pub start_in_modification: f64,
     pub duration_in_modification: f64,

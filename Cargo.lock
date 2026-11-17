@@ -8301,6 +8301,7 @@ dependencies = [
  "tempfile",
  "wasapi",
  "windows-sys 0.61.2",
+ "xirius-ara",
  "xirius-clap",
  "xirius-params",
  "xirius-test-clap",

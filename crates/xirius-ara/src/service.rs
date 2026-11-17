@@ -162,7 +162,7 @@ pub fn modification_id(key: u64) -> String {
     format!("xirius.mod.{key}")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Phase {
     /// The plugin is being loaded or the clip is not synced yet.
     Waiting,
@@ -204,7 +204,7 @@ impl Default for ClipState {
 }
 
 /// What the ARA thread saw, for checks (PLG-031, PLG-034, PLG-038).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Probe {
     pub info: FactoryInfo,
     pub generation: sys::ApiGeneration,

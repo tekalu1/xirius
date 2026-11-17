@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
+use xirius_ara::remote_client::RemoteService;
 use xirius_ara::service::{Loader, source_id};
 use xirius_ara::vst3::Vst3Binary;
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
@@ -22,6 +23,7 @@ use xirius_core::id::ClipId;
 use xirius_core::model::{Clip, ClipBody, Project};
 use xirius_core::session::{RunOptions, RunResult, Session};
 use xirius_plugins::Catalog;
+use xirius_session::ara::ServiceHandle;
 use xirius_session::build::Builder;
 use xirius_session::commands::{self, shared_registry};
 use xirius_session::export::{self, write_wav};
@@ -176,6 +178,181 @@ fn stopped(b: &Builder) -> Option<String> {
         .reports()
         .into_iter()
         .find_map(|r| r.crashed.or(r.failed))
+}
+
+#[test]
+#[ignore = "needs XIRIUS_ARA_REAL_PLUGIN; run with --ignored"]
+fn a_real_plugin_renders_the_same_samples_in_the_host_process() {
+    let path = plugin();
+    watch_windows();
+    let samples = tune(f64::from(RATE), 4.0);
+    let audio = Arc::new(SourceAudio::stereo(
+        f64::from(RATE),
+        samples.clone(),
+        samples,
+    ));
+    let song = Song {
+        clips: vec![ClipSpec {
+            regions: Vec::new(),
+            key: 1,
+            clone_of: None,
+            source: source_id("tune.wav"),
+            name: "tune".into(),
+            audio,
+            start: 0.0,
+            offset: 0.0,
+            duration: 4.0,
+        }],
+        ..Song::default()
+    };
+    let local = Service::start_shared(UID, loader(&path), None, Arc::new(|| {}));
+    local.sync(&song);
+    assert!(local.wait_idle(Instant::now() + WAIT));
+    let info = local.info().unwrap();
+    let reference = local.state(1).unwrap().rendered.unwrap();
+    let host = xirius_engine::server::find_host().expect("the ARA host binary");
+    let remote = RemoteService::start(
+        &host,
+        "vst3",
+        &path,
+        UID,
+        &info.plugin_name,
+        None,
+        Arc::new(|| {}),
+    );
+    remote.sync(&song);
+    assert!(
+        remote.wait_idle(Instant::now() + WAIT),
+        "{:?}",
+        remote.crashed().or(remote.failed())
+    );
+    let rendered = remote.state(1).unwrap().rendered.unwrap();
+    assert_eq!(rendered.left, reference.left);
+    assert_eq!(rendered.right, reference.right);
+    let remote_notes = remote.notes(1, false, WAIT);
+    let local_notes = local.notes(1, false, WAIT);
+    assert_eq!(remote_notes.len(), local_notes.len());
+    for (remote, local) in remote_notes.iter().zip(local_notes) {
+        assert_eq!(
+            (remote.pitch, remote.frequency, remote.volume),
+            (local.pitch, local.frequency, local.volume)
+        );
+        assert!((remote.start - local.start).abs() < 1e-12);
+        assert!((remote.duration - local.duration).abs() < 1e-12);
+    }
+    let archive = remote.store(WAIT).expect("the host's archive");
+    drop(remote);
+    let reopened = RemoteService::start(
+        &host,
+        "vst3",
+        &path,
+        UID,
+        &info.plugin_name,
+        Some(archive),
+        Arc::new(|| {}),
+    );
+    reopened.sync(&song);
+    assert!(
+        reopened.wait_idle(Instant::now() + WAIT),
+        "{:?}",
+        reopened.crashed().or(reopened.failed())
+    );
+    let replayed = reopened.state(1).unwrap().rendered.unwrap();
+    assert_eq!(replayed.left, reference.left);
+    assert_eq!(replayed.right, reference.right);
+    assert_eq!(reopened.probe(WAIT).unwrap().analysis_starts, 0);
+}
+
+#[test]
+#[ignore = "needs XIRIUS_ARA_REAL_PLUGIN; run with --ignored"]
+fn a_catalogued_ara_song_saves_and_exports_through_the_host() {
+    let path = plugin();
+    watch_windows();
+    let entries = xirius_plugins::probe(&path).expect("plugin catalogue entry");
+    let entry = entries.iter().find(|e| e.ara).expect("ARA class");
+    let uid = entry.uid.clone();
+    let catalog = Arc::new(Catalog {
+        entries,
+        failures: Vec::new(),
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let samples = tune(f64::from(RATE), 4.0);
+    write_wav(&dir.path().join("tune.wav"), &samples, &samples, RATE, 32).unwrap();
+    let mut session = Session::with_registry(Project::new("song"), shared_registry());
+    commands::attach(
+        &mut session,
+        ExtConfig {
+            catalog: Some(catalog.clone()),
+            ..ExtConfig::default()
+        },
+    );
+    let track = id_of(&run(&mut session, "track.add.audio", json!({})));
+    let clip = id_of(&run(
+        &mut session,
+        "clip.add.audio",
+        json!({"track": track, "at": 0, "length": 3840, "file": "tune.wav"}),
+    ));
+    run(
+        &mut session,
+        "clip.ara.attach",
+        json!({"ids": [clip], "plugin": uid}),
+    );
+    let p = session.project().clone();
+    let mut player = Builder::new(RATE, Some(dir.path().to_path_buf()));
+    player.set_catalog(Some(catalog.clone()));
+    player.set_ara_live(true);
+    player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+    assert!(matches!(
+        player.ara().doc(&uid).unwrap().service(),
+        ServiceHandle::Remote(_)
+    ));
+    until("host render", || {
+        if let Some(why) = stopped(&player) {
+            panic!("ARA host stopped: {why}");
+        }
+        through(&player, &p, &clip)
+    });
+    let exported = render(&mut player, &p, 4);
+    assert!(rms(&exported) > 0.01);
+    assert!(!xirius_session::ara::take_archives(&mut session, player.ara(), true).unwrap());
+    let folder = dir.path().join("saved-song");
+    session.save_as(&folder).unwrap();
+    assert!(session.project().ara.archives.contains_key(&uid));
+    write_wav(&folder.join("tune.wav"), &samples, &samples, RATE, 32).unwrap();
+    drop(player);
+    let mut reopened = Session::open_with(&folder, shared_registry()).unwrap();
+    commands::attach(
+        &mut reopened,
+        ExtConfig {
+            catalog: Some(catalog.clone()),
+            ..ExtConfig::default()
+        },
+    );
+    let p = reopened.project().clone();
+    let mut player = Builder::new(RATE, Some(folder));
+    player.set_catalog(Some(catalog));
+    player.set_ara_live(true);
+    player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+    until("reopened host render", || {
+        if let Some(why) = stopped(&player) {
+            panic!("ARA host stopped: {why}");
+        }
+        through(&player, &p, &clip)
+    });
+    let replayed = render(&mut player, &p, 4);
+    assert_eq!(exported, replayed, "saved song export changed by a sample");
+    assert_eq!(
+        player
+            .ara()
+            .doc(&uid)
+            .unwrap()
+            .service()
+            .probe(WAIT)
+            .unwrap()
+            .analysis_starts,
+        0
+    );
+    assert!(!reopened.is_dirty());
 }
 
 #[test]

@@ -39,7 +39,7 @@ pub const ARCHIVE_ID: &str = "org.xirius.fake.document.2";
 pub const OLD_ARCHIVE_ID: &str = "org.xirius.fake.document.1";
 
 /// How the plugin misbehaves.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     /// How long the analysis of a source takes, about.
     pub analysis_ms: u64,

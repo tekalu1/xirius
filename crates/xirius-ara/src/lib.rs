@@ -24,6 +24,8 @@ pub mod contain;
 pub mod document;
 pub mod fake;
 pub mod host;
+pub mod remote;
+pub mod remote_client;
 pub mod service;
 pub mod shared_audio;
 pub mod sys;

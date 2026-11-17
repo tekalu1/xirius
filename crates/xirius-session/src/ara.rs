@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
 pub use xirius_ara::Phase;
+use xirius_ara::remote_client::RemoteService;
 pub use xirius_ara::service::Loader;
 use xirius_ara::service::{Binary, Caption, Placement, Rendered, Stored, source_id};
 use xirius_ara::{ClipSpec, Service, Song, SourceAudio};
@@ -265,12 +266,116 @@ struct Sound {
     data: Arc<AudioData>,
 }
 
+/// The document's service, whether its binary is registered for tests or loaded in the host.
+pub enum ServiceHandle {
+    Local(Service),
+    Remote(RemoteService),
+}
+
+macro_rules! service_call {
+    ($service:expr, $method:ident ( $($arg:expr),* )) => {
+        match $service {
+            ServiceHandle::Local(s) => s.$method($($arg),*),
+            ServiceHandle::Remote(s) => s.$method($($arg),*),
+        }
+    };
+}
+
+impl ServiceHandle {
+    pub fn sync(&self, song: &Song) {
+        service_call!(self, sync(song))
+    }
+    pub fn state(&self, key: u64) -> Option<xirius_ara::ClipState> {
+        service_call!(self, state(key))
+    }
+    pub fn states(&self) -> HashMap<u64, xirius_ara::ClipState> {
+        service_call!(self, states())
+    }
+    pub fn wait_idle(&self, deadline: Instant) -> bool {
+        service_call!(self, wait_idle(deadline))
+    }
+    pub fn store(&self, limit: Duration) -> Option<(Vec<u8>, String)> {
+        service_call!(self, store(limit))
+    }
+    pub fn store_later(&self) -> Option<Stored> {
+        service_call!(self, store_later())
+    }
+    pub fn store_changed_later(&self) -> Option<Stored> {
+        service_call!(self, store_changed_later())
+    }
+    pub fn take_dirty(&self) -> bool {
+        service_call!(self, take_dirty())
+    }
+    pub fn crashed(&self) -> Option<String> {
+        service_call!(self, crashed())
+    }
+    pub fn failed(&self) -> Option<String> {
+        service_call!(self, failed())
+    }
+    pub fn loaded(&self) -> bool {
+        service_call!(self, loaded())
+    }
+    pub fn editing(&self) -> bool {
+        service_call!(self, editing())
+    }
+    pub fn take_editor_error(&self) -> Option<String> {
+        service_call!(self, take_editor_error())
+    }
+    pub fn mark_changed(&self) {
+        service_call!(self, mark_changed())
+    }
+    pub fn set_editor_caption(&self, caption: Caption) {
+        service_call!(self, set_editor_caption(caption))
+    }
+    pub fn request_editor(
+        &self,
+        title: &str,
+        place: Placement,
+        clips: &[u64],
+    ) -> Result<(), String> {
+        service_call!(self, request_editor(title, place, clips))
+    }
+    pub fn open_editor(
+        &self,
+        title: &str,
+        place: Placement,
+        clips: &[u64],
+        limit: Duration,
+    ) -> Result<(), String> {
+        service_call!(self, open_editor(title, place, clips, limit))
+    }
+    pub fn analysis_archive(&self) -> Option<xirius_ara::service::CachedArchive> {
+        service_call!(self, analysis_archive())
+    }
+    pub fn try_analysis_archive(&self) -> Option<xirius_ara::service::CachedArchive> {
+        service_call!(self, try_analysis_archive())
+    }
+    pub fn probe(&self, limit: Duration) -> Option<xirius_ara::service::Probe> {
+        service_call!(self, probe(limit))
+    }
+    pub fn notes(&self, key: u64, modification: bool, limit: Duration) -> Vec<xirius_ara::Note> {
+        service_call!(self, notes(key, modification, limit))
+    }
+    pub fn take_requests(&self) -> Vec<xirius_ara::host::Request> {
+        service_call!(self, take_requests())
+    }
+    pub fn generation(&self) -> u64 {
+        service_call!(self, generation())
+    }
+    pub fn info(&self) -> Option<xirius_ara::document::FactoryInfo> {
+        service_call!(self, info())
+    }
+    pub fn close_editor(&self) {
+        service_call!(self, close_editor())
+    }
+}
+
 /// One plugin's document of one song.
 pub struct Doc {
     pub plugin: String,
     pub name: String,
     key: Key,
-    service: Service,
+    service: ServiceHandle,
     /// The song last handed over: the clips whose files are read.
     song: Mutex<Option<Song>>,
     wanted: Mutex<Option<Wanted>>,
@@ -294,8 +399,38 @@ impl Doc {
         contain();
         let restoring = archive.is_some();
         // Every document of the plugin on its one ARA thread (some keep to their first).
-        let service =
-            Service::start_shared(&key.1, load, archive, Arc::new(crate::processed::bump));
+        let service = ServiceHandle::Local(Service::start_shared(
+            &key.1,
+            load,
+            archive,
+            Arc::new(crate::processed::bump),
+        ));
+        Self::with_service(key, name, service, restoring)
+    }
+
+    fn start_remote(
+        key: Key,
+        name: String,
+        format: &str,
+        path: &Path,
+        archive: Option<(Vec<u8>, String)>,
+    ) -> Arc<Doc> {
+        let restoring = archive.is_some();
+        let host = xirius_engine::server::find_host()
+            .unwrap_or_else(|| PathBuf::from("xirius-plugin-host"));
+        let service = ServiceHandle::Remote(RemoteService::start(
+            &host,
+            format,
+            path,
+            &key.1,
+            &name,
+            archive,
+            Arc::new(crate::processed::bump),
+        ));
+        Self::with_service(key, name, service, restoring)
+    }
+
+    fn with_service(key: Key, name: String, service: ServiceHandle, restoring: bool) -> Arc<Doc> {
         let doc = Arc::new(Doc {
             plugin: key.1.clone(),
             name,
@@ -315,7 +450,7 @@ impl Doc {
         doc
     }
 
-    pub fn service(&self) -> &Service {
+    pub fn service(&self) -> &ServiceHandle {
         &self.service
     }
 
@@ -865,7 +1000,11 @@ impl Held {
             return Some(d);
         }
         let catalog = catalog();
-        let load = loader(&catalog, plugin)?;
+        let registered = lock(registered()).contains_key(plugin);
+        let entry = catalog.find(plugin).filter(|e| e.ara);
+        if !registered && entry.is_none() {
+            return None;
+        }
         let name = find(&catalog, plugin).map(|(_, n)| n).unwrap_or_else(|| {
             p.ara
                 .clips
@@ -882,7 +1021,12 @@ impl Held {
             (None, Some(a)) => bytes_of(a),
             (None, None) => archive_of(p, plugin),
         };
-        let doc = Doc::start(key, name, load, archive);
+        let doc = if registered {
+            Doc::start(key, name, loader(&catalog, plugin)?, archive)
+        } else {
+            let entry = entry?;
+            Doc::start_remote(key, name, &entry.format, &entry.path, archive)
+        };
         // The song takes the plugin's last edits back ([`take_archives`]).
         *lock(&doc.stored) = left;
         Some(doc)

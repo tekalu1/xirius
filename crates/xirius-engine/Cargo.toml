@@ -17,6 +17,7 @@ rtrb = "0.4"
 hound = "3.5"
 midir = "0.11"
 xirius-vst3 = { path = "../xirius-vst3" }
+xirius-ara = { path = "../xirius-ara" }
 xirius-clap = { path = "../xirius-clap" }
 xirius-params = { path = "../xirius-params" }
 assert_no_alloc = "1.1"
