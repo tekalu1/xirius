@@ -3792,7 +3792,7 @@ status = "done"
 
 [[item]]
 id = "PLG-022"
-title = "プラグインは同じプロセスを既定とし、不安定なものだけ別プロセス（共有か専用）を選べる"
+title = "旧方針: プラグインは同じプロセスを既定とし、不安定なものだけ別プロセス（共有か専用）を選べる"
 area = "PLG"
 phase = "v1"
 source = "reports/02-audio-plugin-license.md § 3.3"
@@ -3810,7 +3810,7 @@ status = "done"
 
 [[item]]
 id = "PLG-024"
-title = "別プロセスは 1 ブロック分の遅延を足して並列化する方式にする（Bitwig の Together 相当）"
+title = "旧方針: 別プロセスは遅延を足して並列化する方式にする"
 area = "PLG"
 phase = "later"
 source = "reports/02-audio-plugin-license.md § 3.3"
@@ -3819,7 +3819,7 @@ status = "done"
 
 [[item]]
 id = "PLG-025"
-title = "ARA のプラグインは同じプロセスで動かす（別プロセスにしない）"
+title = "旧方針: ARA のプラグインは同じプロセスで動かす"
 area = "PLG"
 phase = "mvp"
 source = "reports/02-audio-plugin-license.md § 3.3 ; reports/02-audio-plugin-license.md § 3.7"
@@ -6660,6 +6660,16 @@ phase = "v1"
 source = "mockups/export-import.md § 04 MIDI ファイルの書き出し（EXP-026・CTX-057 の MIDI の行）"
 done_when = "トラックの「書き出す」から、ステムのパネルと、そのトラックを選んだ MIDI のパネル（範囲は曲全体）が開く。オーディオのトラックでは MIDI ファイルの行が淡い"
 status = "done"
+
+[[item]]
+id = "PLG-078"
+title = "外部プラグインを別プロセスだけで動かし、追加の遅延をなくして ARA も移す"
+area = "PLG"
+phase = "v1"
+source = "2026-11-17 の持ち主の決定"
+done_when = "VST3・CLAP・ARA が別プロセスだけで動き、48 kHz・128 サンプル・試験用プラグイン 20 個の生演奏 10 分で音切れ 0 回、追加遅延 0 サンプルになる"
+status = "partial"
+remaining = "計測、Windows のブロック内待機と連続処理、実測、macOS、ARA、既定の分け方、アプリ内経路の撤去が残る"
 
 [[open]]
 id = "OPEN-01"
