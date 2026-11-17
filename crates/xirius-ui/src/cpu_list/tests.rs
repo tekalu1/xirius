@@ -93,6 +93,35 @@ fn the_bar_says_the_cpu_and_the_list_has_the_plugin_with_its_share() {
 }
 
 #[test]
+fn the_cpu_list_keeps_remote_deadline_and_timeout_counts_per_plugin() {
+    let (mut s, _g, _t, id) = with_effect();
+    fake(&mut s, 0.2, id, 0.1);
+    s.perf.remote.insert(
+        id,
+        PluginStatus {
+            deadline_overruns: 3,
+            timeouts: 1,
+            roundtrip: xirius_engine::sandbox::TimingSnapshot {
+                count: 1,
+                p99_ns: 42_000,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    let view = s.perf_view();
+    let row = view.rows.iter().find(|row| row.id == id).unwrap();
+    assert_eq!(row.remote_timing, Some((42, 3, 1)));
+    assert!(cells(Some(&view), 0).iter().any(|cell| matches!(
+        &cell.look,
+        Look::Cpu(CLook::Row {
+            remote_timing: Some((42, 3, 1)),
+            ..
+        })
+    )));
+}
+
+#[test]
 fn the_check_deactivates_and_activates_and_the_state_is_kept() {
     let (mut s, g, t, id) = with_effect();
     fake(&mut s, 0.3, id, 0.2);

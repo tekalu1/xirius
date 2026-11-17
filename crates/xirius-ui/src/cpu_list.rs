@@ -96,7 +96,8 @@ pub struct Row {
     pub id: PluginId,
     pub track: TrackId,
     pub name: String,
-    pub roundtrip_p99_us: Option<u64>,
+    /// Roundtrip p99 in microseconds, deadline overruns, and stalled-host timeouts.
+    pub remote_timing: Option<(u64, u64, u64)>,
     pub track_name: String,
     pub run: Run,
     pub percent: u32,
@@ -137,7 +138,7 @@ pub enum CLook {
     },
     Row {
         track: String,
-        roundtrip_p99_us: Option<u64>,
+        remote_timing: Option<(u64, u64, u64)>,
         percent: u32,
         run: Run,
         heavy: bool,
@@ -199,7 +200,7 @@ pub fn cells(v: Option<&View>, offset: usize) -> Vec<Cell> {
                 Rect::new(PAD + CHECK_W, y, inner - CHECK_W, ROW_H),
                 Look::Cpu(CLook::Row {
                     track: r.track_name.clone(),
-                    roundtrip_p99_us: r.roundtrip_p99_us,
+                    remote_timing: r.remote_timing,
                     percent: r.percent,
                     run: r.run,
                     heavy: r.heavy,
@@ -252,7 +253,7 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &CLook, hot: bool) {
         }
         CLook::Row {
             track,
-            roundtrip_p99_us,
+            remote_timing,
             percent,
             run,
             heavy,
@@ -281,15 +282,18 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &CLook, hot: bool) {
                     Align::Left,
                 );
             });
-            if let Some(us) = roundtrip_p99_us {
-                pen.text(
-                    &format!("往復 p99 {us} µs"),
-                    FontSize::Micro,
-                    Weight::Regular,
-                    c.ink,
-                    Rect::new(name.x, r.y + 20.0, name.w, 16.0),
-                    Align::Left,
-                );
+            if let Some((us, overruns, timeouts)) = remote_timing {
+                let timing = Rect::new(name.x, r.y + 20.0, name.w, 16.0);
+                pen.mask(timing, |pen| {
+                    pen.text(
+                        &format!("往復 p99 {us} µs  超 {overruns}  停 {timeouts}"),
+                        FontSize::Micro,
+                        Weight::Regular,
+                        c.ink,
+                        timing,
+                        Align::Left,
+                    );
+                });
             }
             let mut x = r.x + name_w;
             if *run == Run::Frozen {
@@ -462,12 +466,12 @@ impl Studio {
                     id: r.id,
                     track: r.track,
                     name: r.name.clone(),
-                    roundtrip_p99_us: self
+                    remote_timing: self
                         .perf
                         .remote
                         .get(&r.id)
                         .filter(|s| s.roundtrip.count > 0)
-                        .map(|s| s.roundtrip.p99_ns / 1_000),
+                        .map(|s| (s.roundtrip.p99_ns / 1_000, s.deadline_overruns, s.timeouts)),
                     track_name: r.track_name.clone(),
                     run: r.run,
                     percent: percent(r.reading.load),
