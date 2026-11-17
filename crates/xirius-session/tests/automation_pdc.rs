@@ -19,18 +19,44 @@ use xirius_session::{
 };
 
 fn remote_param(host: &mut SessionHost, song: &Project, id: PluginId) -> f64 {
-    let pull = host.begin_peek_states_of(&HashSet::from([id]));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !pull.ready() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the host did not return its state"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1));
+    loop {
+        let pull = host.begin_peek_states_of(&HashSet::from([id]));
+        while !pull.ready() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the host did not return its state"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        if let Some(error) = pull.error() {
+            assert_eq!(
+                error,
+                xirius_engine::plugin_updates::STALE_UPDATE,
+                "the host could not return its state"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the host never returned a current state"
+            );
+            continue;
+        }
+        let mut copy = song.tracks[&TrackId(100)].inserts[1].clone();
+        peek_pulled_states(host, &pull, song, std::slice::from_mut(&mut copy));
+        if let Some(error) = pull.error() {
+            assert_eq!(
+                error,
+                xirius_engine::plugin_updates::STALE_UPDATE,
+                "the host could not return its state"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the host never returned a current state"
+            );
+            continue;
+        }
+        return copy.params["1"];
     }
-    let mut copy = song.tracks[&TrackId(100)].inserts[1].clone();
-    peek_pulled_states(host, &pull, song, std::slice::from_mut(&mut copy));
-    copy.params["1"]
 }
 
 #[test]
@@ -45,10 +71,8 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
         entries,
         failures: Vec::new(),
     });
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target")
-        .join(format!("automation-pdc-{}.wav", std::process::id()));
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let wav_dir = tempfile::tempdir().unwrap();
+    let path = wav_dir.path().join("automation-pdc.wav");
     let mut writer = hound::WavWriter::create(
         &path,
         hound::WavSpec {
@@ -272,5 +296,4 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
     assert!(!host.sync(&parameter_song).swapped);
     audio.render(&mut [0.0; 1024], 2);
     assert!(audio.prefetch(0).unwrap().lent, "other lanes can run ahead");
-    std::fs::remove_file(path).unwrap();
 }
