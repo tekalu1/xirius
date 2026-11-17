@@ -275,7 +275,7 @@ fn save_as_keeps_the_player_and_hosted_plugin_alive() {
         "unsaved_close",
         "sabotage_close",
     ] {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-save-crash-");
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "save_crash_tests::save_as_child", "--nocapture"])
             .env(CHILD, kind)

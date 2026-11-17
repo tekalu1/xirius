@@ -1,6 +1,7 @@
 //! AUT-019: the master's automation is as late as the audio at its stage. Behind a master insert
 //! with latency, the master's lanes and the plug-ins after it (in its splitter's branches too)
 //! are evaluated that much earlier on the song clock, so an export does not drift.
+mod crash_records;
 
 use std::{collections::BTreeMap, sync::Arc};
 use xirius_core::{
@@ -65,6 +66,7 @@ fn master(p: &mut Project) -> &mut Track {
 
 #[test]
 fn the_master_lanes_behind_a_late_master_insert_do_not_drift_in_an_export() {
+    let _records = crash_records::CrashRecords::new();
     let (catalog, uid) = catalog();
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target")
@@ -139,6 +141,7 @@ fn the_master_lanes_behind_a_late_master_insert_do_not_drift_in_an_export() {
 
 #[test]
 fn the_master_plug_ins_after_a_late_insert_and_in_its_branches_are_that_late() {
+    let _records = crash_records::CrashRecords::new();
     let (catalog, uid) = catalog();
     let mut p = Project::new("AUT-019");
     let branch = |id: u64, fx: &[u64]| Branch {

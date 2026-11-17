@@ -18,6 +18,7 @@ fn paced() -> OutputMode {
 
 #[test]
 fn preparing_blocks_commands_shortcuts_save_transport_export_and_connected_mcp() {
+    let _records = crate::shot::CrashRecords::new();
     use std::sync::Arc;
     use xirius_core::session::RunOptions;
     use xirius_mcp::Host;
@@ -140,6 +141,7 @@ fn opened(s: &Studio, ids: &[PluginId]) -> bool {
 
 #[test]
 fn a_window_without_the_device_prepares_nothing_when_a_song_opens() {
+    let _records = crate::shot::CrashRecords::new();
     // --silent, the screenshots and the tests: no card, no player, no device.
     let (mut s, _, _) = with_plugins();
     s.song_replaced(Ok(None));
@@ -154,6 +156,7 @@ fn a_window_without_the_device_prepares_nothing_when_a_song_opens() {
 
 #[test]
 fn the_card_counts_the_tracks_as_their_plugins_open_and_closes_when_the_song_sounds() {
+    let _records = crate::shot::CrashRecords::new();
     let (mut s, ids, names) = with_plugins();
     s.prepare_song();
     let card = s.preparing.as_ref().expect("the card");
@@ -199,6 +202,7 @@ fn the_card_counts_the_tracks_as_their_plugins_open_and_closes_when_the_song_sou
 
 #[test]
 fn later_closes_the_card_and_what_is_left_opens_when_first_needed() {
+    let _records = crate::shot::CrashRecords::new();
     let (mut s, ids, _) = with_plugins();
     s.prepare_song();
     s.tick();
@@ -234,6 +238,7 @@ fn later_closes_the_card_and_what_is_left_opens_when_first_needed() {
 
 #[test]
 fn escape_is_later() {
+    let _records = crate::shot::CrashRecords::new();
     let (mut s, _, _) = with_plugins();
     s.prepare_song();
     assert!(s.prepare_key("a"), "every key waits while the card is up");
@@ -245,6 +250,7 @@ fn escape_is_later() {
 
 #[test]
 fn a_held_key_sounds_once_its_instrument_is_ready_and_never_after_it_is_let_go() {
+    let _records = crate::shot::CrashRecords::new();
     let mut s = Studio::sample();
     s.transport.mode = paced();
     let t = s.roll_target().expect("the Keys clip in the roll").track.id;

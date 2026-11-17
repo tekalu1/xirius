@@ -1,4 +1,6 @@
 //! A stock instrument keeps sounding while a hosted insert is rebuilt.
+mod crash_records;
+
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -47,6 +49,7 @@ fn settle(host: &mut SessionHost, audio: &mut AudioEngine) {
 
 #[test]
 fn live_drum_edits_sound_while_an_insert_is_hosted() {
+    let _records = crash_records::CrashRecords::new();
     xirius_test_vst3::fixture_marker();
     let fixture =
         xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());

@@ -1,3 +1,5 @@
+mod crash_records;
+
 use std::{
     collections::{BTreeMap, HashSet},
     sync::Arc,
@@ -33,6 +35,7 @@ fn remote_param(host: &mut SessionHost, song: &Project, id: PluginId) -> f64 {
 
 #[test]
 fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek() {
+    let _records = crash_records::CrashRecords::new();
     xirius_test_vst3::fixture_marker();
     let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     assert!(dll.exists(), "a DLL on Windows, a bundle on macOS");

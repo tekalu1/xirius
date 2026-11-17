@@ -1,6 +1,8 @@
 //! A song's player is started a little at a time (ENG-064): each step opens one plugin, the
 //! progress says how many tracks are done, the build takes what was opened, and each plugin's
 //! opening time is kept. A plugin that cannot be opened says so as before and the song opens.
+mod crash_records;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use xirius_core::id::{Node, PluginId, TrackId};
@@ -69,6 +71,7 @@ fn song(tracks: &[(&str, TrackKind, Vec<Plugin>)]) -> Project {
 
 #[test]
 fn each_step_opens_one_plugin_and_the_build_takes_them() {
+    let _records = crash_records::CrashRecords::new();
     let (catalog, uid) = catalog();
     let p = song(&[
         (
@@ -134,6 +137,7 @@ fn each_step_opens_one_plugin_and_the_build_takes_them() {
 
 #[test]
 fn a_plugin_that_cannot_be_opened_is_said_and_the_song_opens() {
+    let _records = crash_records::CrashRecords::new();
     let (catalog, uid) = catalog();
     let p = song(&[
         (
@@ -169,6 +173,7 @@ fn a_plugin_that_cannot_be_opened_is_said_and_the_song_opens() {
 
 #[test]
 fn finishing_before_the_steps_opens_the_rest_on_the_spot() {
+    let _records = crash_records::CrashRecords::new();
     let (catalog, uid) = catalog();
     let p = song(&[
         (

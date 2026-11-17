@@ -1,6 +1,8 @@
 //! A plugin that is slow to open but answers is waited for while a song's plugins are
 //! prepared (ENG-064): it is not a failure before the open's own limit. The window's
 //! preparation opens external plugins in host processes.
+mod crash_records;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -66,6 +68,7 @@ fn song(kind: PluginKind, uid: &str) -> Project {
 
 #[test]
 fn a_plugin_slow_to_open_is_waited_for_and_no_track_fails() {
+    let _records = crash_records::CrashRecords::new();
     // SAFETY: the only test of this binary; the fixture reads it when an instance is made.
     unsafe {
         std::env::set_var("XIRIUS_TEST_VST3_OPEN_MS", OPEN.as_millis().to_string());
@@ -96,6 +99,7 @@ fn a_plugin_slow_to_open_is_waited_for_and_no_track_fails() {
 /// worker is abandoned, so a cancel during a slow open answers at once.
 #[test]
 fn dropping_preparation_does_not_wait_for_an_open_in_flight() {
+    let _records = crash_records::CrashRecords::new();
     // SAFETY: the only test of this binary; the fixture reads it when an instance is made.
     unsafe {
         std::env::set_var("XIRIUS_TEST_VST3_OPEN_MS", OPEN.as_millis().to_string());
