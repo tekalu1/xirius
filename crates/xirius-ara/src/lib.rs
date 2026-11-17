@@ -25,6 +25,7 @@ pub mod document;
 pub mod fake;
 pub mod host;
 pub mod service;
+pub mod shared_audio;
 pub mod sys;
 pub mod vst3;
 
