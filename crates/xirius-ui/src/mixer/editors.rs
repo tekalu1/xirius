@@ -3,22 +3,18 @@
 //! The window shows the instance that plays, so what is turned in it is heard at once and,
 //! once let go, becomes one step of the history ([`Studio::poll_editors`]):
 //!
-//! - a plugin that runs in the player: its instance ([`PluginLoader::local`]),
-//!   whose GUI owner opens the frame and viewport together. Main-window activation queues
-//!   a raise without assigning a cross-thread HWND owner or taking focus;
-//! - a plugin that runs in a plugin host process (shared or its own): the host opens the
-//!   window of its instance, above the other windows.
+//! A plugin host process opens the window of its instance. Main-window activation queues
+//! a raise without assigning a cross-process HWND owner or taking focus.
 //!
 //! The player starts when a window needs it. Under tests, and while
 //! [`xirius_vst3::OFFSCREEN_ENV`] is set, windows open off every screen.
 //!
-//! [`PluginLoader::local`]: xirius_session::plugins::PluginLoader::local
 
 use std::time::{Duration, Instant};
 
 use xirius_core::id::PluginId;
 use xirius_core::model::Plugin;
-use xirius_vst3::{Caption, Editor, Placement};
+use xirius_vst3::{Caption, Placement};
 
 use crate::studio::Studio;
 
@@ -27,8 +23,6 @@ const HOST_OPEN_WAIT: Duration = Duration::from_secs(3);
 
 /// Where an open window's instance is.
 pub(crate) enum Where {
-    /// The player's instance in this process; `generation` tells a new mix's instance apart.
-    Local { editor: Editor, generation: u64 },
     /// The plugin host process's instance; the host has the window. `opened` says the host has
     /// said the window is open once, so it is no longer taken as open while it does not answer.
     Host { asked: Instant, opened: bool },
@@ -46,29 +40,11 @@ impl OpenEditor {
         Vec::new()
     }
 
-    /// The window, when this process has it.
-    pub fn editor(&self) -> Option<&Editor> {
-        match &self.at {
-            Where::Local { editor, .. } => Some(editor),
-            Where::Host { .. } => None,
-        }
-    }
-
-    pub fn editor_mut(&mut self) -> Option<&mut Editor> {
-        match &mut self.at {
-            Where::Local { editor, .. } => Some(editor),
-            Where::Host { .. } => None,
-        }
-    }
-
     /// The instance plays: what is turned in the window is heard.
     pub fn heard(&self) -> bool {
         true
     }
 }
-
-/// A window to open again: the plugin, its title, and the corner it had, if this process had it.
-type Reopen = (PluginId, String, Option<(i32, i32)>);
 
 /// Why a plugin's window does not open, in the words the screen shows (ARC-027).
 fn cannot(name: &str, why: &str) -> String {
@@ -115,11 +91,7 @@ impl Studio {
     /// nor establishes an HWND owner across threads/processes.
     pub(crate) fn main_window_editor_event(&self, active: bool, restored: bool) {
         for e in main_window_requests(active, restored, &self.mixer.editors) {
-            if let Some(editor) = e.editor() {
-                if editor.is_visible() {
-                    editor.raise();
-                }
-            } else if let Some(host) = self.transport.host() {
+            if let Some(host) = self.transport.host() {
                 host.raise_plugin_editor(e.id);
             }
         }
@@ -159,14 +131,8 @@ impl Studio {
         }
         self.caption = Some(caption);
         for e in &self.mixer.editors {
-            match (&e.at, e.editor()) {
-                (_, Some(editor)) => editor.set_caption(caption),
-                (Where::Host { .. }, None) => {
-                    if let Some(host) = self.transport.host() {
-                        host.plugin_caption(e.id, caption);
-                    }
-                }
-                _ => {}
+            if let Some(host) = self.transport.host() {
+                host.plugin_caption(e.id, caption);
             }
         }
         if let Some(host) = self.transport.host() {
@@ -200,28 +166,10 @@ impl Studio {
             at: at.or(base.at),
             ..base
         };
-        let fail = |e: xirius_vst3::Error| format!("{name} の窓を開けません: {e}");
         let project = self.auto_heard(&self.project());
         let bar = self.vst_bar(plugin);
         let dir = self.song.dir();
-        let windowed = self.transport.is_windowed();
         let host = self.transport.start_host(&project, dir)?;
-        if let Some((instance, generation)) = host.plugins().local(plugin.id) {
-            if windowed {
-                return Err(
-                    // design-lint: allow(guidance) 読み込み失敗の理由と再準備の案内。同期の代替生成を拒否した時のエラー
-                    "専用所有スレッドのプラグインが準備できていません。音を準備し直してください"
-                        .into(),
-                );
-            }
-            instance.set_editor_bar(bar.clone());
-            let editor = instance.open_editor_at(&title, place).map_err(fail)?;
-            return Ok(OpenEditor {
-                id: plugin.id,
-                title,
-                at: Where::Local { editor, generation },
-            });
-        }
         let status = host
             .plugin_statuses()
             .into_iter()
@@ -243,6 +191,10 @@ impl Studio {
         host.plugin_editor_bar(plugin.id, bar);
         host.plugin_editor(plugin.id, true, self.caption)
             .map_err(|e| format!("{name} の窓を開けません: {e}"))?;
+        let title = host
+            .plugins()
+            .editor_window_title(plugin.id)
+            .unwrap_or(title);
         Ok(OpenEditor {
             id: plugin.id,
             title,
@@ -258,10 +210,8 @@ impl Studio {
         self.mixer.editor_bars.remove(&id);
         let gone: Vec<OpenEditor> = self.mixer.take_editors(|e| e.id == id);
         let shut = !gone.is_empty();
-        for e in gone {
-            if let Where::Host { .. } = e.at
-                && let Some(host) = self.transport.host_mut()
-            {
+        for _ in gone {
+            if let Some(host) = self.transport.host_mut() {
                 let _ = host.plugin_editor(id, false, None);
             }
         }
@@ -286,14 +236,9 @@ impl Studio {
 
     /// Brings the open window of `id` above the other windows.
     pub(crate) fn raise_editor(&mut self, id: PluginId) {
-        let mut in_host = false;
-        for e in self.mixer.editors.iter().filter(|e| e.id == id) {
-            match e.editor() {
-                Some(editor) => editor.raise(),
-                None => in_host = true,
-            }
-        }
-        if in_host && let Some(host) = self.transport.host_mut() {
+        if self.mixer.editors.iter().any(|e| e.id == id)
+            && let Some(host) = self.transport.host_mut()
+        {
             host.raise_plugin_editor(id);
         }
     }
@@ -309,7 +254,6 @@ impl Studio {
 
     fn shown(&self, e: &OpenEditor) -> bool {
         match &e.at {
-            Where::Local { editor, .. } => editor.is_visible(),
             Where::Host { asked, opened } => {
                 // Before the host says anything, the window counts as open for a while (it may
                 // take time to make). Once it has said it is open, only the host's word decides:
@@ -356,10 +300,8 @@ impl Studio {
             })
             .unwrap_or_default();
         for e in &mut self.mixer.editors {
-            if let Where::Host { opened, .. } = &mut e.at
-                && !*opened
-                && open_in_host.contains(&e.id)
-            {
+            let Where::Host { opened, .. } = &mut e.at;
+            if !*opened && open_in_host.contains(&e.id) {
                 *opened = true;
             }
         }
@@ -367,13 +309,12 @@ impl Studio {
             .mixer
             .editors
             .iter()
-            .filter(|e| !self.shown(e) && !self.moved_here(e) && !self.moving_here(e))
+            .filter(|e| !self.shown(e))
             .map(|e| e.id)
             .collect();
         for id in gone {
             self.close_editor(id);
         }
-        self.follow_mix();
         // While the song is being left, answers to the close's own pulls go in at the cursor:
         // they are not the person's edits (UI-354).
         let leaving = self.leaving_song();
@@ -403,11 +344,10 @@ impl Studio {
         let mut actions = Vec::new();
         let p = self.project();
         for e in &self.mixer.editors {
-            let origin = e.editor().map(Editor::origin).or_else(|| {
-                self.transport
-                    .host()
-                    .and_then(|h| h.plugins().editor_origin(e.id))
-            });
+            let origin = self
+                .transport
+                .host()
+                .and_then(|h| h.plugins().editor_origin(e.id));
             if let Some(origin) = origin {
                 self.mixer.editor_positions.insert(e.id, origin);
             }
@@ -435,21 +375,15 @@ impl Studio {
                 sidechain: plugin.sidechain.is_some(),
             };
             if self.mixer.editor_bars.get(&e.id) != Some(&bar) {
-                if let Some(editor) = e.editor() {
-                    editor.set_bar(bar.clone());
-                } else if let Some(host) = self.transport.host() {
+                if let Some(host) = self.transport.host() {
                     host.plugin_editor_bar(e.id, bar.clone());
                 }
                 self.mixer.editor_bars.insert(e.id, bar);
             }
-            let events = e.editor().map_or_else(
-                || {
-                    self.transport
-                        .host()
-                        .map_or_else(Vec::new, |h| h.take_editor_actions(e.id))
-                },
-                |e| e.take_actions(),
-            );
+            let events = self
+                .transport
+                .host()
+                .map_or_else(Vec::new, |h| h.take_editor_actions(e.id));
             actions.extend(events.into_iter().map(|a| (e.id, track.id, a)));
         }
         for (id, track, action) in actions {
@@ -497,70 +431,6 @@ impl Studio {
                         self.run_command("plugin.sidechain.enable", serde_json::json!({"id": id.to_string(), "state": if sc.on { "off" } else { "on" }}));
                     }
                 }
-            }
-        }
-    }
-
-    /// The window is the plugin host's, and the new mix plays the plugin in this process with
-    /// the window still open (ENG-071): the host shut it, and it opens here.
-    fn moved_here(&self, e: &OpenEditor) -> bool {
-        matches!(e.at, Where::Host { .. })
-            && self
-                .transport
-                .host()
-                .is_some_and(|h| h.plugins().window_moved_in(e.id))
-    }
-
-    /// As [`Self::moved_here`], while the host has not let go of the instance that played: the
-    /// window is kept until it is known whether the person shut it there as the mix changed.
-    fn moving_here(&self, e: &OpenEditor) -> bool {
-        matches!(e.at, Where::Host { .. })
-            && self
-                .transport
-                .host()
-                .is_some_and(|h| h.plugins().window_moving_in(e.id))
-    }
-
-    /// A new mix made new instances of the plugins in the app, or moved a plugin between the
-    /// app and a plugin host process (ENG-071): their windows open again on the new ones,
-    /// where they were. Without a player they shut.
-    fn follow_mix(&mut self) {
-        let stale: Vec<Reopen> = self
-            .mixer
-            .editors
-            .iter()
-            .filter_map(|e| {
-                if self.moved_here(e) {
-                    return Some((e.id, e.title.clone(), None));
-                }
-                let Where::Local { editor, generation } = &e.at else {
-                    return None;
-                };
-                let now = self
-                    .transport
-                    .host()
-                    .and_then(|h| h.plugins().local(e.id))
-                    .map(|(_, g)| g);
-                (now != Some(*generation)).then(|| (e.id, e.title.clone(), Some(editor.origin())))
-            })
-            .collect();
-        for (id, title, at) in stale {
-            self.mixer.take_editors(|e| e.id == id);
-            if !self.transport.is_live() {
-                continue;
-            }
-            let p = self.project();
-            let Some(plugin) = p
-                .tracks
-                .values()
-                .flat_map(|t| &t.inserts)
-                .find(|x| x.id == id)
-            else {
-                continue;
-            };
-            match self.open_vst3_window(plugin, title, at) {
-                Ok(e) => self.mixer.editors.push(e),
-                Err(e) => self.error = Some(e),
             }
         }
     }

@@ -1,8 +1,7 @@
 //! Turns the song into what the engine plays: a [`MixSpec`] with a source and inserts on each
 //! track, the routing, the strip values and the notes and audio on each track's timeline.
 //!
-//! VST3 plugins are opened through [`crate::plugins`] (PLG-052), in this process or a plugin
-//! host process as each one says (OPEN-02, PLG-022). The built-in instruments and effects are
+//! External plugins are opened through [`crate::plugins`] in a plugin host process. The built-in instruments and effects are
 //! the engine's ([`xirius_engine::stock`], PLG-016), as is the built-in Gain; anything else is
 //! left out with a warning in [`Built::warnings`]. An instrument that cannot be opened, or a
 //! track with none, is played by the built-in Sampler (the Drum Kit for a drum machine; the
@@ -285,18 +284,6 @@ impl Builder {
         self.plugins.set_setup(setup(
             self.rate,
             if on {
-                RenderMode::Realtime
-            } else {
-                RenderMode::Offline
-            },
-        ));
-    }
-
-    pub fn set_threaded_local(&mut self, on: bool) {
-        self.plugins.set_threaded_local(on);
-        self.plugins.set_setup(setup(
-            self.rate,
-            if self.background {
                 RenderMode::Realtime
             } else {
                 RenderMode::Offline

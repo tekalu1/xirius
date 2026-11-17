@@ -756,7 +756,6 @@ fn every_process_mode_plays_without_added_delay() {
     };
     let (host, _audio, warnings) = SessionHost::start(s.project(), config).unwrap();
     assert!(host.plugin_statuses().is_empty());
-    assert!(host.plugins().local(id).is_none());
     assert!(host.plugins().server_of(id).is_none());
     assert!(
         warnings

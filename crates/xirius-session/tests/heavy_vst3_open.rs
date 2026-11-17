@@ -1,7 +1,7 @@
 //! Real-world check of the song-open wait (ENG-064): plugins installed on this machine, not
 //! the fixture. Needs `XIRIUS_HEAVY_VST3` set to `;`-separated `.vst3` paths (3–5 heavy ones),
 //! and is run with `--ignored`. A fresh process prepares the song exactly as the window does
-//! after a restart (`threaded_local` owner threads, the open limit in force) and reports each
+//! after a restart (the open limit in force) and reports each
 //! plugin's open time and any track marked 準備できませんでした.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -66,7 +66,6 @@ fn real_heavy_plugins_prepare_without_failed_tracks() {
         &p,
         HostConfig {
             catalog: Some(catalog),
-            threaded_local: true,
             isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
             ..Default::default()
         },

@@ -111,7 +111,6 @@ fn fixture_child() {
     builder.set_isolation(Isolation::PerPlugin(Some(PathBuf::from(
         std::env::var_os("XIRIUS_ISOLATE_TEST_HOST").unwrap(),
     ))));
-    builder.set_threaded_local(true);
     let loader = builder.plugins_mut();
     let (mut processor, _) = loader.instantiate("Track", &x).unwrap();
     assert_eq!(mode, "remote");

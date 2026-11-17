@@ -55,8 +55,6 @@ pub(crate) fn on_window_thread() -> bool {
 
 #[derive(Default)]
 pub struct HostConfig {
-    /// Uses a dedicated controller owner for each local VST3 instance (PRJ-030).
-    pub threaded_local: bool,
     /// The engine's sample rate. `None` takes the song's setting.
     pub rate: Option<u32>,
     /// The folder audio paths in the song are relative to.
@@ -68,9 +66,6 @@ pub struct HostConfig {
     pub isolation: Option<Isolation>,
     /// Process preferences supplied by a caller with an isolated settings store.
     pub process_prefs: Option<xirius_prefs::Prefs>,
-    /// How long an in-process plugin's opening is waited for (`None`: [`OPEN_WAIT`]). Tests
-    /// set a short one to reach the "does not answer" failure.
-    pub open_wait: Option<Duration>,
 }
 
 /// What one [`SessionHost::sync`] did.
@@ -508,7 +503,6 @@ impl SessionHost {
             if cancelled() {
                 return Err("中止しました".into());
             }
-            self.builder.plugins_mut().poll_preloads();
             let loader = self.builder.plugins();
             if hosted
                 .iter()
@@ -1811,7 +1805,6 @@ impl SessionHost {
             }
             return self.step_material();
         }
-        self.builder.plugins_mut().poll_preloads();
         let setup = setup(self.builder.rate(), RenderMode::Realtime);
         let pd = self.pending.as_mut()?;
         let loader = self.builder.plugins_mut();
@@ -2369,11 +2362,6 @@ fn collect_edits(
 
 /// How long [`pull_plugin_states`] waits for the plugins in host processes to answer.
 pub const PULL_WAIT: Duration = Duration::from_millis(1500);
-
-/// How long the opening of a plugin on an owner thread is waited for before it fails: a
-/// plugin that is slow to load but answers is waited for, and only one over this limit gets
-/// the "does not answer" failure. [`PULL_WAIT`] is for state pulls, not for this.
-pub const OPEN_WAIT: Duration = Duration::from_secs(60);
 
 /// [`collect_plugin_states`] after reading every plugin's state, not only the ones that said
 /// they had changed (PLG-057). For the moments the song is written or left, and when a

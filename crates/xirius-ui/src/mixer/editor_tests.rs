@@ -1,8 +1,6 @@
-//! Real VST3 windows (UI-040, PLG-027): an effect from its insert row, an instrument from the
-//! keys button and from the mixer's instrument row. Each opens a window of this process on the
-//! instance that plays (off every screen, never in front), which draws something; what is
-//! turned in it becomes one step of the song. The plugins are the ones on this PC (kHs Gain;
-//! sforzando, else Vital): without them a test says why and passes.
+//! Real plugin windows: an effect from its insert row and an instrument from the keys
+//! button and mixer. Each opens in a plugin host, off every screen, and draws content.
+//! State capture of host editor changes is covered by the session's recapture tests.
 
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
@@ -29,9 +27,34 @@ const INSTRUMENTS: [&str; 2] = ["sforzando.vst3", "Vital.vst3"];
 /// thread opened at the same time may never be drawn.
 static WINDOWS: Mutex<()> = Mutex::new(());
 
-fn one_at_a_time() -> MutexGuard<'static, ()> {
+struct WindowGuard {
+    _lock: MutexGuard<'static, ()>,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl Drop for WindowGuard {
+    fn drop(&mut self) {
+        // SAFETY: the real-window tests serialize changes to this test-only setting.
+        unsafe {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(xirius_vst3::OFFSCREEN_ENV, previous);
+            } else {
+                std::env::remove_var(xirius_vst3::OFFSCREEN_ENV);
+            }
+        }
+    }
+}
+
+fn one_at_a_time() -> WindowGuard {
     keep_com();
-    WINDOWS.lock().unwrap_or_else(|e| e.into_inner())
+    let lock = WINDOWS.lock().unwrap_or_else(|e| e.into_inner());
+    let previous = std::env::var_os(xirius_vst3::OFFSCREEN_ENV);
+    // SAFETY: these tests hold WINDOWS while any host window they start is open.
+    unsafe { std::env::set_var(xirius_vst3::OFFSCREEN_ENV, "1") };
+    WindowGuard {
+        _lock: lock,
+        previous,
+    }
 }
 
 /// Keeps COM up in the test process until it ends, as the app's UI thread does. A thread
@@ -101,23 +124,41 @@ fn press(s: &mut Studio, g: &Geometry, hit: MixerHit) -> bool {
     s.press(g, Hit::Mixer(hit))
 }
 
-/// The window of `id` is this process's, on the instance that plays, off every screen, not
-/// in front, and draws something.
+/// The host's window of `id` is on the instance that plays, off every screen, and draws something.
 fn check_window(s: &mut Studio, id: PluginId, what: &str) {
     assert_eq!(s.error, None, "{what}");
     assert!(s.mixer.is_open(id), "{what}: the window opened");
     assert_eq!(s.mixer.editor_heard(id), Some(true), "{what}: heard");
-    let hwnd = s.mixer.editor_hwnd(id).expect("a window of this process");
+    let until = Instant::now() + Duration::from_secs(10);
+    let hwnd = loop {
+        s.tick();
+        if let Some(hwnd) = s.mixer.editor_hwnd(id) {
+            break hwnd;
+        }
+        assert!(
+            Instant::now() < until,
+            "{what}: host window did not open: title={:?}, statuses={:?}, origin={:?}, events={:?}, shown={}, error={:?}",
+            s.mixer
+                .editors
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| &e.title),
+            s.transport.host().map(|h| h.plugin_statuses()),
+            s.transport
+                .host()
+                .and_then(|h| h.plugins().editor_origin(id)),
+            s.transport
+                .host()
+                .and_then(|h| h.plugins().link(id))
+                .map(|l| l.take_editor_open_events()),
+            s.editor_shown(id),
+            s.error
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    };
     assert_ne!(hwnd, 0);
-    let editor = s
-        .mixer
-        .editors
-        .iter()
-        .find(|e| e.id == id)
-        .and_then(|e| e.editor())
-        .unwrap();
-    assert!(!editor.took_foreground(), "{what}: not in front");
-    let (x, _) = editor.origin();
+    assert!(!crate::park::is_foreground(hwnd), "{what}: not in front");
+    let (x, _) = crate::park::origin(hwnd).expect("host window origin");
     let off = xirius_vst3::Placement::offscreen().at.unwrap().0;
     assert!(x >= off, "{what}: off every screen ({x} < {off})");
     let dir = tempfile::Builder::new()
@@ -125,34 +166,22 @@ fn check_window(s: &mut Studio, id: PluginId, what: &str) {
         .tempdir()
         .unwrap();
     let shot = dir.path().join(format!("{}.bmp", what.replace(' ', "-")));
-    // The plugin draws at its own pace.
-    let t = Instant::now();
     let c = loop {
-        s.mixer.pump_editors(Duration::from_millis(250));
         let c = xirius_vst3::capture_window(hwnd, &shot).unwrap();
-        if c.distinct_colors > 1 || t.elapsed() > Duration::from_secs(10) {
+        if c.distinct_colors > 1 || Instant::now() > until {
             break c;
         }
+        std::thread::sleep(Duration::from_millis(25));
     };
     assert!(c.width > 0 && c.height > 0, "{what}: {c:?}");
-    assert!(c.distinct_colors > 1, "{what}: the window drew ({c:?})");
-}
-
-/// Polls the windows until the song takes a change, or `wait` goes by.
-fn poll_until_taken(s: &mut Studio, steps: usize, wait: Duration) -> bool {
-    let t = Instant::now();
-    while t.elapsed() < wait {
-        s.mixer.pump_editors(Duration::from_millis(30));
-        s.poll_editors();
-        if s.song.steps() > steps {
-            return true;
-        }
-    }
-    false
+    assert!(
+        c.distinct_colors > 1,
+        "{what}: the host window drew ({c:?})"
+    );
 }
 
 #[test]
-fn a_vst3_effects_window_opens_on_the_instance_that_plays_and_its_knob_is_one_step() {
+fn a_vst3_effects_window_opens_in_its_host_and_draws() {
     // A plugin may write into the temporary folder (Vital leaves `vital_versions.txt`).
     let _temp = crate::shot::TestTemp::new();
     let _one = one_at_a_time();
@@ -175,31 +204,6 @@ fn a_vst3_effects_window_opens_on_the_instance_that_plays_and_its_knob_is_one_st
     let id = s.project().tracks[&t].inserts[0].id;
     assert!(s.mixer.is_open(id), "inserting opens the editor");
     check_window(&mut s, id, "kHs Gain");
-
-    // A knob turned in the window: the instance that plays turns it, the song takes it as one
-    // step once let go, and undo puts it back.
-    let before = s.project().tracks[&t].inserts[0].clone();
-    let steps = s.song.steps();
-    {
-        let host = s.transport.host().unwrap();
-        let (plugin, _) = host.plugins().local(id).expect("the instance that plays");
-        let param = plugin
-            .params()
-            .into_iter()
-            .find(|p| p.step_count == 0)
-            .expect("a knob");
-        let to = if param.default > 0.5 { 0.1 } else { 0.9 };
-        plugin.edit_like_editor(param.id, &[(param.default + to) / 2.0, to]);
-    }
-    assert!(
-        poll_until_taken(&mut s, steps, Duration::from_secs(5)),
-        "the song took the knob"
-    );
-    assert_eq!(s.song.steps(), steps + 1, "one step");
-    let after = s.project().tracks[&t].inserts[0].clone();
-    assert_ne!(after.state, before.state, "the plugin's state moved");
-    assert!(s.song.undo());
-    assert_eq!(s.project().tracks[&t].inserts[0].state, before.state);
 
     // Pressing the row again shuts it.
     assert!(press(&mut s, &g, MixerHit::Open(t, id)));
@@ -276,9 +280,9 @@ fn a_window_that_cannot_open_says_why() {
     );
 }
 
-/// With no audio output, opening a window never creates a plugin instance in the app.
+/// With no audio output, opening a window still uses the plugin host.
 #[test]
-fn without_output_does_not_open_an_in_process_editor() {
+fn without_output_opens_only_a_hosted_editor() {
     // A plugin may write into the temporary folder (Vital leaves `vital_versions.txt`).
     let _temp = crate::shot::TestTemp::new();
     let _one = one_at_a_time();

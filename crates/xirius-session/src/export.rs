@@ -8,9 +8,8 @@
 //! WAV file of the same bit depth. An MP3 file is encoded by LAME ([`crate::mp3`]), and its
 //! loudness and true peak are measured on the file read back.
 //!
-//! Plugins in the plugin host process (OPEN-02) are rendered through the same shared memory as
-//! when playing, one block behind, and the host is waited for rather than skipped, so the file
-//! is the same as with the plugins in this process. The render starts the plan's delay
+//! External plugins render through the host's shared memory. Each block waits for its result,
+//! adding no host latency. The render starts the plan's delay
 //! compensation earlier and drops it, so the file starts on the range (ENG-010, ENG-024).
 
 use std::fmt;

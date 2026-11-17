@@ -147,11 +147,12 @@ fn heard(s: &mut Studio, _: u8) {
         peak.get()
     );
     let host = s.transport.host().unwrap();
-    let shape = host
-        .plugins()
-        .local(s.project().tracks[&vocal].inserts[0].id)
-        .unwrap();
-    assert_eq!(shape.0.latency(), 256);
+    let id = s.project().tracks[&vocal].inserts[0].id;
+    let shape = host.plugins().reports();
+    assert_eq!(
+        shape.iter().find(|r| r.id == id).unwrap().status.latency,
+        256
+    );
     assert_eq!(
         s.project().tracks[&vocal].automation[0].value_at(s.playhead as f64),
         Some(0.0)

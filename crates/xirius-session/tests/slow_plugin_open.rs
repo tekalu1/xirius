@@ -79,7 +79,6 @@ fn a_plugin_slow_to_open_is_waited_for_and_no_track_fails() {
         &p,
         HostConfig {
             catalog: Some(catalog),
-            threaded_local: true,
             isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
             ..Default::default()
         },
@@ -110,7 +109,6 @@ fn dropping_preparation_does_not_wait_for_an_open_in_flight() {
         &p,
         HostConfig {
             catalog: Some(catalog),
-            threaded_local: true,
             isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
             ..Default::default()
         },

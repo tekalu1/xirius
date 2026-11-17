@@ -734,21 +734,12 @@ impl Mixer {
         gone
     }
 
-    /// The handle of a plugin's window in this process (for tests and screenshots).
+    /// The handle of a plugin host's window (for tests and screenshots).
     pub fn editor_hwnd(&self, id: PluginId) -> Option<isize> {
         self.editors
             .iter()
             .find(|e| e.id == id)
-            .and_then(|e| e.editor())
-            .map(|e| e.hwnd())
-    }
-
-    /// Runs the thread's messages for a while, so the windows draw where no GUI loop runs them
-    /// (tests).
-    pub fn pump_editors(&mut self, duration: std::time::Duration) {
-        if let Some(e) = self.editors.iter_mut().find_map(|e| e.editor_mut()) {
-            e.pump(duration);
-        }
+            .and_then(|e| crate::park::any_window(&e.title))
     }
 
     /// What is turned in the plugin's open window is heard (it shows the instance that plays).

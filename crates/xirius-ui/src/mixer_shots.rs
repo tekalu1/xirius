@@ -472,7 +472,7 @@ fn play(n: u8, s: &Rc<RefCell<Studio>>, w: &mut Window, cx: &mut App) {
             assert!(s.borrow().error.is_none(), "{:?}", s.borrow().error);
         }
         13 => {
-            let mut s = s.borrow_mut();
+            let s = s.borrow_mut();
             let p = s.project();
             let id = p.tracks[&TrackId::MASTER]
                 .inserts
@@ -485,7 +485,7 @@ fn play(n: u8, s: &Rc<RefCell<Studio>>, w: &mut Window, cx: &mut App) {
                 .join("../../target/mixer-vst3-editor.bmp");
             let started = std::time::Instant::now();
             let image = loop {
-                s.mixer.pump_editors(std::time::Duration::from_millis(100));
+                std::thread::sleep(std::time::Duration::from_millis(100));
                 let image = xirius_vst3::capture_window(hwnd, &path).unwrap();
                 if image.distinct_colors > 8 {
                     break image;

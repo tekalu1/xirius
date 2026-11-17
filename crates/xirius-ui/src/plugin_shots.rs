@@ -18,7 +18,6 @@ use xirius_design::Layout;
 use xirius_plugins::{Catalog, Entry};
 
 use crate::instrument::{DEFAULT, Pick, current};
-use crate::mixer::editors::Where;
 use crate::shot::{Act, Part, Shot, Target};
 use crate::studio::{DrawerTab, Studio};
 use crate::tree::RowKind;
@@ -201,76 +200,43 @@ fn capture_windows(s: &mut Studio, shot: &str, dir: &Path) {
         .mixer
         .editors
         .iter()
-        .map(|e| {
-            let app = match &e.at {
-                Where::Local { editor, .. } => Some((editor.hwnd(), editor.took_foreground())),
-                Where::Host { .. } => None,
-            };
-            (app, e.title.clone(), e.heard())
-        })
+        .map(|e| (e.title.clone(), e.heard()))
         .collect();
-    for (app, title, heard) in open {
-        let (hwnd, place, front) = match app {
-            Some((hwnd, front)) => (Some(hwnd), "app", front),
-            None => {
-                let t = Instant::now();
-                let mut hwnd = None;
-                let mut place = "host";
-                while hwnd.is_none() && t.elapsed() < HOST_WAIT {
-                    s.tick();
-                    // Owned in-process editors use the plugin name as their caption.
-                    // Where::Host also covers that asynchronous owner now.
-                    let local_title = title.split(" · ").next().unwrap_or(&title);
-                    if let Some(local) = crate::park::own_handle(local_title)
-                        .or_else(|| crate::park::own_handle(&title))
-                    {
-                        hwnd = Some(local);
-                        place = "app";
-                    } else {
-                        hwnd = crate::park::any_window(&title);
-                    }
-                    if hwnd.is_none() {
-                        std::thread::sleep(Duration::from_millis(50));
-                    }
-                }
-                (hwnd, place, false)
+    for (title, heard) in open {
+        let t = Instant::now();
+        let mut hwnd = None;
+        while hwnd.is_none() && t.elapsed() < HOST_WAIT {
+            s.tick();
+            hwnd = crate::park::any_window(&title);
+            if hwnd.is_none() {
+                std::thread::sleep(Duration::from_millis(50));
             }
-        };
+        }
         let Some(hwnd) = hwnd else {
-            eprintln!("plugin-check {shot} editor=missing place={place} title={title}");
+            eprintln!("plugin-check {shot} editor=missing place=host title={title}");
             continue;
         };
         let path = dir.join(format!("{shot}-editor.bmp"));
-        let foreground = front || crate::park::is_foreground(hwnd);
+        let foreground = crate::park::is_foreground(hwnd);
         // Off every screen: right of the desktop, where the run puts plugin windows.
         let edge = xirius_vst3::Placement::offscreen().at.map_or(0, |(x, _)| x);
         let offscreen = crate::park::origin(hwnd).is_some_and(|(x, _)| x >= edge);
-        // The plugin draws at its own pace: in the host's process, or on this thread once its
-        // window's messages are let through (only its own: the app's come back on the loop).
+        // The plugin draws at its own pace in the host process.
         let t = Instant::now();
         let mut taken = xirius_vst3::capture_window(hwnd, &path);
         while t.elapsed() < HOST_WAIT && taken.as_ref().is_ok_and(|c| c.distinct_colors <= 1) {
-            let own = s
-                .mixer
-                .editors
-                .iter_mut()
-                .filter_map(|e| e.editor_mut())
-                .find(|e| e.hwnd() == hwnd);
-            match own {
-                Some(editor) => editor.pump_own(Duration::from_millis(200)),
-                None => std::thread::sleep(Duration::from_millis(200)),
-            }
+            std::thread::sleep(Duration::from_millis(200));
             taken = xirius_vst3::capture_window(hwnd, &path);
         }
         match taken {
             Ok(c) => eprintln!(
-                "plugin-check {shot} editor={} place={place} heard={heard} foreground={foreground} offscreen={offscreen} width={} height={} colors={} title={title}",
+                "plugin-check {shot} editor={} place=host heard={heard} foreground={foreground} offscreen={offscreen} width={} height={} colors={} title={title}",
                 path.display(),
                 c.width,
                 c.height,
                 c.distinct_colors,
             ),
-            Err(err) => eprintln!("plugin-check {shot} editor=failed place={place} error={err}"),
+            Err(err) => eprintln!("plugin-check {shot} editor=failed place=host error={err}"),
         }
     }
 }

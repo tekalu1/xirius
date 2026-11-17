@@ -1,12 +1,9 @@
 //! Starting a song's player a little at a time (ENG-064), so that its window keeps drawing and
 //! shows how far the opening of its plugins has come.
 //!
-//! [`Starting::step`] first asks every plugin that runs in a host process to open there; those
-//! open at once, each in a host of its own or one after another in a shared one, and are counted
-//! as their answers come. Then each step opens one plugin that runs in this process. The
-//! plugins are opened as [`Builder::build`] would open them, so [`Starting::finish`] builds the
-//! mix with them as they are and opens what is left on the spot. [`SessionHost::start`] is the
-//! same, all at once.
+//! [`Starting::step`] asks plugins to open in host processes and counts their answers as they
+//! arrive. Plugins in separate hosts may open at once; plugins sharing a host open in order.
+//! [`Starting::finish`] builds the mix with the instances that answered.
 //!
 //! A plugin that cannot be opened says so in the warnings, as when it is opened on the spot,
 //! and the song plays with what stands in for it.
@@ -76,10 +73,6 @@ impl Starting {
         let mut builder = Builder::new(rate, config.dir);
         builder.set_background(true);
         builder.set_ara_live(true);
-        builder.set_threaded_local(config.threaded_local);
-        if let Some(wait) = config.open_wait {
-            builder.plugins_mut().set_open_wait(wait);
-        }
         builder.set_catalog(config.catalog);
         if let Some(prefs) = config.process_prefs {
             builder.plugins_mut().set_process_prefs(prefs);
@@ -101,7 +94,6 @@ impl Starting {
     /// Opens a little more: the first step asks for every plugin that runs in a host
     /// process, each later one opens one plugin here. Whether everything is open.
     pub fn step(&mut self) -> bool {
-        self.builder.plugins_mut().poll_preloads();
         if !self.asked {
             self.asked = true;
             self.ask_apart();
@@ -235,10 +227,6 @@ impl Starting {
         )
         .map(|(host, audio, _)| (host, audio, failures))
         .map_err(|e| e.to_string())
-    }
-
-    pub fn owner_retirements(&self) -> Vec<xirius_vst3::owner::Retirement> {
-        self.builder.plugins().owner_retirements()
     }
 
     /// As [`Starting::finish`], without waiting for the plugins that run in a host process and

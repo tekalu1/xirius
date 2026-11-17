@@ -756,6 +756,7 @@ mod capture_tests {
             link: link.clone(),
             rings: None,
             poisoned: false,
+            pending_editor: None,
         }
     }
     fn fixture() -> (PluginServer, Arc<PluginLink>, Stamp, mpsc::Receiver<ToHost>) {
@@ -992,6 +993,24 @@ mod capture_tests {
         assert!(messages.try_iter().any(|m| matches!(m,
             ToHost::SetCaption { caption: actual, .. } if actual == caption
         )));
+    }
+
+    #[test]
+    fn editor_requested_during_host_start_is_kept_until_open_and_can_be_cancelled() {
+        let (server, link, _, messages) = fixture();
+        {
+            let mut st = server.inner.lock();
+            st.proc = None;
+            st.starting = true;
+        }
+        server.open_editor(&link, "Effect", None);
+        assert!(messages.try_iter().next().is_none());
+        assert_eq!(
+            server.inner.lock().slots[&1].pending_editor,
+            Some(("Effect".into(), None))
+        );
+        server.close_editor(&link);
+        assert!(server.inner.lock().slots[&1].pending_editor.is_none());
     }
 
     #[test]
@@ -1455,6 +1474,8 @@ struct SlotRec {
     rings: Option<Arc<SharedRings>>,
     /// The host went down while opening this plugin; a restart leaves it out.
     poisoned: bool,
+    /// An editor requested while the host process is still starting.
+    pending_editor: Option<(String, Option<Caption>)>,
 }
 impl SlotRec {
     fn parameter_message(&mut self, key: String, value: f64) -> ToHost {
@@ -1741,6 +1762,7 @@ impl PluginServer {
                 link: link.clone(),
                 rings: Some(rings.clone()),
                 poisoned: false,
+                pending_editor: None,
             },
         );
         st.publish(link);
@@ -1768,6 +1790,20 @@ impl PluginServer {
             rec.open.epoch = epoch;
         }
         st.send(&ToHost::Open(open));
+        if let Some((title, caption)) = st
+            .slots
+            .get_mut(&slot)
+            .and_then(|rec| rec.pending_editor.take())
+        {
+            for msg in link.editor_context(slot) {
+                st.send(&msg);
+            }
+            st.send(&ToHost::OpenEditor {
+                slot,
+                title,
+                caption,
+            });
+        }
         let (mut st, r) = inner.wait_opened(st, slot, epoch);
         if r.is_err() && st.epoch == epoch && st.proc.is_none() {
             // The host went down while opening this plugin: leave it out and bring the others
@@ -2025,22 +2061,22 @@ impl PluginServer {
 
     /// Opens the plugin's editor in the host process (behind other windows, not activated).
     pub fn open_editor(&self, link: &PluginLink, title: &str, caption: Option<Caption>) {
-        {
-            let mut st = self.inner.lock();
-            let slot = link.slot.load(Ordering::Acquire);
-            if st.slots.contains_key(&slot) {
+        let mut st = self.inner.lock();
+        let slot = link.slot.load(Ordering::Acquire);
+        if st.slots.contains_key(&slot) {
+            if st.proc.is_some() {
                 for msg in link.editor_context(slot) {
                     st.send(&msg);
                 }
+                st.send(&ToHost::OpenEditor {
+                    slot,
+                    title: title.to_string(),
+                    caption,
+                });
+            } else if let Some(rec) = st.slots.get_mut(&slot) {
+                rec.pending_editor = Some((title.to_string(), caption));
             }
         }
-        self.with_slot(link, |o| {
-            Some(ToHost::OpenEditor {
-                slot: o.slot,
-                title: title.to_string(),
-                caption,
-            })
-        });
         let mut l = link.lock();
         l.editor_open = true;
         l.editor = Some((title.to_string(), caption));
@@ -2062,6 +2098,16 @@ impl PluginServer {
         if let Some((_, current)) = &mut link.lock().editor {
             *current = Some(caption);
         }
+        let mut st = self.inner.lock();
+        let slot = link.slot.load(Ordering::Acquire);
+        if let Some((_, waiting)) = st
+            .slots
+            .get_mut(&slot)
+            .and_then(|rec| rec.pending_editor.as_mut())
+        {
+            *waiting = Some(caption);
+        }
+        drop(st);
         self.with_slot(link, |o| {
             Some(ToHost::SetCaption {
                 slot: o.slot,
@@ -2071,6 +2117,12 @@ impl PluginServer {
     }
 
     pub fn close_editor(&self, link: &PluginLink) {
+        let mut st = self.inner.lock();
+        let slot = link.slot.load(Ordering::Acquire);
+        if let Some(rec) = st.slots.get_mut(&slot) {
+            rec.pending_editor = None;
+        }
+        drop(st);
         self.with_slot(link, |o| Some(ToHost::CloseEditor { slot: o.slot }));
         let mut l = link.lock();
         l.editor_open = false;

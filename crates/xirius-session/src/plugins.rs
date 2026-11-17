@@ -28,23 +28,21 @@
 //! request a single shared host for tests.
 
 use std::collections::{HashMap, HashSet};
-use std::mem::ManuallyDrop;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 use xirius_engine::plugin_updates::{Field, Origin, Stamp, UpdateGate};
 
 use xirius_core::id::PluginId;
 use xirius_core::model::{Plugin, PluginIsolation, PluginKind};
 use xirius_engine::server::{
-    DEFAULT_LATENCY, EditPhase, ParamEdit, PluginLink, PluginServer, PluginStatus, RemotePlugin,
-    RemoteSpec, find_host,
+    DEFAULT_LATENCY, ParamEdit, PluginLink, PluginServer, PluginStatus, RemotePlugin, RemoteSpec,
+    find_host,
 };
 use xirius_engine::stock::{self, StockHandle};
 use xirius_engine::{ProcessSetup, Processor, Readied};
 use xirius_plugins::{Catalog, decode_state};
-use xirius_vst3::{Gesture, PluginState};
+use xirius_vst3::PluginState;
 
 use crate::clap_plugins::{self, is_clap};
 
@@ -226,30 +224,25 @@ struct Remote {
     applied: Plugin,
 }
 
-/// The instance that plays a plugin while the build in progress has opened it again in
-/// another place, or again in this process (ENG-071). Until the new mix plays
+/// The instance that plays a plugin while the build in progress opens it in another host
+/// (ENG-071). Until the new mix plays
 /// ([`PluginLoader::promote_opened`]) its window, its reports and what is moved in it are this
 /// one's; when the new mix is let go ([`PluginLoader::drop_ready`]) it is the plugin's again.
 enum Leaving {
     Remote(Remote),
-    /// With the parameters for automation of the plugin while it plays.
-    Local(Local, Option<xirius_vst3::ParamSender>),
 }
 
 /// A window that moved with a plugin to another place when the new mix played (ENG-071).
 /// Until the host of the instance that played has let go of it, that host may still say the
-/// person shut the old window as the mix changed: then the moved window shuts too, or does not
-/// open in this process.
+/// person shut the old window as the mix changed: then the moved window shuts too.
 struct Following {
-    id: PluginId,
     /// The instance that played and its host, kept until the host has let go of it.
     old_link: Arc<PluginLink>,
     old_server: PluginServer,
     /// How many windows the old host had said were shut when the new mix played.
     shut: u64,
-    /// The instance in a host that plays now, with the window that opened on it; `None` for
-    /// one in this process, whose window the screen opens ([`PluginLoader::window_moved_in`]).
-    to: Option<(PluginServer, Arc<PluginLink>)>,
+    /// The instance in a host that plays now, with the window that opened on it.
+    to: (PluginServer, Arc<PluginLink>),
     /// A host that has not let go by then is not waited for: its window moves as it is.
     until: Instant,
 }
@@ -263,10 +256,8 @@ pub struct StatePull {
     cancelled: std::cell::Cell<bool>,
     asked: Vec<(PluginId, Arc<PluginLink>, u64)>,
     errors: Vec<(PluginId, String)>,
-    owned: Vec<(PluginId, crate::owned_local::Capture)>,
     basis: HashMap<PluginId, StateIntent>,
     ignored: std::cell::RefCell<HashSet<PluginId>>,
-    not_before: std::cell::Cell<Instant>,
 }
 impl StatePull {
     pub fn reconcile(&self, target: &xirius_core::model::Project) {
@@ -280,28 +271,16 @@ impl StatePull {
                 for (_, link, request) in self.asked.iter().filter(|(asked, _, _)| asked == id) {
                     link.cancel_capture(*request);
                 }
-                for (_, capture) in self.owned.iter().filter(|(asked, _)| asked == id) {
-                    capture.cancel();
-                }
             }
         }
     }
     pub fn quarantine(&self) {
-        for (_, capture) in self
-            .owned
-            .iter()
-            .filter(|(id, _)| !self.ignored.borrow().contains(id))
-        {
-            capture.quarantine();
-        }
         self.cancel();
     }
     /// Leaves out each plugin that failed or has not answered yet, so the ones that answered
     /// are read on their own (MIX-045): one host gone down does not throw away the others'
     /// states. A late answer is quarantined, not put in the song afterwards.
     pub fn settle(&self) {
-        // what is read now is read now, though a plugin in this process had a moment more
-        self.not_before.set(Instant::now());
         let mut ignored = self.ignored.borrow_mut();
         for (id, _) in &self.errors {
             ignored.insert(*id);
@@ -312,18 +291,6 @@ impl StatePull {
                     || link.capture_error(*request).is_some())
             {
                 link.cancel_capture(*request);
-                ignored.insert(*id);
-            }
-        }
-        for (id, capture) in &self.owned {
-            if ignored.contains(id) {
-                continue;
-            }
-            if !self.answered(capture.ready()) {
-                capture.quarantine();
-                ignored.insert(*id);
-            } else if capture.error().is_some() {
-                capture.cancel();
                 ignored.insert(*id);
             }
         }
@@ -349,14 +316,9 @@ impl StatePull {
 
     pub fn ready(&self) -> bool {
         self.cancelled.get()
-            || (Instant::now() >= self.not_before.get()
-                && self.asked.iter().all(|(id, link, request)| {
-                    self.ignored.borrow().contains(id)
-                        || self.answered(link.capture_finished(*request))
-                })
-                && self.owned.iter().all(|(id, capture)| {
-                    self.ignored.borrow().contains(id) || self.answered(capture.ready())
-                }))
+            || self.asked.iter().all(|(id, link, request)| {
+                self.ignored.borrow().contains(id) || self.answered(link.capture_finished(*request))
+            })
     }
 
     pub fn error(&self) -> Option<String> {
@@ -373,23 +335,14 @@ impl StatePull {
                     .filter(|(id, _, _)| !self.ignored.borrow().contains(id))
                     .find_map(|(_, link, request)| link.capture_error(*request))
             })
-            .or_else(|| {
-                self.owned
-                    .iter()
-                    .filter(|(id, _)| !self.ignored.borrow().contains(id))
-                    .find_map(|(_, capture)| capture.error())
-            })
     }
 
-    /// Abandon local owner replies even when an SDK call cannot be interrupted.
+    /// Abandon host replies that arrive after the pull was cancelled.
     /// This does not claim the plugin has stopped or its owner has retired.
     pub fn cancel(&self) {
         self.cancelled.set(true);
         for (_, link, request) in &self.asked {
             link.cancel_capture(*request);
-        }
-        for (_, capture) in &self.owned {
-            capture.cancel();
         }
     }
 }
@@ -429,232 +382,6 @@ struct Values {
     params: Vec<(String, f64)>,
 }
 
-/// `kParamValuesChanged`: the plugin changed many values at once (a preset in its editor).
-const PARAM_VALUES_CHANGED: i32 = 4;
-const LATENCY_CHANGED: i32 = 8;
-/// How long after an edit settles the plugin's state is read: by then the processor has had
-/// the edit (as the host process waits).
-pub(crate) const CAPTURE_WAIT: Duration = Duration::from_millis(300);
-/// Parameter moves kept until [`PluginLoader::take_edits`] collects them.
-const MAX_LOCAL_EDITS: usize = 65_536;
-
-/// A value kept on the thread that made it. A VST3 plugin's UI-thread side may only be used
-/// there (the SDK's rule), while the loader moves with the session; elsewhere it is out of
-/// reach, and dropped there it is leaked rather than torn down on the wrong thread.
-struct OnThread<T> {
-    value: ManuallyDrop<T>,
-    thread: ThreadId,
-}
-
-// SAFETY: the value is only reached and dropped on the thread that made it (see `get`, Drop).
-unsafe impl<T> Send for OnThread<T> {}
-
-impl<T> OnThread<T> {
-    fn get(&self) -> Option<&T> {
-        (std::thread::current().id() == self.thread).then_some(&*self.value)
-    }
-}
-
-impl<T> Drop for OnThread<T> {
-    fn drop(&mut self) {
-        if std::thread::current().id() == self.thread {
-            // SAFETY: dropped once, on its own thread.
-            unsafe { ManuallyDrop::drop(&mut self.value) };
-        }
-    }
-}
-
-/// A plugin running in this process: its UI-thread side, kept so that its editor is the
-/// instance that plays and what the editor moves is heard and reaches the song.
-struct Local {
-    updates: Box<UpdateGate>,
-    restart_pending: i32,
-    plugin: Option<OnThread<xirius_vst3::Plugin>>,
-    owned: Option<Box<crate::owned_local::OwnedLocal>>,
-    applied: Plugin,
-    /// Which instance this is ([`PluginLoader::local`]): an editor of an older one belongs to
-    /// a mix that is gone.
-    generation: u64,
-    /// Parameter id → title.
-    titles: Vec<(u32, String)>,
-    /// Parameter id → the values of a switch or a list of choices (AUT-016).
-    steps: Vec<(u32, u32)>,
-    /// The names the plugin gives its keys, read again with each state it takes or reports.
-    note_names: Vec<(u8, String)>,
-    /// When to read the state after an edit settled.
-    capture: Option<Instant>,
-}
-
-impl Local {
-    fn update_gate(&self) -> UpdateGate {
-        self.owned
-            .as_ref()
-            .map_or_else(|| (*self.updates).clone(), |owned| owned.update_gate())
-    }
-    fn inherit_updates(&mut self, basis: &UpdateGate, protected: Vec<String>) {
-        if let Some(owned) = &self.owned {
-            owned.inherit_updates(basis, protected.clone());
-        }
-        *self.updates = basis.successor(self.updates.stamp().instance, protected);
-    }
-    fn invalidate(&mut self, replace: bool, keys: &[String]) {
-        if let Some(owned) = &self.owned {
-            owned.invalidate(replace, keys);
-        }
-        if let Some(plugin) = self.plugin.as_ref().and_then(OnThread::get) {
-            plugin.handler().take_gestures();
-            self.capture = None;
-        }
-        let next = self.updates.next_generation();
-        self.updates.explicit(next, replace, keys);
-    }
-
-    fn direct(&self) -> Option<&xirius_vst3::Plugin> {
-        self.plugin.as_ref()?.get()
-    }
-    /// The parameter moves in the editor since the last call, and the state once the last
-    /// edit has settled (or now, with `now`, when there were edits not read yet).
-    fn take(&mut self, id: PluginId, now: bool) -> Option<RemoteEdit> {
-        if let Some(owned) = &self.owned {
-            let edits = owned.take(id);
-            self.note_names = owned.names();
-            return edits;
-        }
-        let plugin = self.plugin.as_ref()?.get()?;
-        // What the processor changed on its own shows in the editor (not an edit of the user's).
-        plugin.follow_processor();
-        let handler = plugin.handler();
-        let mut params = Vec::new();
-        for g in handler.take_gestures() {
-            let (pid, phase, value) = match g {
-                Gesture::Begin(pid) => (pid, EditPhase::Begin, None),
-                Gesture::Perform(pid, v) => (pid, EditPhase::Change, Some(v)),
-                Gesture::End(pid) => (pid, EditPhase::End, None),
-            };
-            if phase == EditPhase::End {
-                self.capture = Some(Instant::now() + CAPTURE_WAIT);
-            }
-            if params.len() >= MAX_LOCAL_EDITS {
-                params.remove(0);
-            }
-            let title = self
-                .titles
-                .iter()
-                .find(|(i, _)| *i == pid)
-                .map(|(_, t)| t.clone())
-                .unwrap_or_default();
-            params.push(ParamEdit {
-                id: pid,
-                title,
-                phase,
-                value,
-                at: Instant::now(),
-            });
-        }
-        let flags = handler.take_restart_flags() | std::mem::take(&mut self.restart_pending);
-        // State collection must not consume a pending latency notification.
-        self.restart_pending |= flags & LATENCY_CHANGED;
-        if flags & PARAM_VALUES_CHANGED != 0 && self.capture.is_none() {
-            self.capture = Some(Instant::now() + CAPTURE_WAIT);
-        }
-        let due = match self.capture {
-            Some(at) => now || Instant::now() >= at,
-            None => now && !params.is_empty(),
-        };
-        let state = if due {
-            self.capture = None;
-            // A preset chosen in the editor may name its keys anew.
-            self.note_names = plugin.note_names();
-            plugin.get_state().ok()
-        } else {
-            None
-        };
-        if state.is_none() && params.is_empty() {
-            return None;
-        }
-        if state.is_some() {
-            params.extend(plugin.params().iter().filter_map(|p| {
-                plugin.param(p.id).map(|value| ParamEdit {
-                    id: p.id,
-                    title: p.title.clone(),
-                    phase: EditPhase::Snapshot,
-                    value: Some(value),
-                    at: Instant::now(),
-                })
-            }));
-        }
-        Some(RemoteEdit {
-            origin: Origin::Editor,
-            stamp: self.update_gate().stamp(),
-            plugin: id,
-            state: state.as_ref().map(xirius_plugins::encode_state),
-            params,
-        })
-    }
-
-    /// Gives the playing instance the song's state and parameters for it, as a plugin in a
-    /// host process is given them. `false` when that takes a new mix.
-    fn apply(&mut self, x: &Plugin) -> bool {
-        let mut same = self.applied.clone();
-        same.state.clone_from(&x.state);
-        same.params.clone_from(&x.params);
-        if same != *x {
-            return false;
-        }
-        if self.applied.state == x.state && self.applied.params == x.params {
-            return true;
-        }
-        if self
-            .applied
-            .params
-            .keys()
-            .any(|k| !x.params.contains_key(k))
-        {
-            return false;
-        }
-        if let Some(owned) = &self.owned {
-            if !owned.apply(x, &self.applied) {
-                return false;
-            }
-            self.applied = x.clone();
-            return true;
-        }
-        let Some(plugin) = self.plugin.as_ref().and_then(OnThread::get) else {
-            return false;
-        };
-        let state_changed = self.applied.state != x.state;
-        if state_changed {
-            let Some(Ok(state)) = x
-                .state
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .map(decode_state)
-            else {
-                return false;
-            };
-            if plugin.set_state(&state).is_err() {
-                return false;
-            }
-            // What the plugin reports about its own new state is not the user's.
-            self.capture = None;
-            plugin.handler().take_gestures();
-            self.restart_pending |= plugin.handler().take_restart_flags() & LATENCY_CHANGED;
-            self.note_names = plugin.note_names();
-        }
-        for (key, value) in &x.params {
-            if (state_changed || self.applied.params.get(key) != Some(value))
-                && let Some(id) = param_id(&plugin.params(), key)
-            {
-                plugin.set_param(id, value.clamp(0.0, 1.0));
-            }
-        }
-        self.applied = x.clone();
-        true
-    }
-}
-
-/// Gives a plugin in a host process the song's state and parameters for it, as
-/// [`PluginLoader::apply`]. `false` when that takes a new mix.
 fn apply_remote(r: &mut Remote, x: &Plugin) -> bool {
     if r.applied.isolation != x.isolation {
         return false;
@@ -684,19 +411,6 @@ fn apply_remote(r: &mut Remote, x: &Plugin) -> bool {
     true
 }
 
-/// A parameter by numeric id, else by title (case-insensitive), as a song names it.
-fn param_id(params: &[xirius_vst3::ParamInfo], key: &str) -> Option<u32> {
-    key.parse::<u32>()
-        .ok()
-        .filter(|id| params.iter().any(|p| p.id == *id))
-        .or_else(|| {
-            params
-                .iter()
-                .find(|p| p.title.eq_ignore_ascii_case(key))
-                .map(|p| p.id)
-        })
-}
-
 /// A running built-in and the song's plugin it was last given.
 struct Stock {
     handle: StockHandle,
@@ -718,8 +432,6 @@ struct Ready {
 #[derive(Clone, Copy)]
 enum Fresh {
     Remote,
-    Local,
-    Clap,
     None,
 }
 
@@ -750,11 +462,6 @@ pub struct PluginLoader {
     building_pressed: Option<PressedBindings>,
     editor_contexts: Arc<Mutex<HashMap<PluginId, EditorContext>>>,
     intents: HashMap<PluginId, Option<Plugin>>,
-    pending_owned: HashMap<PluginId, PendingOwned>,
-    threaded_local: bool,
-    /// How long an owner-threaded open is waited for before it fails (`None`:
-    /// [`crate::host::OPEN_WAIT`]).
-    open_wait: Option<Duration>,
     process_setup: Option<ProcessSetup>,
     catalog: Option<Arc<Catalog>>,
     process_prefs: Option<xirius_prefs::Prefs>,
@@ -769,21 +476,9 @@ pub struct PluginLoader {
     carried: Vec<RemoteEdit>,
     /// Plugins of the build in progress, for [`PluginLoader::opening_warnings`].
     fresh: Vec<PluginId>,
-    /// The parameters of plugins that run in this process, for automation while playing.
-    senders: HashMap<PluginId, xirius_vst3::ParamSender>,
-    /// The plugins of the last build that run in this process, and those of the build in
-    /// progress.
-    locals: HashMap<PluginId, Local>,
-    fresh_locals: Vec<PluginId>,
-    /// The last [`Local::generation`] given.
-    generation: u64,
     /// The built-ins of the last build, and of the build in progress.
     stock: HashMap<PluginId, Stock>,
     fresh_stock: Vec<PluginId>,
-    /// The names the CLAP plugins of the last build that run in this process give their keys
-    /// (their values change only with a new mix), and those of the build in progress.
-    clap_names: HashMap<PluginId, Vec<(u8, String)>>,
-    fresh_clap: Vec<PluginId>,
     /// The tempo the built-ins that follow it play at (beats per minute; 0 before it is set).
     tempo: f64,
     /// The song's folder (relative sample names resolve in it) and the mix's rate (ENG-077).
@@ -805,9 +500,6 @@ pub struct PluginLoader {
     late: HashMap<PluginId, u64>,
     /// The instances that play the plugins the build in progress opened again elsewhere.
     leaving: HashMap<PluginId, Leaving>,
-    /// The plugins the last mix moved into this process with their host's window open, for
-    /// [`PluginLoader::window_moved_in`].
-    moved_in: HashSet<PluginId>,
     /// Windows that moved with a plugin when the last mix played, whose old host has not let
     /// go yet (ENG-071, [`PluginLoader::settle_following`]).
     following: Vec<Following>,
@@ -816,27 +508,12 @@ pub struct PluginLoader {
     unsettled: HashMap<PluginId, Vec<(Stamp, ParamEdit)>>,
 }
 
-struct OwnedPreload {
-    local: Option<Local>,
-    sender: Option<xirius_vst3::ParamSender>,
-    ready: Ready,
-    carried: Option<RemoteEdit>,
-    took: Duration,
-}
-
 #[derive(Clone, Default)]
 struct EditorContext {
     area: Option<xirius_vst3::EditorArea>,
     bar: Option<xirius_vst3::EditorBar>,
     caption: Option<xirius_vst3::Caption>,
 }
-struct PendingOwned {
-    job: crate::background::Job<OwnedPreload>,
-    applied: Plugin,
-    owner: String,
-    at: Instant,
-}
-
 /// The startup log's one line for an open that failed: what it was, why, and how long the
 /// open took. The plugin's name and kind only; a reason naming a file keeps none of its path.
 fn note_open_failed(x: &Plugin, took: Duration, reason: &str) {
@@ -918,56 +595,27 @@ impl PluginLoader {
                 if let Some(r) = self.remotes.get(&id) {
                     r.server.invalidate(&r.link, replace, &keys);
                 }
-                if let Some(l) = self.locals.get_mut(&id) {
-                    l.invalidate(replace, &keys);
-                }
                 if let Some(leaving) = self.leaving.get_mut(&id) {
-                    match leaving {
-                        Leaving::Remote(r) => r.server.invalidate(&r.link, replace, &keys),
-                        Leaving::Local(l, _) => l.invalidate(replace, &keys),
-                    }
+                    let Leaving::Remote(r) = leaving;
+                    r.server.invalidate(&r.link, replace, &keys);
                 }
             }
             self.intents.insert(id, now);
         }
     }
     fn update_gate(&self, id: PluginId) -> Option<UpdateGate> {
-        self.locals
+        self.remotes
             .get(&id)
-            .map(Local::update_gate)
-            .or_else(|| self.remotes.get(&id).map(|r| r.link.update_gate()))
+            .map(|r| r.link.update_gate())
             .or_else(|| {
-                self.leaving.get(&id).map(|leaving| match leaving {
-                    Leaving::Local(l, _) => l.update_gate(),
-                    Leaving::Remote(r) => r.link.update_gate(),
+                self.leaving.get(&id).map(|leaving| {
+                    let Leaving::Remote(r) = leaving;
+                    r.link.update_gate()
                 })
             })
     }
 
-    /// Capture only safe controller handles for a live background build. Raw
-    /// compatibility instances never cross their creator thread.
     pub(crate) fn live_copy(&self) -> Result<impl FnOnce() -> Self + Send + 'static, String> {
-        let mut locals = HashMap::new();
-        for (id, local) in &self.locals {
-            if local.plugin.is_some() {
-                return Err("プラグインの所有スレッドを確認できないため更新できません。曲を開き直してください".into());
-            }
-            locals.insert(
-                *id,
-                Local {
-                    updates: local.updates.clone(),
-                    plugin: None,
-                    owned: local.owned.as_ref().map(|owned| Box::new(owned.fork())),
-                    restart_pending: local.restart_pending,
-                    applied: local.applied.clone(),
-                    generation: local.generation,
-                    titles: local.titles.clone(),
-                    steps: local.steps.clone(),
-                    note_names: local.note_names.clone(),
-                    capture: None,
-                },
-            );
-        }
         let catalog = self.catalog.clone();
         let isolation = self.isolation.clone();
         let process_prefs = self.process_prefs.clone();
@@ -976,7 +624,6 @@ impl PluginLoader {
         let remotes = self.remotes.clone();
         let editor_contexts = self.editor_contexts.clone();
         let intents = self.intents.clone();
-        let senders = self.senders.clone();
         let stock = self
             .stock
             .iter()
@@ -991,33 +638,24 @@ impl PluginLoader {
                 )
             })
             .collect();
-        let generation = self.generation;
         let (dir, rate, tempo, process_setup) =
             (self.dir.clone(), self.rate, self.tempo, self.process_setup);
-        let open_wait = self.open_wait;
-        let clap_names = self.clap_names.clone();
         let pressed = self.pressed.clone();
         Ok(move || Self {
             pressed,
             editor_contexts,
             intents,
-            threaded_local: true,
-            open_wait,
             catalog,
             isolation,
             process_prefs,
             groups,
             dedicated,
             remotes,
-            locals,
-            senders,
             stock,
-            generation,
             dir,
             rate,
             tempo,
             process_setup,
-            clap_names,
             ..Self::default()
         })
     }
@@ -1047,24 +685,6 @@ impl PluginLoader {
         Ok(())
     }
 
-    /// Keep these across retirement: worker completion alone does not prove the
-    /// SDK owner has returned from a call and destroyed its instance.
-    pub fn owner_retirements(&self) -> Vec<xirius_vst3::owner::Retirement> {
-        self.locals
-            .values()
-            .chain(self.leaving.values().filter_map(|l| match l {
-                Leaving::Local(local, _) => Some(local),
-                _ => None,
-            }))
-            .filter_map(|local| local.owned.as_ref().map(|owned| owned.retirement()))
-            .collect()
-    }
-    pub(crate) fn set_threaded_local(&mut self, on: bool) {
-        self.threaded_local = on;
-    }
-    pub(crate) fn set_open_wait(&mut self, wait: Duration) {
-        self.open_wait = Some(wait);
-    }
     pub(crate) fn set_setup(&mut self, setup: ProcessSetup) {
         self.process_setup = Some(setup);
     }
@@ -1166,8 +786,6 @@ impl PluginLoader {
         self.building_pressed = Some(PressedBindings::default());
         self.fresh.clear();
         self.fresh_stock.clear();
-        self.fresh_locals.clear();
-        self.fresh_clap.clear();
     }
 
     /// The processor is carried by TrackSlot::Keep, so retain its controller and
@@ -1183,14 +801,8 @@ impl PluginLoader {
             if self.remotes.contains_key(&id) {
                 self.fresh.push(id);
             }
-            if self.locals.contains_key(&id) {
-                self.fresh_locals.push(id);
-            }
             if self.stock.contains_key(&id) {
                 self.fresh_stock.push(id);
-            }
-            if self.clap_names.contains_key(&id) {
-                self.fresh_clap.push(id);
             }
         }
     }
@@ -1357,8 +969,6 @@ impl PluginLoader {
         {
             match r.list {
                 Fresh::Remote => self.fresh.push(x.id),
-                Fresh::Local => self.fresh_locals.push(x.id),
-                Fresh::Clap => self.fresh_clap.push(x.id),
                 Fresh::None => {}
             }
             return r.result;
@@ -1379,29 +989,14 @@ impl PluginLoader {
     /// [`PluginLoader::preparing`] is true until the answer comes. The build takes it from
     /// [`PluginLoader::instantiate`], with the same warnings and errors.
     pub fn preload(&mut self, owner: &str, x: &Plugin, setup: &ProcessSetup) {
-        if self.threaded_local && is_vst3(x) && !self.runs_apart(x) {
-            self.preload_owned(owner, x, setup);
-            return;
-        }
         let at = Instant::now();
-        let before = (
-            self.fresh.len(),
-            self.fresh_locals.len(),
-            self.fresh_clap.len(),
-        );
+        let before = self.fresh.len();
         let result = self
             .open(owner, x)
-            .map(|(p, w)| {
-                let p: Box<dyn Processor> = Box::new(Readied::new(p, setup));
-                (p, w)
-            })
+            .map(|(p, w)| (Box::new(Readied::new(p, setup)) as Box<dyn Processor>, w))
             .inspect_err(|e| note_open_failed(x, at.elapsed(), e));
-        let list = if self.fresh.len() > before.0 {
+        let list = if self.fresh.len() > before {
             Fresh::Remote
-        } else if self.fresh_locals.len() > before.1 {
-            Fresh::Local
-        } else if self.fresh_clap.len() > before.2 {
-            Fresh::Clap
         } else {
             Fresh::None
         };
@@ -1418,250 +1013,27 @@ impl PluginLoader {
         );
     }
 
-    fn preload_owned(&mut self, owner: &str, x: &Plugin, setup: &ProcessSetup) {
-        let pending_owner = owner.to_owned();
-        let original = x.clone();
-        let owner = owner.to_owned();
-        self.catalog();
-        let catalog = self.catalog.clone();
-        let dir = self.dir.clone();
-        let rate = self.rate;
-        let setup = *setup;
-        let old = self
-            .locals
-            .get(&x.id)
-            .filter(|old| StateIntent(old.applied.clone()).accepts(x));
-        let intent = old.map(|old| StateIntent(old.applied.clone()));
-        let predecessor = old.map(Local::update_gate);
-        let snapshot = old
-            .and_then(|old| old.owned.as_ref())
-            .map(|old| old.snapshot());
-        let open_wait = self.open_wait;
-        let job = crate::background::Job::spawn("local-preload", move || {
-            let at = Instant::now();
-            let mut value = original.clone();
-            let mut carried = None;
-            if let Some(snapshot) = snapshot {
-                let task = snapshot?;
-                let deadline = Instant::now() + crate::host::PULL_WAIT;
-                let snapshot = loop {
-                    if let Some(result) = task.poll() {
-                        break result?;
-                    }
-                    if Instant::now() >= deadline {
-                        task.quarantine();
-                        return Err(
-                            "プラグインの状態を引き継げません。未保存の変更が残っています".into(),
-                        );
-                    }
-                    std::thread::sleep(Duration::from_millis(2));
-                };
-                value.state = Some(snapshot.state.clone());
-                let reports: Vec<_> = snapshot
-                    .params
-                    .iter()
-                    .map(|(id, title, value)| ParamEdit {
-                        id: *id,
-                        title: title.clone(),
-                        value: Some(*value),
-                        phase: EditPhase::Snapshot,
-                        at: Instant::now(),
-                    })
-                    .collect();
-                let titles: Vec<_> = snapshot
-                    .params
-                    .iter()
-                    .map(|(id, title, _)| (*id, title.clone()))
-                    .collect();
-                if let Some(intent) = &intent {
-                    let params = original
-                        .params
-                        .iter()
-                        .map(|(k, v)| (k.clone(), *v))
-                        .collect();
-                    value.params = intent
-                        .values(&original, params, &reports, &titles)
-                        .into_iter()
-                        .collect();
-                }
-                let mut edit = RemoteEdit {
-                    origin: Origin::Transfer,
-                    stamp: snapshot.stamp,
-                    plugin: value.id,
-                    state: Some(snapshot.state),
-                    params: reports,
-                };
-                if intent
-                    .as_ref()
-                    .is_some_and(|intent| intent.reconcile(&original, &mut edit))
-                {
-                    carried = Some(edit);
-                }
-            }
-            let mut loader = PluginLoader::new(catalog);
-            loader.set_threaded_local(true);
-            if let Some(wait) = open_wait {
-                loader.set_open_wait(wait);
-            }
-            loader.set_sample_home(dir, rate);
-            loader.set_setup(setup);
-            loader.set_isolation(Isolation::PerPlugin(find_host()));
-            let result = loader
-                .open(&owner, &value)
-                .map(|(p, w)| (Box::new(Readied::new(p, &setup)) as Box<dyn Processor>, w))
-                .inspect_err(|e| note_open_failed(&value, at.elapsed(), e));
-            let mut local = loader.locals.remove(&value.id);
-            if let Some(local) = &mut local {
-                if let Some(basis) = &predecessor {
-                    let protected = intent
-                        .as_ref()
-                        .map(|intent| intent.protected_params(&original))
-                        .unwrap_or_default();
-                    local.inherit_updates(basis, protected);
-                }
-                local.applied = original.clone();
-            }
-            Ok(OwnedPreload {
-                local,
-                sender: loader.senders.remove(&value.id),
-                ready: Ready {
-                    applied: original,
-                    owner,
-                    result,
-                    list: Fresh::Local,
-                },
-                carried,
-                took: at.elapsed(),
-            })
-        });
-        match job {
-            Ok(job) => {
-                self.pending_owned.insert(
-                    x.id,
-                    PendingOwned {
-                        job,
-                        applied: x.clone(),
-                        owner: pending_owner,
-                        at: Instant::now(),
-                    },
-                );
-            }
-            Err(error) => {
-                note_open_failed(x, Duration::ZERO, &error);
-                self.ready.insert(
-                    x.id,
-                    Ready {
-                        applied: x.clone(),
-                        owner: pending_owner,
-                        result: Err(error),
-                        list: Fresh::None,
-                    },
-                );
-            }
-        }
-    }
-
-    /// Claim only value/lease results. Neither opening nor state capture runs here.
-    pub fn poll_preloads(&mut self) {
-        let done: Vec<_> = self
-            .pending_owned
-            .iter()
-            .filter_map(|(id, pending)| pending.job.poll().map(|result| (*id, result)))
-            .collect();
-        for (id, result) in done {
-            let pending = self.pending_owned.remove(&id).expect("pending result");
-            match result {
-                Ok(mut opened) => {
-                    if let Some(old) = self.locals.remove(&id) {
-                        let sender = self.senders.remove(&id);
-                        self.leaving
-                            .entry(id)
-                            .or_insert(Leaving::Local(old, sender));
-                    }
-                    if let Some(mut local) = opened.local.take() {
-                        self.generation += 1;
-                        local.generation = self.generation;
-                        self.locals.insert(id, local);
-                    }
-                    if let Some(sender) = opened.sender {
-                        self.senders.insert(id, sender);
-                    }
-                    if let Some(edit) = opened.carried {
-                        self.carried.push(edit);
-                    }
-                    self.took.insert(
-                        id,
-                        (
-                            opened.ready.owner.clone(),
-                            opened.ready.applied.name.clone(),
-                            opened.took,
-                        ),
-                    );
-                    self.ready.insert(id, opened.ready);
-                }
-                Err(error) => {
-                    // Keep an explicit failed receipt so the caller can finish the
-                    // remaining tracks rather than starting this request again.
-                    note_open_failed(&pending.applied, pending.at.elapsed(), &error);
-                    self.ready.insert(
-                        id,
-                        Ready {
-                            applied: pending.applied,
-                            owner: pending.owner,
-                            result: Err(error),
-                            list: Fresh::None,
-                        },
-                    );
-                }
-            }
-        }
-    }
-
-    /// Lets go of the plugins [`PluginLoader::preload`] opened and no build took (ENG-065).
-    /// The ones they were to take over from are the plugins' again (ENG-071).
     pub fn drop_ready(&mut self) {
-        self.pending_owned.clear();
         self.ready.clear();
-        // The new mix was let go: a window that was to follow it has nothing to follow.
         self.following.clear();
-        for (id, l) in std::mem::take(&mut self.leaving) {
-            match l {
-                Leaving::Remote(r) => {
-                    self.locals.remove(&id);
-                    match r.placement {
-                        PluginIsolation::Dedicated => {
-                            self.dedicated.insert(id, r.server.clone());
-                        }
-                        _ => {
-                            self.dedicated.remove(&id);
-                        }
-                    }
-                    self.remotes.insert(id, r);
-                }
-                Leaving::Local(l, sender) => {
-                    self.remotes.remove(&id);
-                    self.dedicated.remove(&id);
-                    self.locals.insert(id, l);
-                    match sender {
-                        Some(s) => self.senders.insert(id, s),
-                        None => self.senders.remove(&id),
-                    };
-                }
+        for (id, leaving) in std::mem::take(&mut self.leaving) {
+            let Leaving::Remote(r) = leaving;
+            if r.placement == PluginIsolation::Dedicated {
+                self.dedicated.insert(id, r.server.clone());
+            } else {
+                self.dedicated.remove(&id);
             }
+            self.remotes.insert(id, r);
         }
     }
 
-    /// Whether [`PluginLoader::preload`] has opened `id`.
     pub fn preloaded(&self, id: PluginId) -> bool {
-        self.ready.contains_key(&id) || self.pending_owned.contains_key(&id)
+        self.ready.contains_key(&id)
     }
 
     /// Whether the opening [`PluginLoader::preload`] began for `id` in a host process is still
     /// going on.
     pub fn preparing(&self, id: PluginId) -> bool {
-        if self.pending_owned.contains_key(&id) {
-            return true;
-        }
         self.ready
             .get(&id)
             .and_then(|r| r.result.as_ref().ok())
@@ -1833,21 +1205,8 @@ impl PluginLoader {
         Ok((Box::new(processor), warnings))
     }
 
-    /// The UI-thread side of a plugin that plays in this process, and which instance it is
-    /// (it changes when a new mix opens the plugin again): its editor is the one whose edits
-    /// are heard. `None` for a plugin elsewhere, or asked from another thread than the one
-    /// that opened it.
-    /// While a new mix that opened it again is on its way, the instance that plays is the old
-    /// one (ENG-071).
-    pub fn local(&self, id: PluginId) -> Option<(&xirius_vst3::Plugin, u64)> {
-        let l = self.playing_local(id)?;
-        Some((l.direct()?, l.generation))
-    }
-
-    /// Whether the build in progress, else the last, opened `id` as a VST3 plugin, here or in
-    /// a host process.
     pub fn opened(&self, id: PluginId) -> bool {
-        self.locals.contains_key(&id) || self.remotes.contains_key(&id)
+        self.remotes.contains_key(&id)
     }
 
     /// The instance in a host process that plays `id`: the one the build in progress moves
@@ -1855,22 +1214,11 @@ impl PluginLoader {
     fn playing_remote(&self, id: PluginId) -> Option<&Remote> {
         match self.leaving.get(&id) {
             Some(Leaving::Remote(r)) => Some(r),
-            Some(Leaving::Local(..)) => None,
             None => self.remotes.get(&id),
         }
     }
 
-    /// The instance in this process that plays `id`, as [`PluginLoader::playing_remote`].
-    fn playing_local(&self, id: PluginId) -> Option<&Local> {
-        match self.leaving.get(&id) {
-            Some(Leaving::Local(l, _)) => Some(l),
-            Some(Leaving::Remote(_)) => None,
-            None => self.locals.get(&id),
-        }
-    }
-
-    /// What the host processes said about the plugins of the last build once the mix was
-    /// prepared: plugins they could not open (they play dry) and parameters they do not have.
+    /// Warnings reported while host instances are opening.
     pub fn opening_warnings(&self) -> Vec<String> {
         let mut out = Vec::new();
         for id in &self.fresh {
@@ -1972,7 +1320,6 @@ impl PluginLoader {
             || !self.leaving.is_empty()
             || !self.carried.is_empty()
             || !self.stock.is_empty()
-            || !self.locals.is_empty()
     }
 
     /// Where the built-ins' files are read from and the rate they are read at (ENG-077). The
@@ -2155,26 +1502,16 @@ impl PluginLoader {
             }
             return true;
         }
-        let applied = if let Some(l) = self.locals.get_mut(&x.id) {
-            l.apply(x)
-        } else if let Some(r) = self.remotes.get_mut(&x.id) {
-            apply_remote(r, x)
-        } else {
-            false
-        };
+        let applied = self
+            .remotes
+            .get_mut(&x.id)
+            .is_some_and(|r| apply_remote(r, x));
         // The instance that plays until the new mix does hears them too (ENG-071).
         if applied && let Some(l) = self.leaving.get_mut(&x.id) {
             let mut there = x.clone();
-            match l {
-                Leaving::Remote(r) => {
-                    there.isolation = r.applied.isolation;
-                    apply_remote(r, &there);
-                }
-                Leaving::Local(l, _) => {
-                    there.isolation = l.applied.isolation;
-                    l.apply(&there);
-                }
-            }
+            let Leaving::Remote(r) = l;
+            there.isolation = r.applied.isolation;
+            apply_remote(r, &there);
         }
         applied
     }
@@ -2186,17 +1523,12 @@ impl PluginLoader {
         if let Some(s) = self.stock.get(&id) {
             return s.handle.set(key, value);
         }
-        match self.leaving.get(&id) {
-            Some(Leaving::Remote(r)) => return r.server.automate(&r.link, key, value, 0),
-            Some(Leaving::Local(_, sender)) => {
-                return sender.as_ref().is_some_and(|s| s.set(key, value));
-            }
-            None => {}
-        }
-        if let Some(r) = self.remotes.get(&id) {
+        if let Some(Leaving::Remote(r)) = self.leaving.get(&id) {
             return r.server.automate(&r.link, key, value, 0);
         }
-        self.senders.get(&id).is_some_and(|s| s.set(key, value))
+        self.remotes
+            .get(&id)
+            .is_some_and(|r| r.server.automate(&r.link, key, value, 0))
     }
 
     /// The values moved in the plugin's window up to `e`, when `e` brings its state: the
@@ -2247,10 +1579,7 @@ impl PluginLoader {
         stamp: Stamp,
         origin: Origin,
     ) {
-        let playing = self
-            .playing_local(id)
-            .map(Local::update_gate)
-            .or_else(|| self.playing_remote(id).map(|r| r.link.current_gate()));
+        let playing = self.playing_remote(id).map(|r| r.link.current_gate());
         let accepted = match origin {
             Origin::Capture => playing.is_some_and(|gate| gate.accepts(stamp, Field::Receipt)),
             Origin::Editor | Origin::Transfer => self
@@ -2274,25 +1603,11 @@ impl PluginLoader {
                 r.applied.params.insert(k.clone(), *v);
             }
         }
-        if let Some(l) = self.locals.get_mut(&id) {
-            if state.is_some() {
-                l.applied.state.clone_from(&state);
-            }
-            for (k, v) in params {
-                l.applied.params.insert(k.clone(), *v);
-            }
-        }
-        if let Some(applied) = self
-            .remotes
-            .get(&id)
-            .map(|r| &r.applied)
-            .or_else(|| self.locals.get(&id).map(|l| &l.applied))
-        {
+        if let Some(applied) = self.remotes.get(&id).map(|r| &r.applied) {
             self.intents.insert(id, Some(applied.clone()));
         }
         let applied = match self.leaving.get_mut(&id) {
             Some(Leaving::Remote(r)) => &mut r.applied,
-            Some(Leaving::Local(l, _)) => &mut l.applied,
             None => return,
         };
         if state.is_some() {
@@ -2319,8 +1634,7 @@ impl PluginLoader {
     }
 
     /// [`PluginLoader::begin_pull_states_of`] for a read that leaves the song as it is (a
-    /// copy, MIX-045): a plugin in this process is not marked to be captured, so the edits
-    /// collected each frame do not take its state into the song meanwhile. Read the answers
+    /// copy, MIX-045): the requested state is not taken into the song meanwhile. Read the answers
     /// with [`PluginLoader::peek_pulled_states`].
     pub fn begin_peek_states_of(&mut self, ids: &HashSet<PluginId>) -> StatePull {
         self.begin_pull_states_matching(Some(ids), true)
@@ -2329,7 +1643,7 @@ impl PluginLoader {
     fn begin_pull_states_matching(
         &mut self,
         wanted: Option<&HashSet<PluginId>>,
-        peek: bool,
+        _peek: bool,
     ) -> StatePull {
         let selected = |id: &PluginId| wanted.is_none_or(|ids| ids.contains(id));
         let basis = self
@@ -2338,39 +1652,15 @@ impl PluginLoader {
             .filter(|(id, _)| selected(id))
             .collect();
         let mut errors = Vec::new();
-        let mut owned = Vec::new();
-        let mut local = false;
-        for (id, l) in &mut self.locals {
-            if !selected(id) || self.leaving.contains_key(id) {
-                continue;
-            }
-            local = true;
-            if let Some(local) = &l.owned {
-                owned.push((*id, local.request_capture(CAPTURE_WAIT)));
-            } else if !peek {
-                l.capture = Some(Instant::now());
-            }
-        }
         let mut remotes: Vec<(PluginId, &Remote)> = self
             .remotes
             .iter()
             .filter(|(id, _)| selected(id) && !self.leaving.contains_key(id))
             .map(|(id, r)| (*id, r))
             .collect();
-        for (id, l) in &mut self.leaving {
-            if !selected(id) {
-                continue;
-            }
-            match l {
-                Leaving::Remote(r) => remotes.push((*id, r)),
-                Leaving::Local(l, _) => {
-                    local = true;
-                    if let Some(local) = &l.owned {
-                        owned.push((*id, local.request_capture(CAPTURE_WAIT)));
-                    } else if !peek {
-                        l.capture = Some(Instant::now());
-                    }
-                }
+        for (id, Leaving::Remote(r)) in &self.leaving {
+            if selected(id) {
+                remotes.push((*id, r));
             }
         }
         let asked: Vec<_> = remotes
@@ -2402,18 +1692,8 @@ impl PluginLoader {
             cancelled: std::cell::Cell::new(false),
             asked,
             errors,
-            owned,
             basis,
             ignored: Default::default(),
-            // a peek reads a plugin in this process itself, with no capture to wait for
-            not_before: std::cell::Cell::new(
-                Instant::now()
-                    + if local && !peek {
-                        CAPTURE_WAIT
-                    } else {
-                        Duration::ZERO
-                    },
-            ),
         }
     }
 
@@ -2448,33 +1728,10 @@ impl PluginLoader {
     /// not answer is left out and the others are still read (MIX-045). Nothing the song
     /// collects from the plugins is taken (their edits stay for the next collection), so a
     /// copy can carry the states without the song changing. The pull should come from
-    /// [`PluginLoader::begin_peek_states_of`]; a plugin in this process is read here.
+    /// [`PluginLoader::begin_peek_states_of`].
     pub fn peek_pulled_states(&mut self, pull: &StatePull) -> Vec<RemoteEdit> {
         let ignored = pull.ignored.borrow();
-        let snapshot = |values: Vec<(u32, String, f64)>| {
-            values
-                .into_iter()
-                .map(|(id, title, value)| ParamEdit {
-                    id,
-                    title,
-                    value: Some(value),
-                    phase: EditPhase::Snapshot,
-                    at: Instant::now(),
-                })
-                .collect()
-        };
         let mut out = Vec::new();
-        for (id, capture) in pull.owned.iter().filter(|(id, _)| !ignored.contains(id)) {
-            if let Some(Ok(s)) = capture.take() {
-                out.push(RemoteEdit {
-                    origin: Origin::Capture,
-                    stamp: s.stamp,
-                    plugin: *id,
-                    state: Some(s.state),
-                    params: snapshot(s.params),
-                });
-            }
-        }
         for (id, link, request) in pull.asked.iter().filter(|(id, _, _)| !ignored.contains(id)) {
             if let Ok(e) = link.take_capture_edits(*request)
                 && let Some(state) = e.state.as_ref()
@@ -2487,33 +1744,6 @@ impl PluginLoader {
                     params: e.params,
                 });
             }
-        }
-        let leaving = self.leaving.iter().filter_map(|(id, l)| match l {
-            Leaving::Local(l, _) => Some((id, l)),
-            Leaving::Remote(_) => None,
-        });
-        for (id, l) in self.locals.iter().chain(leaving) {
-            if !pull.basis.contains_key(id) || ignored.contains(id) || l.owned.is_some() {
-                continue;
-            }
-            let Some(plugin) = l.plugin.as_ref().and_then(OnThread::get) else {
-                continue;
-            };
-            let Ok(state) = plugin.get_state() else {
-                continue;
-            };
-            let params = plugin
-                .params()
-                .iter()
-                .filter_map(|p| plugin.param(p.id).map(|v| (p.id, p.title.clone(), v)))
-                .collect();
-            out.push(RemoteEdit {
-                origin: Origin::Editor,
-                stamp: l.update_gate().stamp(),
-                plugin: *id,
-                state: Some(xirius_plugins::encode_state(&state)),
-                params: snapshot(params),
-            });
         }
         out
     }
@@ -2548,20 +1778,13 @@ impl PluginLoader {
 
     fn state_basis(&self) -> HashMap<PluginId, StateIntent> {
         let mut basis: HashMap<_, _> = self
-            .locals
+            .remotes
             .iter()
-            .map(|(id, l)| (*id, StateIntent(l.applied.clone())))
-            .chain(
-                self.remotes
-                    .iter()
-                    .map(|(id, r)| (*id, StateIntent(r.applied.clone()))),
-            )
+            .map(|(id, r)| (*id, StateIntent(r.applied.clone())))
             .collect();
         for (id, leaving) in &self.leaving {
-            let applied = match leaving {
-                Leaving::Local(l, _) => &l.applied,
-                Leaving::Remote(r) => &r.applied,
-            };
+            let Leaving::Remote(r) = leaving;
+            let applied = &r.applied;
             basis.insert(*id, StateIntent(applied.clone()));
         }
         basis
@@ -2602,12 +1825,8 @@ impl PluginLoader {
         edits.retain_mut(|edit| {
             if edit.origin == Origin::Capture {
                 let playing = self
-                    .playing_local(edit.plugin)
-                    .map(Local::update_gate)
-                    .or_else(|| {
-                        self.playing_remote(edit.plugin)
-                            .map(|r| r.link.current_gate())
-                    });
+                    .playing_remote(edit.plugin)
+                    .map(|r| r.link.current_gate());
                 if playing.is_none_or(|gate| !gate.accepts(edit.stamp, Field::Receipt)) {
                     stale_receipt = true;
                     return false;
@@ -2654,49 +1873,14 @@ impl PluginLoader {
             .into_iter()
             .partition(|e| selected(&e.plugin));
         self.carried = retained;
-        if let Some(pull) = pull {
-            for (id, capture) in pull
-                .owned
-                .iter()
-                .filter(|(id, _)| selected(id) && !pull.ignored.borrow().contains(id))
-            {
-                if let Some(snapshot) = capture.take() {
-                    let snapshot = snapshot?;
-                    out.push(RemoteEdit {
-                        origin: Origin::Capture,
-                        stamp: snapshot.stamp,
-                        plugin: *id,
-                        state: Some(snapshot.state),
-                        params: snapshot
-                            .params
-                            .into_iter()
-                            .map(|(id, title, value)| ParamEdit {
-                                id,
-                                title,
-                                value: Some(value),
-                                phase: EditPhase::Snapshot,
-                                at: Instant::now(),
-                            })
-                            .collect(),
-                    });
-                }
-            }
-        }
-        for (id, l) in self.locals.iter_mut().filter(|(id, _)| selected(id)) {
-            out.extend(l.take(*id, false));
-        }
         let mut remotes: Vec<(&PluginId, &Remote)> = self
             .remotes
             .iter()
             .filter(|(id, _)| selected(id) && !self.leaving.contains_key(id))
             .collect();
-        for (id, l) in &mut self.leaving {
-            if !selected(id) {
-                continue;
-            }
-            match l {
-                Leaving::Remote(r) => remotes.push((id, r)),
-                Leaving::Local(l, _) => out.extend(l.take(*id, false)),
+        for (id, Leaving::Remote(r)) in &self.leaving {
+            if selected(id) {
+                remotes.push((id, r));
             }
         }
         for (id, r) in remotes {
@@ -2728,80 +1912,34 @@ impl PluginLoader {
     /// Other restart flags stay available to state/edit collection.
     pub fn take_latency_changes(&mut self) -> bool {
         let mut changed = false;
-        for local in self.locals.values_mut() {
-            if let Some(owned) = &local.owned {
-                changed |= owned.take_latency();
-            }
-            if let Some(plugin) = local.plugin.as_ref().and_then(OnThread::get) {
-                local.restart_pending |= plugin.handler().take_restart_flags();
-                if local.restart_pending & LATENCY_CHANGED != 0 {
-                    local.restart_pending &= !LATENCY_CHANGED;
-                    changed = true;
-                }
-            }
-        }
         for remote in self.remotes.values() {
             changed |= remote.link.take_latency_change().is_some();
         }
-        for l in self.leaving.values_mut() {
-            match l {
-                Leaving::Remote(r) => changed |= r.link.take_latency_change().is_some(),
-                Leaving::Local(local, _) => {
-                    if let Some(owned) = &local.owned {
-                        changed |= owned.take_latency();
-                    }
-                    if let Some(plugin) = local.plugin.as_ref().and_then(OnThread::get) {
-                        local.restart_pending |= plugin.handler().take_restart_flags();
-                        if local.restart_pending & LATENCY_CHANGED != 0 {
-                            local.restart_pending &= !LATENCY_CHANGED;
-                            changed = true;
-                        }
-                    }
-                }
-            }
+        for Leaving::Remote(r) in self.leaving.values() {
+            changed |= r.link.take_latency_change().is_some();
         }
         changed
     }
 
-    /// A plugin's parameter id → title, as the host reported when it opened.
     pub fn param_titles(&self, id: PluginId) -> Vec<(u32, String)> {
-        if let Some(l) = self.playing_local(id) {
-            return l.titles.clone();
-        }
         self.playing_remote(id)
             .and_then(|r| r.link.opened())
             .map(|o| o.params)
             .unwrap_or_default()
     }
 
-    /// A plugin's parameter id → the values of each switch or list of choices, as the host
-    /// reported when it opened (AUT-016). A parameter that glides is not in it, nor is any of a
-    /// CLAP plugin playing in this process (its parameters are not read here): one set to
-    /// The host reports these for both supported external plugin placements.
     pub fn param_steps(&self, id: PluginId) -> Vec<(u32, u32)> {
-        if let Some(l) = self.playing_local(id) {
-            return l.steps.clone();
-        }
         self.playing_remote(id)
             .map(|r| r.link.opened_steps())
             .unwrap_or_default()
     }
 
-    /// The names a plugin gives its keys, by key (EDT-134): empty when it names none, or is
-    /// not a VST3 or CLAP plugin of the current mix.
     pub fn note_names(&self, id: PluginId) -> Vec<(u8, String)> {
-        if let Some(l) = self.playing_local(id) {
-            return l.note_names.clone();
-        }
-        if let Some(names) = self.clap_names.get(&id) {
-            return names.clone();
-        }
         self.playing_remote(id)
             .map(|r| r.link.note_names())
             .unwrap_or_default()
     }
 
-    /// The plugins in host processes and how they are.
     pub fn statuses(&self) -> Vec<(PluginId, String, PluginStatus)> {
         self.reports()
             .into_iter()
@@ -2827,32 +1965,6 @@ impl PluginLoader {
                 status: r.server.status(&r.link),
             })
             .collect();
-        let mut locals: Vec<_> = self
-            .locals
-            .keys()
-            .chain(self.leaving.keys())
-            .copied()
-            .collect();
-        locals.sort();
-        locals.dedup();
-        for id in locals {
-            if let Some(local) = self.playing_local(id)
-                && let Some(owned) = &local.owned
-            {
-                out.push(PluginReport {
-                    id,
-                    name: local.applied.name.clone(),
-                    placement: PluginIsolation::Shared,
-                    requested: local.applied.isolation,
-                    status: PluginStatus {
-                        error: owned.error(),
-                        editor_open: owned.visible(),
-                        latency: owned.latency.get(),
-                        ..Default::default()
-                    },
-                });
-            }
-        }
         out.sort_by_key(|r| r.id);
         out
     }
@@ -2962,54 +2074,36 @@ impl PluginLoader {
             }
             context.caption
         };
-        if let Some(local) = self.playing_local(id)
-            && let Some(owned) = &local.owned
-        {
-            if open {
-                let context = self
-                    .editor_contexts
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .get(&id)
-                    .cloned();
-                if let Some(context) = context {
-                    if let Some(area) = context.area {
-                        owned.editor_area(area);
-                    }
-                    if let Some(bar) = context.bar {
-                        owned.editor_bar(bar);
-                    }
-                }
-            }
-            return if owned.editor(local.applied.name.clone(), caption, open) {
-                Ok(())
-            } else {
-                Err(owned
-                    .error()
-                    .unwrap_or_else(|| "プラグインが応答しません".into()))
-            };
-        }
         // While a new mix that moves it is on its way, the window is the playing instance's,
         // and the new one's opens when it plays (ENG-071).
         let moving = self.leaving.contains_key(&id);
         let (Some(r), new) = (self.playing_remote(id), self.remotes.get(&id)) else {
             return Err("そのプラグインは別のプロセスで実行されていません".into());
         };
-        let title = |r: &Remote| format!("{} · {}", r.applied.name, r.owner);
         if open {
-            r.server.open_editor(&r.link, &title(r), caption);
+            r.server
+                .open_editor(&r.link, &Self::editor_title(r), caption);
         } else {
             r.server.close_editor(&r.link);
         }
         if let Some(new) = new.filter(|_| moving) {
             if open {
                 new.server
-                    .open_editor_later(&new.link, &title(new), caption);
+                    .open_editor_later(&new.link, &Self::editor_title(new), caption);
             } else {
                 new.server.close_editor(&new.link);
             }
         }
         Ok(())
+    }
+
+    fn editor_title(remote: &Remote) -> String {
+        format!("{} · {}", remote.applied.name, remote.owner)
+    }
+
+    /// The title of the playing instance's window in its plugin host.
+    pub fn editor_window_title(&self, id: PluginId) -> Option<String> {
+        self.playing_remote(id).map(Self::editor_title)
     }
 
     /// Queues a physical coordinate snapshot before opening the view.
@@ -3020,11 +2114,6 @@ impl PluginLoader {
             .entry(id)
             .or_default()
             .bar = Some(bar.clone());
-        if let Some(local) = self.playing_local(id)
-            && let Some(owned) = &local.owned
-        {
-            owned.editor_bar(bar.clone());
-        }
         if let Some(r) = self.playing_remote(id) {
             r.server.editor_bar(&r.link, bar.clone());
         }
@@ -3036,23 +2125,12 @@ impl PluginLoader {
     }
 
     pub fn take_editor_actions(&self, id: PluginId) -> Vec<xirius_vst3::EditorAction> {
-        if let Some(local) = self.playing_local(id)
-            && let Some(owned) = &local.owned
-        {
-            return owned.take_editor_actions();
-        }
         self.playing_remote(id)
             .map_or_else(Vec::new, |r| r.link.take_editor_actions())
     }
 
     pub fn editor_origin(&self, id: PluginId) -> Option<(i32, i32)> {
-        let origin = if let Some(local) = self.playing_local(id)
-            && let Some(owned) = &local.owned
-        {
-            owned.editor_origin()
-        } else {
-            self.playing_remote(id).and_then(|r| r.link.editor_origin())
-        };
+        let origin = self.playing_remote(id).and_then(|r| r.link.editor_origin());
         if let Some(origin) = origin
             && let Some(area) = self
                 .editor_contexts
@@ -3074,11 +2152,6 @@ impl PluginLoader {
             .entry(id)
             .or_default()
             .area = Some(area);
-        if let Some(local) = self.playing_local(id)
-            && let Some(owned) = &local.owned
-        {
-            owned.editor_area(area);
-        }
         if let Some(r) = self.playing_remote(id) {
             r.server.editor_area(&r.link, area);
         }
@@ -3091,11 +2164,6 @@ impl PluginLoader {
 
     /// Queues a raise without changing the view's open/closed state.
     pub fn raise_editor(&self, id: PluginId) {
-        if let Some(local) = self.playing_local(id)
-            && let Some(owned) = &local.owned
-        {
-            owned.raise_editor();
-        }
         if let Some(r) = self.playing_remote(id) {
             r.server.raise_editor(&r.link);
         }
@@ -3109,11 +2177,6 @@ impl PluginLoader {
             .entry(id)
             .or_default()
             .caption = Some(caption);
-        if let Some(local) = self.playing_local(id)
-            && let Some(owned) = &local.owned
-        {
-            owned.caption(caption);
-        }
         if let Some(r) = self.playing_remote(id) {
             r.server.set_caption(&r.link, caption);
         }
@@ -3127,21 +2190,6 @@ impl PluginLoader {
         }
     }
 
-    /// Space forwarded from editors owned by local controller threads.
-    pub fn take_local_play_requests(&self) -> u32 {
-        self.locals
-            .keys()
-            .chain(self.leaving.keys())
-            .copied()
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .filter_map(|id| self.playing_local(id)?.owned.as_ref())
-            .fold(0u32, |count, local| {
-                count.saturating_add(local.take_play_requests())
-            })
-    }
-
-    /// The host the plugins share, for tests that make it fail.
     pub fn server(&self) -> Option<&PluginServer> {
         self.groups.values().next()
     }
@@ -3162,13 +2210,12 @@ impl PluginLoader {
     }
 
     /// Whether the last build's instance of `id` has been answered for (PLG-050): its host
-    /// opened it, failed to, or went down; a plugin in this process, once it was made or the
-    /// build could not make it. Until then its window cannot be asked for, and what went wrong
-    /// is not known yet.
+    /// opened it, failed to, or went down. Until then its window cannot be asked for, and what
+    /// went wrong is not known yet.
     pub fn answered(&self, id: PluginId) -> bool {
         match self.remotes.get(&id) {
             Some(r) => r.link.answers() > 0 || r.server.crashed(),
-            None => self.locals.contains_key(&id) || self.failed.contains(&id),
+            None => self.failed.contains(&id),
         }
     }
 
@@ -3180,18 +2227,10 @@ impl PluginLoader {
 
     /// The mix of the last build has been swapped in: the instances it opened again in their
     /// hosts are the ones that play, with the windows and what they report (ENG-066).
-    /// A plugin moved to another place has its window there once the new mix plays, if its
-    /// window was still open on the instance that played until then (ENG-071): one moved into
-    /// this process has it opened by the screen ([`PluginLoader::window_moved_in`]) once the
-    /// old host has let go ([`PluginLoader::settle_following`]).
+    /// A plugin moved to another host has its window there once the new mix plays, if its
+    /// window was still open on the instance that played until then (ENG-071).
     pub fn promote_opened(&mut self) {
         self.promote_pressed();
-        for local in self.locals.values() {
-            if let Some(owned) = &local.owned {
-                owned.resume_edits();
-            }
-        }
-        self.moved_in.clear();
         let until = Instant::now() + HAND_OVER;
         let mut following = Vec::new();
         for (id, r) in &self.remotes {
@@ -3203,11 +2242,10 @@ impl PluginLoader {
                     r.server.close_editor(&r.link);
                 } else if r.link.editor().is_some() {
                     following.push(Following {
-                        id: *id,
                         old_link: old.link.clone(),
                         old_server: old.server.clone(),
                         shut,
-                        to: Some((r.server.clone(), r.link.clone())),
+                        to: (r.server.clone(), r.link.clone()),
                         until,
                     });
                 }
@@ -3215,19 +2253,10 @@ impl PluginLoader {
             r.server.promote(&r.link);
         }
         for (id, l) in std::mem::take(&mut self.leaving) {
-            let Leaving::Remote(old) = l else { continue };
+            let Leaving::Remote(old) = l;
             // Before the window is looked at, as above.
-            let shut = old.link.windows_shut();
             if !self.remotes.contains_key(&id) && old.link.editor().is_some() {
                 old.server.close_editor(&old.link);
-                following.push(Following {
-                    id,
-                    old_link: old.link,
-                    old_server: old.server,
-                    shut,
-                    to: None,
-                    until,
-                });
             }
         }
         self.following = following;
@@ -3241,44 +2270,20 @@ impl PluginLoader {
         self.leaving.clear();
     }
 
-    /// Whether the mix that plays moved `id` into this process while its window was open in
-    /// its host (ENG-071): the screen opens the window here. A window closed while the new mix
-    /// was on its way does not open.
-    pub fn window_moved_in(&self, id: PluginId) -> bool {
-        self.moved_in.contains(&id) && self.locals.contains_key(&id)
-    }
-
-    /// Whether the mix that plays moved `id` into this process with its host's window open,
-    /// and that host has not let go of it yet (ENG-071): until it has, the window may yet have
-    /// been shut there, and [`PluginLoader::window_moved_in`] waits.
-    pub fn window_moving_in(&self, id: PluginId) -> bool {
-        self.locals.contains_key(&id) && self.following.iter().any(|f| f.id == id && f.to.is_none())
-    }
-
-    /// Settles the windows that moved with a plugin when the last mix played, as the hosts of
-    /// the instances that played let go of them (ENG-071). One whose old window the host says
-    /// the person shut is shut on the instance that plays now, or does not open in this
-    /// process: a window closed while the new mix was on its way stays closed.
     pub fn settle_following(&mut self) {
         let now = Instant::now();
-        let mut moved_in = Vec::new();
         self.following.retain(|f| {
             // Whether the host let go first: what it said before that is in by then.
             let let_go = f.old_server.has_let_go(&f.old_link) || now >= f.until;
             if f.old_link.windows_shut() != f.shut {
-                if let Some((server, link)) = &f.to
-                    && link.editor().is_some()
-                {
+                let (server, link) = &f.to;
+                if link.editor().is_some() {
                     server.close_editor(link);
                 }
                 return false;
             }
-            if let_go && f.to.is_none() {
-                moved_in.push(f.id);
-            }
             !let_go
         });
-        self.moved_in.extend(moved_in);
     }
 
     /// Called when a build ends: forgets the plugins it did not open, and the hosts of their
@@ -3288,19 +2293,12 @@ impl PluginLoader {
         self.remotes.retain(|id, _| fresh.contains(id));
         let fresh_stock = &self.fresh_stock;
         self.stock.retain(|id, _| fresh_stock.contains(id));
-        let fresh_locals = &self.fresh_locals;
-        self.locals.retain(|id, _| fresh_locals.contains(id));
-        let fresh_clap = &self.fresh_clap;
-        self.clap_names.retain(|id, _| fresh_clap.contains(id));
         // Free the file sets the audio thread handed back (ENG-077).
         for s in self.stock.values() {
             s.handle.reclaim_files();
         }
         self.ready.clear();
-        let fresh_locals = &self.fresh_locals;
-        self.took.retain(|id, _| {
-            fresh.contains(id) || fresh_locals.contains(id) || fresh_clap.contains(id)
-        });
+        self.took.retain(|id, _| fresh.contains(id));
         let remotes = &self.remotes;
         self.dedicated.retain(|id, _| {
             remotes
@@ -3314,6 +2312,7 @@ impl PluginLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xirius_engine::server::EditPhase;
 
     #[test]
     fn host_group_keeps_a_vendors_shell_classes_together_and_falls_back_to_parent() {
@@ -3473,7 +2472,7 @@ mod tests {
             building.editor_contexts.lock().unwrap()[&id].bar,
             Some(changed)
         );
-        assert!(loader.locals.is_empty() && building.remotes.is_empty());
+        assert!(building.remotes.is_empty());
     }
 
     #[test]
@@ -3521,31 +2520,25 @@ mod tests {
         let mut preset = base.clone();
         preset.state = Some("invalid state: must never be decoded locally".into());
         for plugin in [base, song, preset] {
-            for threaded in [false, true] {
-                let mut loader = PluginLoader::new(Some(Arc::new(catalog.clone())));
-                loader.set_process_prefs(prefs.clone());
-                loader.set_isolation(Isolation::PerPlugin(None));
-                loader.set_threaded_local(threaded);
-                assert!(loader.runs_apart(&plugin));
-                let error = loader.instantiate("Track", &plugin).err().unwrap();
-                assert!(error.contains("ホストが見つからない"), "{error}");
-                let setup = crate::build::setup(48000, xirius_engine::RenderMode::Realtime);
-                loader.preload("Track", &plugin, &setup);
-                assert!(
-                    loader.pending_owned.is_empty(),
-                    "must never enter in-process owner preload"
-                );
-                let error = loader.instantiate("Track", &plugin).err().unwrap();
-                assert!(error.contains("ホストが見つからない"), "{error}");
-                assert!(loader.locals.is_empty());
-            }
+            let mut loader = PluginLoader::new(Some(Arc::new(catalog.clone())));
+            loader.set_process_prefs(prefs.clone());
+            loader.set_isolation(Isolation::PerPlugin(None));
+            assert!(loader.runs_apart(&plugin));
+            let error = loader.instantiate("Track", &plugin).err().unwrap();
+            assert!(error.contains("ホストが見つからない"), "{error}");
+            let setup = crate::build::setup(48000, xirius_engine::RenderMode::Realtime);
+            loader.preload("Track", &plugin, &setup);
+            assert!(loader.preloaded(plugin.id), "preload recorded a result");
+            let error = loader.instantiate("Track", &plugin).err().unwrap();
+            assert!(error.contains("ホストが見つからない"), "{error}");
+            assert!(loader.link(plugin.id).is_none());
         }
     }
 
-    /// PLG-050: a plugin in this process that the build could not make is answered for, so
+    /// PLG-050: a plugin whose host could not be started is answered for, so
     /// its window says it could not be loaded rather than giving up in silence.
     #[test]
-    fn a_plugin_in_this_process_the_build_could_not_make_is_answered_for() {
+    fn a_plugin_whose_host_could_not_start_is_answered_for() {
         let id = PluginId(8);
         let plugin = Plugin {
             id,
@@ -3568,7 +2561,6 @@ mod tests {
         assert!(!loader.answered(id), "not built");
         assert!(loader.instantiate("Track 1", &plugin).is_err());
         assert!(loader.answered(id), "its opening failed: answered");
-        assert!(loader.local(id).is_none());
         assert!(loader.statuses().iter().all(|(at, ..)| *at != id));
     }
 

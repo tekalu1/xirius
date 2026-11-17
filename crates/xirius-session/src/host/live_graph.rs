@@ -103,7 +103,6 @@ impl SessionHost {
                     }
                 }
                 loop {
-                    builder.plugins_mut().poll_preloads();
                     if !crate::starting::hosted(&snapshot)
                         .iter()
                         .any(|(_, plugin)| {

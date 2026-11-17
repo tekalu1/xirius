@@ -65,12 +65,11 @@ fn song(mode: &str) -> Song {
         let plugins = host.plugins();
         let reports = plugins.reports();
         [from, to].iter().all(|id| {
-            plugins.local(*id).is_some()
-                || reports.iter().any(|r| {
-                    r.id == *id
-                        && r.status.latency > xirius_engine::server::DEFAULT_LATENCY
-                        && !r.status.crashed
-                })
+            reports.iter().any(|r| {
+                r.id == *id
+                    && r.status.latency > xirius_engine::server::DEFAULT_LATENCY
+                    && !r.status.crashed
+            })
         })
     };
     crate::shot::run_for(&mut s, 15.0, loaded);

@@ -392,7 +392,6 @@ fn let_go(rig: &Rig) {
     let link = host.plugins().link(PID).expect("it plays in its host");
     assert!(Arc::ptr_eq(&link, &old_link), "the instance that played");
     assert_eq!(host.plugins().server_of(PID).unwrap().pid(), old_pid);
-    assert!(host.plugins().local(PID).is_none());
     assert!(status(&host).unwrap().editor_open, "its window stays open");
     let r = host.plugins().reports();
     assert_eq!(

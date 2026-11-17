@@ -4,7 +4,7 @@
 //! at the current position and send what differs from the last mix, once per poll or block.
 //! Fader, pan, mute and send lanes follow the play position. A plugin parameter lane is set
 //! where the mix is built, and from there [`ParamFollow`] moves the running plugin as the
-//! position moves, in this process or in a plugin host process.
+//! position moves in plugin host processes.
 
 use std::collections::HashMap;
 use std::sync::Arc;

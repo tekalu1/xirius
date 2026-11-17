@@ -102,7 +102,6 @@ fn settings_apply_to_insertion_song_open_and_chain_preset_before_module_or_state
                 error.contains("ホストが見つからない"),
                 "must reject isolation, before trying a nonexistent module: {error}"
             );
-            assert!(loader.local(x.id).is_none());
         }
     }
     // An existing but unlaunchable host also fails closed, with an opening warning.
@@ -128,7 +127,6 @@ fn settings_apply_to_insertion_song_open_and_chain_preset_before_module_or_state
         loader.placement_of(new.id),
         Some(PluginIsolation::Dedicated)
     );
-    assert!(loader.local(new.id).is_none());
     assert!(
         !loader.opening_warnings().is_empty(),
         "a host launch failure must reach the normal notification path"

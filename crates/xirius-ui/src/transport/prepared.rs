@@ -6,23 +6,13 @@ use std::sync::{
 };
 use xirius_core::model::TrackKind;
 use xirius_session::{background::Job, starting::UnitState};
-use xirius_vst3::owner::Retirement;
 
 struct Cleanup {
-    owners: Vec<Retirement>,
     previous: Vec<Arc<AtomicBool>>,
 }
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        // SDK objects stay on their owning thread, even if it never returns.
-        // Once audio is returned and the output stopped, that thread is safely
-        // isolated; it must not prevent cancellation or another song's output.
-        while self
-            .owners
-            .iter()
-            .any(|o| !o.finished() && !o.audio_returned())
-            || self.previous.iter().any(|o| !o.load(Ordering::Acquire))
-        {
+        while self.previous.iter().any(|o| !o.load(Ordering::Acquire)) {
             // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -41,7 +31,6 @@ impl Drop for Ready {
 }
 fn retire(player: Player) {
     let _cleanup = Cleanup {
-        owners: player.host.plugins().owner_retirements(),
         previous: Vec::new(),
     };
     let Player { out, host, dir, .. } = player;
@@ -304,8 +293,7 @@ impl Start {
         let choice = Arc::new(AtomicU8::new(0));
         let choosing = choice.clone();
         let status = progress.clone();
-        let mut config = t.host_config(dir.clone());
-        config.threaded_local = true;
+        let config = t.host_config(dir.clone());
         let track_snapshot = p.tracks.iter().map(|(id, t)| (*id, t.clone())).collect();
         let p = p.clone();
         let prefs = t.io_prefs.clone();
@@ -321,14 +309,10 @@ impl Start {
         }
         let player_dir = dir.clone();
         let job = Job::spawn("song-prepare", move || {
-            let mut cleanup = Cleanup {
-                owners: Vec::new(),
-                previous,
-            };
+            let cleanup = Cleanup { previous };
             let mut starting = Starting::new(&p, config);
             while !starting.step() {
                 if stopped.load(Ordering::Acquire) {
-                    cleanup.owners = starting.owner_retirements();
                     return Err("中止しました".into());
                 }
                 if !stopped.load(Ordering::Acquire)
@@ -345,7 +329,6 @@ impl Start {
                 }
                 std::thread::sleep(Duration::from_millis(2));
             }
-            cleanup.owners = starting.owner_retirements();
             if stopped.load(Ordering::Acquire) {
                 return Err("中止しました".into());
             }
@@ -396,7 +379,6 @@ impl Start {
                 track_failures = host.retry_prepared(&mut audio, &p, &mut observe, || {
                     stopped.load(Ordering::Acquire)
                 })?;
-                cleanup.owners = host.plugins().owner_retirements();
             }
             if stopped.load(Ordering::Acquire) {
                 return Err("中止しました".into());
@@ -426,7 +408,6 @@ impl Start {
             }
             let frame = host.tempo_map().frame_at(parked, f64::from(host.rate()));
             host.seek_frame(frame);
-            cleanup.owners.clear();
             Ok(Ready {
                 player: Some(Player {
                     host,

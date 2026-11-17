@@ -1,5 +1,4 @@
 use crate::{
-    mixer::editors::Where,
     shot::{Act, Part, Play, Shot, Target},
     studio::Studio,
 };
@@ -78,14 +77,6 @@ fn edit_of(frame: HWND) -> HWND {
 
 pub(crate) fn frame(s: &Studio) -> HWND {
     let id = crate::plugin_reload_shots::id(s);
-    if let Some(editor) = s.mixer.editors.iter().find(|e| e.id == id) {
-        match &editor.at {
-            Where::Local { editor, .. } => {
-                return editor.hwnd() as HWND;
-            }
-            Where::Host { .. } => {}
-        }
-    }
     let Some(pid) = s
         .transport
         .host()
@@ -190,11 +181,6 @@ fn text(s: &mut Studio) {
     });
     let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        for e in &mut s.mixer.editors {
-            if let Where::Local { editor, .. } = &mut e.at {
-                editor.pump_own(std::time::Duration::ZERO);
-            }
-        }
         let capture = xirius_vst3::capture_window(hwnd as isize, &path).unwrap();
         if capture.distinct_colors > 2 {
             break;

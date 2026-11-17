@@ -67,7 +67,6 @@ fn plugin_states_pulled_twice_report_which_differ() {
             &p,
             HostConfig {
                 catalog: Some(catalog),
-                threaded_local: true,
                 isolation: Some(Isolation::PerPlugin(xirius_engine::server::find_host())),
                 ..Default::default()
             },

@@ -304,7 +304,6 @@ fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
         HostConfig {
             catalog: Some(catalog),
             isolation: Some(Isolation::Separate(exe)),
-            threaded_local: true,
             ..Default::default()
         },
     )
@@ -472,7 +471,6 @@ fn a_plugin_that_was_never_created_keeps_its_saved_state_after_silent_continuati
                 failures: vec![],
             })),
             isolation: Some(Isolation::Separate(exe)),
-            threaded_local: true,
             ..HostConfig::default()
         },
     );
