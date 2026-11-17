@@ -661,16 +661,16 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "plugin.isolation.set",
-            "プラグインを実行するプロセスを設定します（inprocess: エンジン内 / shared: 共有の別プロセス / dedicated: 専用の別プロセス）",
+            "プラグインを実行するプロセスを設定します（default: 既定 / dedicated: 専用）",
             vec![
                 ArgDef::ids(IdKind::Plugin, "プラグイン"),
-                ArgDef::choice("mode", &PluginIsolation::NAMES, "実行するプロセス").req(),
+                ArgDef::text("mode", "default または dedicated").req(),
             ],
             |p, _, a| {
                 let ids = a.require_ids::<PluginId>("プラグイン")?;
                 let mode = PluginIsolation::from_name(a.str("mode")?).ok_or_else(|| {
                     CmdError::invalid(
-                        "--mode には inprocess・shared・dedicated のいずれかを指定してください",
+                        "--mode には default・dedicated のいずれかを指定してください",
                     )
                 })?;
                 for id in &ids {

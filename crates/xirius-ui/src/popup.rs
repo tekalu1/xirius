@@ -1405,8 +1405,7 @@ impl Popup {
         );
         y += LABEL_H;
         let modes = [
-            ("アプリ内", PluginIsolation::InProcess),
-            ("共有", PluginIsolation::Shared),
+            ("既定", PluginIsolation::Shared),
             ("専用", PluginIsolation::Dedicated),
         ]
         .map(|(text, m)| (text, v.mode == m, Action::Plugin(PlugAct::Mode(m))));
@@ -1416,8 +1415,8 @@ impl Popup {
             Rect::new(pad, y, inner, SEGMENT_H + SEGMENT_INSET * 2.0),
             &modes,
         );
-        // A built-in plugin runs in the engine only, an ARA plugin in this process only.
-        if v.builtin || v.ara {
+        // Built-ins have no external host to select.
+        if v.builtin {
             for cell in &mut cells[first..] {
                 if cell.look == Look::Segment && !cell.on {
                     *cell = cell.clone().off();

@@ -4126,35 +4126,19 @@
     }
   },
   {
-    "id": "insert-states:003",
-    "key": "insert-states",
-    "target": "インサート（外部・分岐の追加行）",
-    "tobe": [
-      "機器",
-      "動かす場所",
-      "アプリ内"
-    ],
-    "category": "機器",
-    "label": "アプリ内",
-    "command": "prefs.set",
-    "args": {
-      "mode": "same"
-    }
-  },
-  {
     "id": "insert-states:004",
     "key": "insert-states",
     "target": "インサート（外部・分岐の追加行）",
     "tobe": [
       "機器",
       "動かす場所",
-      "共有"
+      "既定"
     ],
     "category": "機器",
-    "label": "共有",
+    "label": "既定",
     "command": "prefs.set",
     "args": {
-      "mode": "shared"
+      "mode": "default"
     }
   },
   {
@@ -10651,30 +10635,16 @@
     "args": {}
   },
   {
-    "id": "other-59:007",
-    "key": "other-59",
-    "target": "インストゥルメント行",
-    "tobe": [
-      "機器",
-      "動かす場所",
-      "アプリ内"
-    ],
-    "category": "機器",
-    "label": "アプリ内",
-    "command": "",
-    "args": {}
-  },
-  {
     "id": "other-59:008",
     "key": "other-59",
     "target": "インストゥルメント行",
     "tobe": [
       "機器",
       "動かす場所",
-      "共有"
+      "既定"
     ],
     "category": "機器",
-    "label": "共有",
+    "label": "既定",
     "command": "",
     "args": {}
   },
@@ -10773,30 +10743,16 @@
     "args": {}
   },
   {
-    "id": "other-60:002",
-    "key": "other-60",
-    "target": "クラッシュした外部プラグイン",
-    "tobe": [
-      "機器",
-      "動かす場所",
-      "アプリ内"
-    ],
-    "category": "機器",
-    "label": "アプリ内",
-    "command": "",
-    "args": {}
-  },
-  {
     "id": "other-60:003",
     "key": "other-60",
     "target": "クラッシュした外部プラグイン",
     "tobe": [
       "機器",
       "動かす場所",
-      "共有"
+      "既定"
     ],
     "category": "機器",
-    "label": "共有",
+    "label": "既定",
     "command": "",
     "args": {}
   },

@@ -4742,37 +4742,19 @@
     "disabled": false
   },
   {
-    "id": "insert-states:003",
-    "target": "インサート（外部・分岐の追加行）",
-    "key": "insert-states",
-    "source": "crates/xirius-ui/src/context/mixer.rs",
-    "asis": [
-      "動かす場所",
-      "アプリ内"
-    ],
-    "label": "アプリ内",
-    "category": "機器",
-    "command": "prefs.set",
-    "args": {
-      "mode": "same"
-    },
-    "dynamic": false,
-    "disabled": false
-  },
-  {
     "id": "insert-states:004",
     "target": "インサート（外部・分岐の追加行）",
     "key": "insert-states",
     "source": "crates/xirius-ui/src/context/mixer.rs",
     "asis": [
       "動かす場所",
-      "共有"
+      "既定"
     ],
-    "label": "共有",
+    "label": "既定",
     "category": "機器",
     "command": "prefs.set",
     "args": {
-      "mode": "shared"
+      "mode": "default"
     },
     "dynamic": false,
     "disabled": false
@@ -12232,31 +12214,15 @@
     "disabled": false
   },
   {
-    "id": "other-59:007",
-    "target": "インストゥルメント行",
-    "key": "other-59",
-    "source": "crates/xirius-ui/src/instrument/menu.rs",
-    "asis": [
-      "動かす場所",
-      "アプリ内"
-    ],
-    "label": "アプリ内",
-    "category": "機器",
-    "command": "",
-    "args": {},
-    "dynamic": false,
-    "disabled": false
-  },
-  {
     "id": "other-59:008",
     "target": "インストゥルメント行",
     "key": "other-59",
     "source": "crates/xirius-ui/src/instrument/menu.rs",
     "asis": [
       "動かす場所",
-      "共有"
+      "既定"
     ],
-    "label": "共有",
+    "label": "既定",
     "category": "機器",
     "command": "",
     "args": {},
@@ -12356,31 +12322,15 @@
     "disabled": false
   },
   {
-    "id": "other-60:002",
-    "target": "クラッシュした外部プラグイン",
-    "key": "other-60",
-    "source": "crates/xirius-ui/src/popup.rs",
-    "asis": [
-      "動かす場所",
-      "アプリ内"
-    ],
-    "label": "アプリ内",
-    "category": "機器",
-    "command": "",
-    "args": {},
-    "dynamic": false,
-    "disabled": false
-  },
-  {
     "id": "other-60:003",
     "target": "クラッシュした外部プラグイン",
     "key": "other-60",
     "source": "crates/xirius-ui/src/popup.rs",
     "asis": [
       "動かす場所",
-      "共有"
+      "既定"
     ],
-    "label": "共有",
+    "label": "既定",
     "category": "機器",
     "command": "",
     "args": {},

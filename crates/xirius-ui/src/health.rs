@@ -206,11 +206,7 @@ impl Studio {
             let mut items = self.plugin_items(t, id);
             // This entry point previously included process choices even for built-ins.
             // Preserve the original action (including its non-window undo behavior).
-            let modes = [
-                PluginIsolation::InProcess,
-                PluginIsolation::Shared,
-                PluginIsolation::Dedicated,
-            ];
+            let modes = [PluginIsolation::Shared, PluginIsolation::Dedicated];
             let mut choices = self.plugin_process_items(t, id);
             for (item, mode) in choices.iter_mut().zip(modes) {
                 item.run = crate::context::Run::Legacy(
@@ -275,7 +271,9 @@ impl Studio {
                 && !builtin,
             mode: if builtin {
                 PluginIsolation::InProcess
-            } else if ara && mode != PluginIsolation::Dedicated {
+            } else if mode == PluginIsolation::InProcess
+                || (ara && mode != PluginIsolation::Dedicated)
+            {
                 PluginIsolation::Shared
             } else {
                 mode
@@ -285,7 +283,7 @@ impl Studio {
         })
     }
 
-    /// The normal context menu shares the same three effective process choices.
+    /// The normal context menu offers default grouping or a dedicated host.
     pub(crate) fn plugin_process_items(
         &mut self,
         t: TrackId,
@@ -304,28 +302,17 @@ impl Studio {
         };
         let key = xirius_prefs::isolation::key(&plugin.format, &plugin.uid);
         [
-            ("アプリ内", PluginIsolation::InProcess),
-            ("共有", PluginIsolation::Shared),
+            ("既定", PluginIsolation::Shared),
             ("専用", PluginIsolation::Dedicated),
         ]
         .into_iter()
         .map(|(label, mode)| {
-            let value = if mode == PluginIsolation::InProcess {
-                "same"
-            } else {
-                mode.name()
-            };
+            let value = mode.name();
             crate::context::Item {
                 run: crate::context::Run::Cmd("prefs.set", json!({"key":key,"value":value})),
                 ..crate::context::Item::title(label)
             }
-            .enabled(if view.builtin {
-                mode == PluginIsolation::InProcess
-            } else if view.ara {
-                mode != PluginIsolation::InProcess
-            } else {
-                true
-            })
+            .enabled(!view.builtin)
             .on(view.mode == mode)
         })
         .collect()
@@ -362,11 +349,7 @@ impl Studio {
                 let Some(key) = key else {
                     return false;
                 };
-                let value = if mode == PluginIsolation::InProcess {
-                    "same"
-                } else {
-                    mode.name()
-                };
+                let value = mode.name();
                 if self.transport.is_windowed() {
                     // design-lint: allow(ui-blocking-io) PRJ-031: settings persistence uses the worker; completion rebuilds with the new policy.
                     self.run_command("prefs.set", json!({"key":key,"value":value}));
@@ -443,7 +426,7 @@ mod tests {
                 PlugAct::Restart => "再起動",
                 PlugAct::Remove => "外す",
                 PlugAct::Mode(PluginIsolation::InProcess) => "アプリ内",
-                PlugAct::Mode(PluginIsolation::Shared) => "共有",
+                PlugAct::Mode(PluginIsolation::Shared) => "既定",
                 PlugAct::Mode(PluginIsolation::Dedicated) => "専用で動かす",
             };
             let label = if s.context_path(label).is_some() {
@@ -564,7 +547,7 @@ mod tests {
         assert!(s.song.undo());
         assert_eq!(
             s.project().tracks[&t].inserts.last().unwrap().isolation,
-            PluginIsolation::InProcess
+            PluginIsolation::Shared
         );
     }
 
@@ -583,7 +566,7 @@ mod tests {
             .collect();
         assert_eq!(
             modes.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
-            ["アプリ内", "共有", "専用"]
+            ["既定", "専用"]
         );
         assert_eq!(
             modes
@@ -591,7 +574,7 @@ mod tests {
                 .filter(|r| r.on)
                 .map(|r| r.label.as_str())
                 .collect::<Vec<_>>(),
-            ["アプリ内"]
+            ["既定"]
         );
         press_cell(&mut s, &g, PlugAct::Mode(PluginIsolation::Shared));
         assert_eq!(
@@ -619,7 +602,7 @@ mod tests {
             .filter(|r| r.enabled && r.label != "戻る" && !r.gap)
             .map(|r| r.label)
             .collect();
-        assert_eq!(live, ["アプリ内"]);
+        assert!(live.is_empty(), "built-ins have no host selection");
     }
 
     #[test]
@@ -657,7 +640,7 @@ mod tests {
                 .filter(|r| r.enabled && r.label != "戻る" && !r.gap)
                 .map(|r| r.label.as_str())
                 .collect::<Vec<_>>(),
-            ["共有", "専用"]
+            ["既定", "専用"]
         );
         assert_eq!(
             modes
@@ -665,7 +648,7 @@ mod tests {
                 .filter(|r| r.on)
                 .map(|r| r.label.as_str())
                 .collect::<Vec<_>>(),
-            ["共有"]
+            ["既定"]
         );
     }
 
@@ -700,15 +683,14 @@ mod tests {
             dedicated.node.toggled(),
             Some(gpui::accesskit::Toggled::True)
         );
-        assert!(s.context_choose(&g, "アプリ内"));
-        assert_eq!(s.song.settings().lock().unwrap().prefs.text(&key), "same");
+        assert!(s.context_choose(&g, "既定"));
+        assert_eq!(
+            s.song.settings().lock().unwrap().prefs.text(&key),
+            "default"
+        );
         let items = s.plugin_items(t, id);
         s.open_context(items, 400.0, 300.0);
         assert!(s.context_choose(&g, "動かす場所"));
-        assert!(
-            s.context_rows()
-                .iter()
-                .any(|r| r.label == "アプリ内" && r.on)
-        );
+        assert!(s.context_rows().iter().any(|r| r.label == "既定" && r.on));
     }
 }

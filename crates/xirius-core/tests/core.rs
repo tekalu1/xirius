@@ -1574,9 +1574,8 @@ fn a_plugin_process_is_one_undo_step_and_comes_back_with_the_song() {
             .find_map(|t| t.inserts.iter().find(|x| x.id.to_string() == id));
         p.expect("plugin").isolation
     };
-    // Plugins run in the engine unless told otherwise, and a song that never chose saves
-    // nothing new.
-    assert_eq!(mode(&s, &a), PluginIsolation::InProcess);
+    // External plugins use the default host, and a song that never chose saves nothing new.
+    assert_eq!(mode(&s, &a), PluginIsolation::Shared);
     s.save_as(&dir).unwrap();
     let text = std::fs::read_to_string(dir.join("project.json")).unwrap();
     assert!(!text.contains("isolation"), "{text}");
@@ -1586,22 +1585,22 @@ fn a_plugin_process_is_one_undo_step_and_comes_back_with_the_song() {
     run(
         &mut s,
         "plugin.isolation.set",
-        json!({"ids": [a, b], "mode": "shared"}),
+        json!({"ids": [a, b], "mode": "dedicated"}),
     );
     run(
         &mut s,
         "plugin.isolation.set",
-        json!({"ids": [b], "mode": "dedicated"}),
+        json!({"ids": [b], "mode": "default"}),
     );
     assert_eq!(s.steps().len(), steps + 2, "one step per change");
-    assert_eq!(mode(&s, &a), PluginIsolation::Shared);
-    assert_eq!(mode(&s, &b), PluginIsolation::Dedicated);
+    assert_eq!(mode(&s, &a), PluginIsolation::Dedicated);
+    assert_eq!(mode(&s, &b), PluginIsolation::Shared);
     // A built-in plugin has no process of its own to go to.
     assert_eq!(
         code(try_run(
             &mut s,
             "plugin.isolation.set",
-            json!({"ids": [builtin], "mode": "shared"}),
+            json!({"ids": [builtin], "mode": "dedicated"}),
         )),
         ErrorCode::Conflict
     );
@@ -1621,11 +1620,11 @@ fn a_plugin_process_is_one_undo_step_and_comes_back_with_the_song() {
     drop(s);
     let mut s = Session::open(&dir).unwrap();
     assert_eq!(hash(&s), saved);
-    assert_eq!(mode(&s, &a), PluginIsolation::Shared);
-    assert_eq!(mode(&s, &b), PluginIsolation::Dedicated);
+    assert_eq!(mode(&s, &a), PluginIsolation::Dedicated);
+    assert_eq!(mode(&s, &b), PluginIsolation::Shared);
     // One undo takes back one change, also after reopening.
     s.undo(1).unwrap();
-    assert_eq!(mode(&s, &b), PluginIsolation::Shared);
+    assert_eq!(mode(&s, &b), PluginIsolation::Dedicated);
     s.undo(1).unwrap();
     assert_eq!(hash(&s), before);
 }

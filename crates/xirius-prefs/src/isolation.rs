@@ -20,8 +20,7 @@ pub fn resolve(
     fallback: PluginIsolation,
 ) -> PluginIsolation {
     match prefs.text(&key(format, uid)).as_str() {
-        "same" => PluginIsolation::InProcess,
-        "shared" => PluginIsolation::Shared,
+        "same" | "shared" | "default" => PluginIsolation::Shared,
         "dedicated" => PluginIsolation::Dedicated,
         _ => fallback,
     }
@@ -31,7 +30,7 @@ pub fn resolve(
 mod tests {
     use super::*;
     #[test]
-    fn stable_identity_preserves_clap_case_and_explicit_inprocess() {
+    fn stable_identity_preserves_clap_case_and_reads_old_mode_as_default() {
         assert_eq!(key("VST3", "abcd"), key("vst3", "ABCD"));
         assert_ne!(key("clap", "Abcd"), key("clap", "abcd"));
         assert_ne!(key("vst3", "abcd"), key("clap", "abcd"));
@@ -40,16 +39,25 @@ mod tests {
         prefs.set(&k, &serde_json::json!("same")).unwrap();
         assert_eq!(
             resolve(&prefs, "vst3", "abcd", PluginIsolation::Dedicated),
-            PluginIsolation::InProcess
+            PluginIsolation::Shared
         );
         let mut problems = vec![];
-        // Explicit same differs from song and must survive persistence.
+        // An old mode survives persistence as the default placement.
         let table = toml::from_str(&prefs.to_toml()).unwrap();
         let restored = Prefs::from_toml(&table, &mut problems);
         assert!(problems.is_empty());
         assert_eq!(
             resolve(&restored, "vst3", "abcd", PluginIsolation::Dedicated),
-            PluginIsolation::InProcess
+            PluginIsolation::Shared
+        );
+    }
+
+    #[test]
+    fn song_setting_uses_the_songs_process_choice() {
+        let prefs = Prefs::default();
+        assert_eq!(
+            resolve(&prefs, "clap", "fixture", PluginIsolation::Dedicated),
+            PluginIsolation::Dedicated
         );
     }
 }

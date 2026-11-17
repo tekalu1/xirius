@@ -795,8 +795,8 @@ pub struct PluginLoader {
     process_prefs: Option<xirius_prefs::Prefs>,
     modules: HashMap<PathBuf, Arc<Module>>,
     isolation: Isolation,
-    /// The host the plugins share (OPEN-02: one for the VST3 plugins).
-    shared: Option<PluginServer>,
+    /// Hosts shared by plugins from the same vendor (or bundle parent folder).
+    groups: HashMap<String, PluginServer>,
     /// The hosts of plugins that run in one of their own.
     dedicated: HashMap<PluginId, PluginServer>,
     remotes: HashMap<PluginId, Remote>,
@@ -1007,7 +1007,7 @@ impl PluginLoader {
         let catalog = self.catalog.clone();
         let isolation = self.isolation.clone();
         let process_prefs = self.process_prefs.clone();
-        let shared = self.shared.clone();
+        let groups = self.groups.clone();
         let dedicated = self.dedicated.clone();
         let remotes = self.remotes.clone();
         let editor_contexts = self.editor_contexts.clone();
@@ -1042,7 +1042,7 @@ impl PluginLoader {
             catalog,
             isolation,
             process_prefs,
-            shared,
+            groups,
             dedicated,
             remotes,
             locals,
@@ -1176,7 +1176,7 @@ impl PluginLoader {
     /// Where plugins opened from now on run.
     pub fn set_isolation(&mut self, isolation: Isolation) {
         if isolation != self.isolation {
-            self.shared = None;
+            self.groups.clear();
             self.dedicated.clear();
             self.remotes.clear();
             self.following.clear();
@@ -1249,6 +1249,13 @@ impl PluginLoader {
         };
         let legacy = crate::plugin_policy::legacy_override(prefs, self.catalog.as_deref(), x);
         let fallback = legacy.unwrap_or(x.isolation);
+        let fallback = if fallback == PluginIsolation::InProcess
+            && !matches!(self.isolation, Isolation::InProcess)
+        {
+            PluginIsolation::Shared
+        } else {
+            fallback
+        };
         let configured = prefs.text(&xirius_prefs::isolation::key(&x.format, &x.uid)) != "song"
             || legacy.is_some();
         (
@@ -1302,12 +1309,41 @@ impl PluginLoader {
         }
     }
 
+    /// The single policy point for choosing a shared host.
+    fn host_group(entry: &xirius_plugins::Entry, catalog: Option<&Catalog>) -> String {
+        // Every class in one bundle must use the same host, even if its catalogue
+        // records disagree about the vendor. Pick a stable name for that bundle.
+        let vendor = catalog
+            .into_iter()
+            .flat_map(|catalog| catalog.entries.iter())
+            .filter(|other| other.path == entry.path)
+            .map(|other| other.vendor.trim())
+            .filter(|vendor| !vendor.is_empty())
+            .chain((!entry.vendor.trim().is_empty()).then_some(entry.vendor.trim()))
+            .min()
+            .unwrap_or("");
+        if !vendor.is_empty() {
+            format!("vendor:{}", vendor.to_lowercase())
+        } else {
+            format!(
+                "folder:{}",
+                entry
+                    .path
+                    .parent()
+                    .unwrap_or(&entry.path)
+                    .to_string_lossy()
+                    .to_lowercase()
+            )
+        }
+    }
+
     /// The host for a plugin placed `placement`.
     fn server_for(
         &mut self,
         id: PluginId,
         placement: PluginIsolation,
         host: PathBuf,
+        entry: &xirius_plugins::Entry,
     ) -> PluginServer {
         match placement {
             PluginIsolation::Dedicated => self
@@ -1316,8 +1352,9 @@ impl PluginLoader {
                 .or_insert_with(|| PluginServer::new(Some(host)))
                 .clone(),
             _ => self
-                .shared
-                .get_or_insert_with(|| PluginServer::new(Some(host)))
+                .groups
+                .entry(Self::host_group(entry, self.catalog.as_deref()))
+                .or_insert_with(|| PluginServer::new(Some(host)))
                 .clone(),
         }
     }
@@ -1871,7 +1908,7 @@ impl PluginLoader {
         }
 
         if placement.is_separate() {
-            let server = self.server_for(x.id, placement, host);
+            let server = self.server_for(x.id, placement, host, &entry);
             let link = match self.remotes.get(&x.id) {
                 Some(r) if stays => r.link.clone(),
                 _ => PluginLink::new(),
@@ -3131,12 +3168,15 @@ impl PluginLoader {
         out
     }
 
-    /// The hosts in use: the shared one first, then the dedicated ones by plugin.
+    /// The hosts in use: vendor groups first, then dedicated ones by plugin.
     fn servers(&self) -> Vec<&PluginServer> {
+        let mut groups: Vec<_> = self.groups.iter().collect();
+        groups.sort_by_key(|(group, _)| *group);
         let mut dedicated: Vec<_> = self.dedicated.iter().collect();
         dedicated.sort_by_key(|(id, _)| **id);
-        self.shared
-            .iter()
+        groups
+            .into_iter()
+            .map(|(_, s)| s)
             .chain(dedicated.into_iter().map(|(_, s)| s))
             .collect()
     }
@@ -3414,7 +3454,7 @@ impl PluginLoader {
 
     /// The host the plugins share, for tests that make it fail.
     pub fn server(&self) -> Option<&PluginServer> {
-        self.shared.as_ref()
+        self.groups.values().next()
     }
 
     /// The host a plugin runs in.
@@ -3585,6 +3625,51 @@ impl PluginLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_group_keeps_a_vendors_shell_classes_together_and_falls_back_to_parent() {
+        let mut first = xirius_plugins::Entry {
+            uid: "a".into(),
+            name: "First".into(),
+            vendor: "Fixture Vendor".into(),
+            kind: PluginKind::Effect,
+            format: "vst3".into(),
+            category: String::new(),
+            version: String::new(),
+            path: PathBuf::from("fixture/one.vst3"),
+            ara: false,
+            requires_process_main: false,
+        };
+        let mut second = first.clone();
+        second.uid = "b".into();
+        second.path = PathBuf::from("elsewhere/two.vst3");
+        assert_eq!(
+            PluginLoader::host_group(&first, None),
+            PluginLoader::host_group(&second, None)
+        );
+        second.path = first.path.clone();
+        second.vendor = "Different Vendor".into();
+        let catalog = Catalog {
+            entries: vec![first.clone(), second.clone()],
+            ..Catalog::default()
+        };
+        assert_eq!(
+            PluginLoader::host_group(&first, Some(&catalog)),
+            PluginLoader::host_group(&second, Some(&catalog))
+        );
+        second.vendor.clear();
+        first.vendor.clear();
+        second.path = PathBuf::from("fixture/two.vst3");
+        assert_eq!(
+            PluginLoader::host_group(&first, None),
+            PluginLoader::host_group(&second, None)
+        );
+        second.path = PathBuf::from("elsewhere/two.vst3");
+        assert_ne!(
+            PluginLoader::host_group(&first, None),
+            PluginLoader::host_group(&second, None)
+        );
+    }
 
     #[test]
     fn pressed_bindings_follow_kept_tracks_without_unioning_candidates_or_retired_graphs() {

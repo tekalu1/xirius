@@ -47,7 +47,7 @@ const DEFAULT_DRIVER: &str = "coreaudio";
 #[cfg(not(target_os = "macos"))]
 const DEFAULT_DRIVER: &str = "wasapi-exclusive";
 pub const BUFFERS: &[i64] = &[32, 64, 128, 256, 512, 1024];
-pub const PROCESS: &[&str] = &["same", "shared", "dedicated"];
+pub const PROCESS: &[&str] = &["same", "shared", "default", "dedicated"];
 /// What an input-quantized recording snaps a note's head to (REC-009).
 pub const INPUT_QUANTIZE: &[&str] = &["1/4", "1/8", "1/16", "1/8T"];
 
@@ -78,7 +78,7 @@ pub const PREFS: &[Pref] = &[
     p("plugins.process.", Kind::Choice(PROCESS), "same"),
     p(
         "plugins.isolation.",
-        Kind::Choice(&["song", "same", "shared", "dedicated"]),
+        Kind::Choice(&["song", "same", "shared", "default", "dedicated"]),
         "song",
     ),
     p("plugins.crash.processed", Kind::List, ""),

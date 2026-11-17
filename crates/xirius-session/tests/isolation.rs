@@ -21,7 +21,7 @@ use serde_json::{Map, Value, json};
 use xirius_core::model::{PluginIsolation, Project};
 use xirius_core::session::{RunOptions, RunResult, Session};
 use xirius_engine::AudioEngine;
-use xirius_engine::server::{DEFAULT_LATENCY, EditPhase, find_host};
+use xirius_engine::server::{EditPhase, find_host};
 use xirius_engine::wire::Fault;
 use xirius_plugins::{Catalog, encode_state, probe, uid_hex};
 use xirius_session::build::Builder;
@@ -693,7 +693,7 @@ fn wait_open(host: &mut SessionHost) {
 }
 
 #[test]
-fn every_process_mode_plays_and_only_another_process_adds_its_delay() {
+fn every_process_mode_plays_without_added_delay() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("modes");
     let _records = CrashRecords::new();
@@ -705,9 +705,18 @@ fn every_process_mode_plays_and_only_another_process_adds_its_delay() {
     );
     let id = pid.parse().unwrap();
     let mut pids = Vec::new();
-    for mode in ["inprocess", "shared", "dedicated"] {
-        set_mode(&mut s, &pid, mode);
-        let (mut host, pull) = start_with(&s, &song_dir, &g, per_plugin(&g));
+    for mode in ["inprocess", "default", "dedicated"] {
+        set_mode(
+            &mut s,
+            &pid,
+            if mode == "inprocess" { "default" } else { mode },
+        );
+        let isolation = if mode == "inprocess" {
+            Isolation::InProcess
+        } else {
+            per_plugin(&g)
+        };
+        let (mut host, pull) = start_with(&s, &song_dir, &g, isolation);
         wait_open(&mut host);
         let delay = pull.onset() - 1;
         let level = steady(&host, &pull, 0.5);
@@ -724,13 +733,13 @@ fn every_process_mode_plays_and_only_another_process_adds_its_delay() {
                 assert_eq!(placement, None);
                 assert!(host.plugin_statuses().is_empty());
             }
-            "shared" => {
-                assert_eq!(delay, DEFAULT_LATENCY as usize);
+            "default" => {
+                assert_eq!(delay, 0);
                 assert_eq!(placement, Some(PluginIsolation::Shared));
                 assert_eq!(server_pid, shared_pid);
             }
             _ => {
-                assert_eq!(delay, DEFAULT_LATENCY as usize);
+                assert_eq!(delay, 0);
                 assert_eq!(placement, Some(PluginIsolation::Dedicated));
                 assert!(shared_pid.is_none(), "nothing on the shared host");
             }
@@ -895,12 +904,15 @@ fn a_plugin_moved_to_another_process_keeps_its_state_and_the_move_is_one_undo_st
     assert!(dedicated_pid.is_some() && dedicated_pid != shared_pid);
     let dedicated = steady(&host, &pull, 0.3);
 
-    // Into this process: it still has it.
-    set_mode(&mut s, &pid, "inprocess");
+    // Back into the default host: it still has the edit.
+    set_mode(&mut s, &pid, "default");
     let report = host.sync(s.project());
     assert!(report.swapped && report.warnings.is_empty(), "{report:?}");
-    assert_eq!(host.plugins().placement_of(id), None);
-    let in_process = steady(&host, &pull, 0.3);
+    assert_eq!(
+        host.plugins().placement_of(id),
+        Some(PluginIsolation::Shared)
+    );
+    let default_host = steady(&host, &pull, 0.3);
 
     // The edit made before the moves still comes into the song.
     let c = collect_plugin_states(&mut s, &mut host, &RunOptions::human()).unwrap();
@@ -915,16 +927,16 @@ fn a_plugin_moved_to_another_process_keeps_its_state_and_the_move_is_one_undo_st
         .clone();
     assert!(x.state.is_some());
     eprintln!(
-        "move with an edit the song had not taken: shared {unity_level:.2} -> edited {edited:.2} dB; dedicated (pid {dedicated_pid:?}, shared {shared_pid:?}) {dedicated:.2} dB; in process {in_process:.2} dB"
+        "move with an edit the song had not taken: shared {unity_level:.2} -> edited {edited:.2} dB; dedicated (pid {dedicated_pid:?}, shared {shared_pid:?}) {dedicated:.2} dB; default {default_host:.2} dB"
     );
     assert!(unity_level.abs() < 0.1, "{unity_level}");
-    for level in [edited, dedicated, in_process] {
+    for level in [edited, dedicated, default_host] {
         assert!((level - g.quiet_db).abs() < 0.1, "{level}");
     }
     drop(pull);
     drop(host);
 
-    // One undo takes back the collection, the next the move into this process; the song
+    // One undo takes back the collection, the next the move to the default host; the song
     // saved and opened again keeps the mode and its history.
     run(&mut s, "history.undo", json!({}));
     run(&mut s, "history.undo", json!({}));
@@ -963,7 +975,7 @@ fn a_plugin_that_takes_the_shared_host_down_is_suggested_a_host_of_its_own() {
     .unwrap();
     let row = &r.data["plugins"][0];
     eprintln!("plugin.status after a crash in the plugin: {}", r.message);
-    assert_eq!(row["mode"], "shared");
+    assert_eq!(row["mode"], "default");
     assert_eq!(row["faults"], 1);
     assert_eq!(row["suggest"], "dedicated");
     assert!(r.message.contains("--mode dedicated"), "{}", r.message);

@@ -183,7 +183,11 @@ pub struct Plugin {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub pad_outputs: BTreeMap<usize, TrackId>,
     /// Which process the plugin runs in (PLG-022).
-    #[serde(default, skip_serializing_if = "PluginIsolation::is_default")]
+    #[serde(
+        default,
+        deserialize_with = "read_plugin_isolation",
+        skip_serializing_if = "PluginIsolation::is_default"
+    )]
     pub isolation: PluginIsolation,
     /// The sidechain keys this plug-in takes (MIX-047): held on the
     /// receiving plug-in, so the sources move, copy and go away with it.
@@ -279,15 +283,14 @@ pub fn retuned(norm: f64) -> f64 {
     (semis + 48.0) / 96.0
 }
 
-/// Which process a plugin runs in (PLG-022). The engine's own process is the default; a
-/// separate process keeps a crashing plugin from taking the engine down with it.
+/// Which process a plugin runs in (PLG-078). External plugins use a host by default.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginIsolation {
     /// In the engine's process.
-    #[default]
     InProcess,
-    /// In the separate process shared with the other plugins of its format.
+    /// In the host selected by the default grouping policy.
+    #[default]
     Shared,
     /// In a separate process of its own.
     Dedicated,
@@ -295,24 +298,25 @@ pub enum PluginIsolation {
 
 impl PluginIsolation {
     /// The names the commands take.
-    pub const NAMES: [&'static str; 3] = ["inprocess", "shared", "dedicated"];
+    pub const NAMES: [&'static str; 2] = ["default", "dedicated"];
 
     pub fn is_default(&self) -> bool {
-        *self == PluginIsolation::InProcess
+        *self == PluginIsolation::Shared
     }
 
     pub fn name(self) -> &'static str {
         match self {
             PluginIsolation::InProcess => "inprocess",
-            PluginIsolation::Shared => "shared",
+            PluginIsolation::Shared => "default",
             PluginIsolation::Dedicated => "dedicated",
         }
     }
 
     pub fn from_name(s: &str) -> Option<PluginIsolation> {
         match s {
-            "inprocess" | "in_process" => Some(PluginIsolation::InProcess),
-            "shared" => Some(PluginIsolation::Shared),
+            "inprocess" | "in_process" | "same" | "shared" | "song" | "default" => {
+                Some(PluginIsolation::Shared)
+            }
             "dedicated" => Some(PluginIsolation::Dedicated),
             _ => None,
         }
@@ -321,6 +325,35 @@ impl PluginIsolation {
     /// Runs outside the engine's process.
     pub fn is_separate(self) -> bool {
         self != PluginIsolation::InProcess
+    }
+}
+
+fn read_plugin_isolation<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<PluginIsolation, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    PluginIsolation::from_name(&value)
+        .ok_or_else(|| serde::de::Error::custom("unknown plugin isolation"))
+}
+
+#[cfg(test)]
+mod plugin_isolation_tests {
+    use super::*;
+
+    #[test]
+    fn old_song_process_modes_read_as_default_host() {
+        for old in ["in_process", "same", "shared", "song"] {
+            let plugin: Plugin = serde_json::from_value(serde_json::json!({
+                "id": "plg_1",
+                "name": "Fixture",
+                "kind": "effect",
+                "format": "vst3",
+                "uid": "fixture",
+                "isolation": old
+            }))
+            .unwrap();
+            assert_eq!(plugin.isolation, PluginIsolation::Shared);
+        }
     }
 }
 

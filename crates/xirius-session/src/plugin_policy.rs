@@ -13,7 +13,7 @@ pub fn legacy_override(
         catalog.is_some_and(|c| c.entries.iter().filter(|e| e.name == x.name).count() == 1);
     if unique {
         match prefs.text(&format!("plugins.process.{}", x.name)).as_str() {
-            "shared" => return Some(PluginIsolation::Shared),
+            "shared" | "default" => return Some(PluginIsolation::Shared),
             "dedicated" => return Some(PluginIsolation::Dedicated),
             _ => {}
         }

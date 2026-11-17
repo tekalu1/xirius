@@ -109,13 +109,13 @@ fn root_budget_counts_categories_and_direct_entries() {
 }
 
 #[test]
-fn approved_inventory_and_mapping_keep_all_927_identities_and_payloads() {
+fn approved_inventory_and_mapping_keep_all_924_identities_and_payloads() {
     use std::collections::BTreeMap;
     let inventory: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("context_menus/inventory.json")).unwrap();
     let mapping: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("context_menus/mapping.json")).unwrap();
-    assert_eq!(inventory.len(), 927);
+    assert_eq!(inventory.len(), 924);
     assert_eq!(mapping.len(), inventory.len());
     let by_id: BTreeMap<_, _> = inventory
         .iter()
