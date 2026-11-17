@@ -10,6 +10,9 @@ use xirius_ara::service::source_id;
 use xirius_ara::shared_audio::SharedAudio;
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
+mod crash_records;
+use crash_records::CrashRecords;
+
 const WAIT: Duration = Duration::from_secs(20);
 
 fn host() -> &'static Path {
@@ -62,6 +65,7 @@ fn until(what: &str, mut ready: impl FnMut() -> bool) {
 
 #[test]
 fn analysis_edit_archive_and_render_cross_the_host_boundary() {
+    let _crash_records = CrashRecords::new();
     let song = make_song(audio());
     let local = Service::start(fake::loader(Default::default()), None, Arc::new(|| {}));
     local.sync(&song);
@@ -127,6 +131,7 @@ fn analysis_edit_archive_and_render_cross_the_host_boundary() {
 
 #[test]
 fn ending_the_host_during_analysis_keeps_the_client_alive_and_allows_restart() {
+    let _crash_records = CrashRecords::new();
     let song = make_song(audio());
     let slow = open_remote(
         None,
@@ -151,6 +156,7 @@ fn ending_the_host_during_analysis_keeps_the_client_alive_and_allows_restart() {
 
 #[test]
 fn ending_the_host_during_render_keeps_the_client_alive_and_allows_restart() {
+    let _crash_records = CrashRecords::new();
     let mut song = make_song(audio());
     song.clips[0].duration = 3.0;
     let slow = open_remote(
