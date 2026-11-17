@@ -124,19 +124,21 @@ pub fn culprit<'a>(log: &str, catalog: &'a Catalog) -> Option<&'a Entry> {
 
 /// The setting and processed record IDs are persisted together in prefs.toml.
 /// Saving must succeed before the startup may proceed to loading plugins.
+/// The IDs of records that are gone (removed by the tidying off the start) leave the list.
 pub fn recover(
     settings: &mut Settings,
     catalog: &Catalog,
     root: &Path,
 ) -> Result<Vec<Recovered>, String> {
-    xirius_engine::crash::tidy_at(root).map_err(|e| e.to_string())?;
+    // Before the window: only the pairs. The folders are tidied off the start.
+    xirius_engine::crash::gather_at(root).map_err(|e| e.to_string())?;
     let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Ok(entries) => Some(entries),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e.to_string()),
     };
     let mut reports = Vec::new();
-    for entry in entries {
+    for entry in entries.into_iter().flatten() {
         let folder = entry.map_err(|e| e.to_string())?.path();
         if folder.is_dir() && folder.join("crash.log").is_file() {
             reports.push(folder);
@@ -144,8 +146,12 @@ pub fn recover(
     }
     reports.sort();
     let mut processed = settings.prefs.list("plugins.crash.processed");
+    let listed = processed.len();
+    let present: std::collections::HashSet<_> =
+        reports.iter().filter_map(|r| r.file_name()).collect();
+    processed.retain(|id| present.contains(std::ffi::OsStr::new(id)));
     let mut recovered = Vec::new();
-    let mut changed = false;
+    let mut changed = processed.len() != listed;
     for report in reports {
         let id = report
             .file_name()
@@ -293,6 +299,46 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(settings.prefs.text(key), "same");
+    }
+    #[test]
+    fn the_ids_of_records_that_are_gone_leave_the_processed_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("crashes");
+        for name in ["123-456", "123-457", "124-458"] {
+            let folder = root.join(name);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("crash.log"), log()).unwrap();
+            std::fs::write(folder.join("crash.dmp"), b"fixture").unwrap();
+        }
+        let prefs = dir.path().join("prefs");
+        let mut settings = Settings::open(&prefs);
+        // An id from before whose record is gone already.
+        settings
+            .prefs
+            .set("plugins.crash.processed", &serde_json::json!(["9-9"]))
+            .unwrap();
+        assert_eq!(recover(&mut settings, &catalog(), &root).unwrap().len(), 1);
+        let processed = |prefs: &Path| Settings::open(prefs).prefs.list("plugins.crash.processed");
+        assert_eq!(processed(&prefs), ["123-456", "123-457", "124-458"]);
+        // Records with a crash are not removed before the window, and stay processed.
+        assert!(root.join("123-456").is_dir());
+        std::fs::remove_dir_all(root.join("123-456")).unwrap();
+        std::fs::remove_dir_all(root.join("124-458")).unwrap();
+        let mut settings = Settings::open(&prefs);
+        assert!(
+            recover(&mut settings, &catalog(), &root)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(processed(&prefs), ["123-457"]);
+        std::fs::remove_dir_all(&root).unwrap();
+        let mut settings = Settings::open(&prefs);
+        assert!(
+            recover(&mut settings, &catalog(), &root)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(processed(&prefs), Vec::<String>::new());
     }
     #[test]
     fn only_fatal_ui_calls_with_unambiguous_registered_identity_are_attributed() {

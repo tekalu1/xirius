@@ -446,3 +446,98 @@ fn tidying_keeps_every_crash_and_clears_what_runs_without_one_left() {
     );
     assert_eq!(crash::tidy_at(directory).unwrap(), crash::Tidied::default());
 }
+
+#[test]
+fn tidying_keeps_only_the_newest_records_with_a_crash_and_lists_those() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    // Two ended processes, so the records' numbers do not follow their times.
+    let mut gone = [0; 2];
+    for pid in &mut gone {
+        let mut ended = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "crash_child"])
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        *pid = ended.id();
+        ended.wait().unwrap();
+    }
+    let start = "app=engine version=0.0.0 pid=1\nslot=0 bundle=x\n";
+    let name = |i: usize| format!("{}-{}", gone[i % 2], now - 1000 + i as u128);
+    // Thirty crashes, oldest first; every third with an empty dump and its crash in the log.
+    for i in 0..30 {
+        let folder = directory.join(name(i));
+        std::fs::create_dir(&folder).unwrap();
+        let empty = i % 3 == 0;
+        let log = if empty {
+            format!("{start}crash: writing minidump\n")
+        } else {
+            start.to_string()
+        };
+        std::fs::write(folder.join("crash.log"), log).unwrap();
+        std::fs::write(
+            folder.join("crash.dmp"),
+            if empty { &b""[..] } else { b"MDMP" },
+        )
+        .unwrap();
+    }
+    // The newest crash, as the pair it left, and a running process's record of an earlier build.
+    let newest = format!("{}-{}", gone[0], now - 10);
+    std::fs::write(
+        directory.join(format!("{newest}.log")),
+        format!("{start}crash: writing minidump\n"),
+    )
+    .unwrap();
+    std::fs::write(directory.join(format!("{newest}.dmp")), b"MDMP").unwrap();
+    let running = format!("{}-{now}", std::process::id());
+    std::fs::create_dir(directory.join(&running)).unwrap();
+    std::fs::write(directory.join(&running).join("crash.log"), start).unwrap();
+    std::fs::write(directory.join(&running).join("crash.dmp"), b"").unwrap();
+
+    // Before the window only the pair goes into its folder; no record is removed.
+    assert_eq!(
+        crash::gather_at(directory).unwrap(),
+        crash::Tidied {
+            moved: 1,
+            removed: 0
+        }
+    );
+    assert_eq!(names(directory).len(), 32);
+
+    // The newest crash and the 19 newest folders are the 20 kept, the empty dumps among
+    // them counted as crashes; the 11 oldest go, the empty dumps among them too.
+    assert_eq!(crash::KEEP, 20);
+    assert_eq!(
+        crash::tidy_at(directory).unwrap(),
+        crash::Tidied {
+            moved: 0,
+            removed: 11
+        }
+    );
+    let mut kept: Vec<String> = (11..30).map(name).collect();
+    kept.extend([newest.clone(), running]);
+    kept.sort();
+    assert_eq!(names(directory), kept);
+    assert!(!directory.join(name(9)).exists() && directory.join(name(12)).exists());
+
+    // The list has the kept records that have a dump, and opens their files.
+    let reports = crash::reports_at(directory).unwrap();
+    let mut listed: Vec<String> = reports
+        .iter()
+        .map(|r| r.folder.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    listed.sort();
+    let mut dumped: Vec<String> = (11..30).filter(|i| i % 3 != 0).map(name).collect();
+    dumped.push(newest);
+    dumped.sort();
+    assert_eq!(listed, dumped);
+    for r in &reports {
+        assert_eq!(std::fs::read(&r.dump).unwrap(), b"MDMP");
+        assert!(std::fs::read_to_string(&r.log).unwrap().starts_with(start));
+    }
+    assert_eq!(crash::tidy_at(directory).unwrap(), crash::Tidied::default());
+}

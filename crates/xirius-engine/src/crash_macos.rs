@@ -109,20 +109,33 @@ pub fn reports_at(root: &Path) -> std::io::Result<Vec<CrashReport>> {
 pub struct Tidied {
     /// Pairs a crash left, moved into their folders.
     pub moved: usize,
-    /// Records with nothing of a crash in them, removed.
+    /// Records removed: those with nothing of a crash in them, and those with one past the
+    /// newest [`KEEP`].
     pub removed: usize,
 }
+
+/// How many records with a crash in them are kept, the newest. A record is there to be read
+/// or sent soon after its crash; one that falls over at every start would otherwise add a
+/// record each time without end, and every start reads them all.
+pub const KEEP: usize = 20;
 
 pub fn tidy() -> std::io::Result<Tidied> {
     tidy_at(&directory())
 }
 
-/// Clears what runs without a crash left, oldest first: the pairs a power cut kept from being
-/// deleted, and the empty folders that every start made before ENG-062. A record with anything
-/// of a crash in it (a dump, or a panic or crash line in the log) is kept, and so is anything a
-/// live process still has open.
+/// Clears what runs without a crash left: the pairs a power cut kept from being deleted, and
+/// the empty folders that every start made before ENG-062. Of the records with anything of a
+/// crash in them (a dump, even an empty one with a panic or crash line in the log), the newest
+/// [`KEEP`] are kept and the older ones removed. Anything a live process still has open stays.
 pub fn tidy_at(root: &Path) -> std::io::Result<Tidied> {
     tidy_in(root, true)
+}
+
+/// Only the pairs of `tidy_at`: moves those a crash left into their folders, and removes
+/// the others. The folders are left as they are: going through them all can take a while
+/// where there are many, too long to wait for at the start.
+pub fn gather_at(root: &Path) -> std::io::Result<Tidied> {
+    tidy_in(root, false)
 }
 
 fn tidy_in(root: &Path, folders: bool) -> std::io::Result<Tidied> {
@@ -143,9 +156,8 @@ fn tidy_in(root: &Path, folders: bool) -> std::io::Result<Tidied> {
         }
     }
     pairs.sort();
-    old.sort();
     let mut done = Tidied::default();
-    for (_, stem) in pairs {
+    for (key, stem) in pairs {
         let (log, dump) = (stem.with_extension("log"), stem.with_extension("dmp"));
         if crashed(&log, &dump) {
             // The dump first: a live process holds it without letting it move.
@@ -159,16 +171,24 @@ fn tidy_in(root: &Path, folders: bool) -> std::io::Result<Tidied> {
             }
             let _ = std::fs::rename(&log, folder.join("crash.log"));
             done.moved += 1;
+            old.push((key, folder));
         } else if std::fs::remove_file(&dump).is_ok() {
             let _ = std::fs::remove_file(&log);
             done.removed += 1;
         }
     }
     if folders {
+        // Newest first, so the records kept are the newest.
+        old.sort_by_key(|&((pid, stamp), _)| std::cmp::Reverse((stamp, pid)));
+        let mut kept = 0;
         for ((pid, stamp), folder) in old {
             let (log, dump) = (folder.join("crash.log"), folder.join("crash.dmp"));
+            if kept < KEEP && crashed(&log, &dump) {
+                kept += 1;
+                continue;
+            }
             // Builds before ENG-062 kept their files open with no lock against deleting.
-            if crashed(&log, &dump) || alive_since(pid, stamp) {
+            if alive_since(pid, stamp) {
                 continue;
             }
             for file in [&dump, &log] {

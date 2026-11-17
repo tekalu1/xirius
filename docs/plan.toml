@@ -7002,6 +7002,16 @@ done_when = "落ちずに終わったプロセスと外から終わらされた�
 status = "done"
 
 [[item]]
+id = "ENG-080"
+title = "クラッシュの記録は新しい 20 件だけ残し、それより古い記録は中身があっても消す。片付けで起動を待たせない"
+area = "ENG"
+phase = "v1"
+source = "2026-11-17 の確認（起動のたびに落ちるものがあると、記録が起動ごとに 1 件ずつ増えて減らない。窓の前に毎回それを全部たどり、処理済みの一覧も prefs.toml で増え続ける）"
+after = ["ENG-062"]
+done_when = "ダンプかクラッシュの行がある記録（ダンプが 0 バイトのものも同じに数える）は新しい順に 20 件（crash::KEEP）を残し、それより古い記録を消す。動いているプロセスの記録は消さない。窓の前（plugin_policy::recover）はペアをフォルダーに移すだけにし、フォルダーの片付けは起動の外のスレッドで行う。recover は、もう無い記録の名前を plugins.crash.processed から外す。About の一覧は残った記録を並べる（crash_reports と plugin_policy の試験。試験は一時フォルダーを使う）"
+status = "done"
+
+[[item]]
 id = "LIC-023"
 title = "NOTICE の書体の文を、組み込んだいまに合わせる（ファイルとライセンスの文が assets/fonts にあり、アプリに組み込んで licenses/ に添える）"
 area = "LIC"
