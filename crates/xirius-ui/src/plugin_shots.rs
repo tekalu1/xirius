@@ -203,9 +203,7 @@ fn capture_windows(s: &mut Studio, shot: &str, dir: &Path) {
         .iter()
         .map(|e| {
             let app = match &e.at {
-                Where::Local { editor, .. } | Where::Apart { editor, .. } => {
-                    Some((editor.hwnd(), editor.took_foreground()))
-                }
+                Where::Local { editor, .. } => Some((editor.hwnd(), editor.took_foreground())),
                 Where::Host { .. } => None,
             };
             (app, e.title.clone(), e.heard())

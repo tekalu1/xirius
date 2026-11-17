@@ -3,25 +3,21 @@
 //! The window shows the instance that plays, so what is turned in it is heard at once and,
 //! once let go, becomes one step of the history ([`Studio::poll_editors`]):
 //!
-//! - a plugin that runs in the app: its instance in the player ([`PluginLoader::local`]),
+//! - a plugin that runs in the player: its instance ([`PluginLoader::local`]),
 //!   whose GUI owner opens the frame and viewport together. Main-window activation queues
 //!   a raise without assigning a cross-thread HWND owner or taking focus;
 //! - a plugin that runs in a plugin host process (shared or its own): the host opens the
 //!   window of its instance, above the other windows.
 //!
-//! The player starts (playing nothing) when a window needs it. With no audio output there is
-//! no player, and the window shows an instance of its own, whose changes are neither heard
-//! nor kept. Under tests, and while [`xirius_vst3::OFFSCREEN_ENV`] is set, windows open off
-//! every screen.
+//! The player starts when a window needs it. Under tests, and while
+//! [`xirius_vst3::OFFSCREEN_ENV`] is set, windows open off every screen.
 //!
 //! [`PluginLoader::local`]: xirius_session::plugins::PluginLoader::local
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use xirius_core::id::PluginId;
 use xirius_core::model::Plugin;
-use xirius_plugins::{decode_state, uid_hex};
 use xirius_vst3::{Caption, Editor, Placement};
 
 use crate::studio::Studio;
@@ -36,12 +32,6 @@ pub(crate) enum Where {
     /// The plugin host process's instance; the host has the window. `opened` says the host has
     /// said the window is open once, so it is no longer taken as open while it does not answer.
     Host { asked: Instant, opened: bool },
-    /// An instance of its own, made because nothing plays.
-    Apart {
-        // The window goes before the instance that owns its view.
-        editor: Editor,
-        _plugin: xirius_vst3::Plugin,
-    },
 }
 
 /// A plugin's own window.
@@ -53,34 +43,27 @@ pub(crate) struct OpenEditor {
 
 impl OpenEditor {
     pub fn param_titles(&self) -> Vec<(u32, String)> {
-        match &self.at {
-            Where::Apart { _plugin, .. } => _plugin
-                .params()
-                .into_iter()
-                .map(|p| (p.id, p.title))
-                .collect(),
-            _ => Vec::new(),
-        }
+        Vec::new()
     }
 
     /// The window, when this process has it.
     pub fn editor(&self) -> Option<&Editor> {
         match &self.at {
-            Where::Local { editor, .. } | Where::Apart { editor, .. } => Some(editor),
+            Where::Local { editor, .. } => Some(editor),
             Where::Host { .. } => None,
         }
     }
 
     pub fn editor_mut(&mut self) -> Option<&mut Editor> {
         match &mut self.at {
-            Where::Local { editor, .. } | Where::Apart { editor, .. } => Some(editor),
+            Where::Local { editor, .. } => Some(editor),
             Where::Host { .. } => None,
         }
     }
 
     /// The instance plays: what is turned in the window is heard.
     pub fn heard(&self) -> bool {
-        !matches!(self.at, Where::Apart { .. })
+        true
     }
 }
 
@@ -222,17 +205,7 @@ impl Studio {
         let bar = self.vst_bar(plugin);
         let dir = self.song.dir();
         let windowed = self.transport.is_windowed();
-        let host = match self.transport.start_host(&project, dir) {
-            Ok(host) => host,
-            Err(error) if windowed => return Err(error),
-            Err(_) => {
-                let editor = open_apart(&catalog, plugin, title, place)?;
-                if let Some(view) = editor.editor() {
-                    view.set_bar(bar);
-                }
-                return Ok(editor);
-            }
-        };
+        let host = self.transport.start_host(&project, dir)?;
         if let Some((instance, generation)) = host.plugins().local(plugin.id) {
             if windowed {
                 return Err(
@@ -336,7 +309,7 @@ impl Studio {
 
     fn shown(&self, e: &OpenEditor) -> bool {
         match &e.at {
-            Where::Local { editor, .. } | Where::Apart { editor, .. } => editor.is_visible(),
+            Where::Local { editor, .. } => editor.is_visible(),
             Where::Host { asked, opened } => {
                 // Before the host says anything, the window counts as open for a while (it may
                 // take time to make). Once it has said it is open, only the host's word decides:
@@ -600,42 +573,6 @@ fn main_window_requests(
     editors: &[OpenEditor],
 ) -> impl Iterator<Item = &OpenEditor> {
     editors.iter().filter(move |_| active || restored)
-}
-
-/// Makes an instance of the plugin of its own, with the song's state, and opens its window.
-fn open_apart(
-    catalog: &xirius_plugins::Catalog,
-    plugin: &Plugin,
-    title: String,
-    place: Placement,
-) -> Result<OpenEditor, String> {
-    let name = plugin.name.as_str();
-    let fail = |e: xirius_vst3::Error| format!("{name} の窓を開けません: {e}");
-    let entry = catalog
-        .find(&plugin.uid)
-        .ok_or_else(|| cannot(name, "がこの PC に見つからない"))?;
-    let module = xirius_vst3::Module::load(&entry.path).map_err(fail)?;
-    let class = module
-        .classes()
-        .into_iter()
-        .find(|c| uid_hex(&c.cid).eq_ignore_ascii_case(&plugin.uid))
-        .ok_or_else(|| cannot(name, "がこの PC に見つからない"))?;
-    let instance = xirius_vst3::Plugin::new(Arc::new(module), &class).map_err(fail)?;
-    if let Some(state) = &plugin.state
-        && let Ok(state) = decode_state(state)
-    {
-        // A state the plugin refuses leaves it at its defaults; the window still opens.
-        let _ = instance.set_state(&state);
-    }
-    let editor = instance.open_editor_at(&title, place).map_err(fail)?;
-    Ok(OpenEditor {
-        id: plugin.id,
-        title,
-        at: Where::Apart {
-            editor,
-            _plugin: instance,
-        },
-    })
 }
 
 #[cfg(test)]

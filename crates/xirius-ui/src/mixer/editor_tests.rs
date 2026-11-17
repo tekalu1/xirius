@@ -276,10 +276,9 @@ fn a_window_that_cannot_open_says_why() {
     );
 }
 
-/// With no player (no output), the window shows an instance of its own, and says its changes
-/// are not heard.
+/// With no audio output, opening a window never creates a plugin instance in the app.
 #[test]
-fn without_output_the_window_is_of_an_instance_apart() {
+fn without_output_does_not_open_an_in_process_editor() {
     // A plugin may write into the temporary folder (Vital leaves `vital_versions.txt`).
     let _temp = crate::shot::TestTemp::new();
     let _one = one_at_a_time();
@@ -296,7 +295,11 @@ fn without_output_the_window_is_of_an_instance_apart() {
     ));
     let id = s.project().tracks[&t].inserts[0].id;
     assert!(press(&mut s, &g, MixerHit::Open(t, id)));
-    assert_eq!(s.error, None);
-    assert_eq!(s.mixer.editor_heard(id), Some(false));
-    assert!(s.mixer.editor_hwnd(id).is_some());
+    assert_ne!(s.mixer.editor_heard(id), Some(false));
+    if s.mixer.is_open(id) {
+        assert!(s.transport.host().is_some());
+        assert_eq!(s.mixer.editor_heard(id), Some(true));
+    } else {
+        assert!(s.error.is_some());
+    }
 }

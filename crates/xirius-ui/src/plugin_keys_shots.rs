@@ -80,7 +80,7 @@ pub(crate) fn frame(s: &Studio) -> HWND {
     let id = crate::plugin_reload_shots::id(s);
     if let Some(editor) = s.mixer.editors.iter().find(|e| e.id == id) {
         match &editor.at {
-            Where::Local { editor, .. } | Where::Apart { editor, .. } => {
+            Where::Local { editor, .. } => {
                 return editor.hwnd() as HWND;
             }
             Where::Host { .. } => {}
@@ -191,7 +191,7 @@ fn text(s: &mut Studio) {
     let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         for e in &mut s.mixer.editors {
-            if let Where::Local { editor, .. } | Where::Apart { editor, .. } = &mut e.at {
+            if let Where::Local { editor, .. } = &mut e.at {
                 editor.pump_own(std::time::Duration::ZERO);
             }
         }

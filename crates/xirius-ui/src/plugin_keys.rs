@@ -7,9 +7,7 @@ impl Studio {
             .editors
             .iter()
             .map(|e| match &e.at {
-                Where::Local { editor, .. } | Where::Apart { editor, .. } => {
-                    editor.take_play_requests()
-                }
+                Where::Local { editor, .. } => editor.take_play_requests(),
                 Where::Host { .. } => 0,
             })
             .sum();

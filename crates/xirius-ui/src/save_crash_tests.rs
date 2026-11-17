@@ -13,6 +13,8 @@ fn save_as_child() {
         return;
     };
     let root = std::path::PathBuf::from(std::env::var_os("XIRIUS_SAVE_CRASH_ROOT").unwrap());
+    // The host inherits this path; its own crash record must stay in this test's folder.
+    unsafe { std::env::set_var("XIRIUS_CRASH_DIR", root.join("crashes")) };
     xirius_engine::crash::install_at(&root.join("crashes"), "save-as test", true).unwrap();
     let mut s = Studio::sample();
     s.keep = crate::keep::Keep::at(root.join("keep"));
