@@ -26,6 +26,7 @@ use crash_records::CrashRecords;
 enum Placement {
     InProcess,
     Shared,
+    VendorGrouped,
     Dedicated,
 }
 
@@ -293,17 +294,22 @@ fn run(placement: Placement, block: usize, seconds: u32) {
     let mut servers = Vec::new();
     let mut links = Vec::new();
     let shared = PluginServer::new(Some(env!("CARGO_BIN_EXE_xirius-plugin-host").into()));
+    let grouped: Vec<_> = (0..4)
+        .map(|_| PluginServer::new(Some(env!("CARGO_BIN_EXE_xirius-plugin-host").into())))
+        .collect();
     let mut tracks = Vec::new();
     for track in 0..10 {
         let mut t = TrackSpec::new(format!("track-{track}"), Box::new(Sine::new(440.0, 0.05)));
         for _ in 0..2 {
             match placement {
                 Placement::InProcess => t.inserts.push(local(&bundle, external.is_none())),
-                Placement::Shared | Placement::Dedicated => {
-                    let server = if matches!(placement, Placement::Shared) {
-                        shared.clone()
-                    } else {
-                        PluginServer::new(Some(env!("CARGO_BIN_EXE_xirius-plugin-host").into()))
+                Placement::Shared | Placement::VendorGrouped | Placement::Dedicated => {
+                    let server = match placement {
+                        Placement::Shared => shared.clone(),
+                        Placement::VendorGrouped => grouped[track % grouped.len()].clone(),
+                        _ => {
+                            PluginServer::new(Some(env!("CARGO_BIN_EXE_xirius-plugin-host").into()))
+                        }
                     };
                     let link = PluginLink::new();
                     t.inserts.push(Box::new(RemotePlugin::new(
@@ -419,6 +425,7 @@ fn run(placement: Placement, block: usize, seconds: u32) {
     }
     drop(servers);
     drop(shared);
+    drop(grouped);
     if let Some(file) = &mut file {
         file.cleanup();
     }
@@ -427,6 +434,12 @@ fn run(placement: Placement, block: usize, seconds: u32) {
 #[test]
 fn short_shared_fixture_matrix() {
     run(Placement::Shared, 128, 1);
+}
+
+#[test]
+#[ignore = "one-minute paced comparison of four process groups"]
+fn one_minute_grouped_fixture_matrix() {
+    run(Placement::VendorGrouped, 128, 60);
 }
 
 #[test]
@@ -443,6 +456,7 @@ fn ten_minute_matrix() {
     for placement in [
         Placement::InProcess,
         Placement::Shared,
+        Placement::VendorGrouped,
         Placement::Dedicated,
     ] {
         if only_placement
