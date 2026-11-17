@@ -390,10 +390,22 @@ fn a_plugin_whose_host_went_down_is_copied_as_the_song_last_had_it() {
     turn_silently(&mut s, to, 0.625);
     let host = s.transport.host().unwrap();
     let server = host.plugins().server_of(from).unwrap().clone();
-    server.kill();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while server.pid().is_some() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(2));
+    let link = host.plugins().link(from).unwrap();
+    // The first two crashes restart automatically. The third one leaves this host down,
+    // so the copy must use the saved song state instead of a reply from that plugin.
+    for crash in 1..=3 {
+        server.kill();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while server.status(&link).crashes < crash && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(server.status(&link).crashes, crash, "the host stopped");
+        if crash < 3 {
+            while (server.pid().is_none() || !link.live()) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            assert!(link.live(), "the host reopened the plugin");
+        }
     }
     assert!(server.pid().is_none(), "the host stopped");
     drag(&mut s, &g, vocal, guitar);
