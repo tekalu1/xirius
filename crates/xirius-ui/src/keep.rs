@@ -81,7 +81,7 @@ pub struct Keep {
 }
 
 impl Keep {
-    #[cfg(test)]
+    #[cfg(all(test, windows))]
     pub(crate) fn save_generation(&self) -> u64 {
         self.save_generation
     }
