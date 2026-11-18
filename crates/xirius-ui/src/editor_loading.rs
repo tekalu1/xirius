@@ -17,13 +17,16 @@ use std::time::{Duration, Instant};
 use xirius_core::id::PluginId;
 
 const SPIN_AFTER: Duration = Duration::from_millis(150);
-// The first size follows measured editor sizes and is fitted to the visible display.
+// The first view size follows measured editors and is fitted to the visible display.
 const FIRST_SIZE: (f32, f32) = (1400.0, 900.0);
 
 fn opening_size(remembered: &HashMap<String, (i32, i32)>, uid: &str, scale: f32) -> (f32, f32) {
-    remembered
+    let (width, view_height) = remembered
         .get(uid)
-        .map_or(FIRST_SIZE, |(w, h)| (*w as f32 / scale, *h as f32 / scale))
+        .map_or((FIRST_SIZE.0 / scale, FIRST_SIZE.1 / scale), |(w, h)| {
+            (*w as f32 / scale, *h as f32 / scale)
+        });
+    (width, view_height + title_bar::BAR_H)
 }
 
 fn spinner_visible(since: Instant, now: Instant) -> bool {
@@ -291,8 +294,14 @@ mod tests {
     fn previous_editor_size_belongs_to_its_plugin_type() {
         let mut sizes = HashMap::new();
         sizes.insert("first".to_string(), (1600, 1000));
-        assert_eq!(opening_size(&sizes, "first", 2.0), (800.0, 500.0));
-        assert_eq!(opening_size(&sizes, "second", 2.0), FIRST_SIZE);
+        assert_eq!(
+            opening_size(&sizes, "first", 2.0),
+            (800.0, 500.0 + title_bar::BAR_H)
+        );
+        assert_eq!(
+            opening_size(&sizes, "second", 2.0),
+            (FIRST_SIZE.0 / 2.0, FIRST_SIZE.1 / 2.0 + title_bar::BAR_H)
+        );
     }
 
     #[test]
