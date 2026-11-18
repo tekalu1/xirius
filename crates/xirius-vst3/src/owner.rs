@@ -620,10 +620,11 @@ fn load(open: Open) -> Result<Plugin, String> {
 
 /// OLE is initialized before loading any DLL, and released after all SDK objects.
 /// The marker prevents moving the guard to another thread.
-pub(crate) struct Apartment(std::marker::PhantomData<*const ()>);
+pub struct Apartment(std::marker::PhantomData<*const ()>);
 
 impl Apartment {
-    pub(crate) fn new() -> Result<Self, String> {
+    /// Initializes the current GUI thread before it loads any external plug-in code.
+    pub fn new() -> Result<Self, String> {
         #[cfg(windows)]
         {
             // SAFETY: initializes this thread; Drop balances each successful call.

@@ -1136,6 +1136,10 @@ fn main() {
         }
         return;
     }
+    let _gui_apartment = xirius_vst3::owner::Apartment::new().unwrap_or_else(|e| {
+        eprintln!("xirius-plugin-host: {e}");
+        std::process::exit(2);
+    });
     // For tests of the engine's check: claim another protocol, or none at all ("none", as a
     // host from before the check, which did not know `--protocol`).
     let claim = std::env::var("XIRIUS_PLUGIN_HOST_PROTOCOL").ok();

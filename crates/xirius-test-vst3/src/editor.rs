@@ -251,7 +251,7 @@ impl IPlugViewTrait for View {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
         {
-            std::thread::sleep(std::time::Duration::from_millis(ms.min(1_000)));
+            std::thread::sleep(std::time::Duration::from_millis(ms.min(5_000)));
         }
         if std::env::var_os("XIRIUS_TEST_VST3_EDITOR_FAIL").is_some() {
             return kResultFalse;

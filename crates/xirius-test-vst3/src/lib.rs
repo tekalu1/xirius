@@ -160,6 +160,19 @@ impl IPluginFactoryTrait for Factory {
         if cid.is_null() || iid.is_null() || obj.is_null() {
             return kInvalidArgument;
         }
+        #[cfg(windows)]
+        if std::env::var_os("XIRIUS_TEST_VST3_REQUIRE_OLE").is_some() {
+            use windows_sys::Win32::System::Com::{
+                APTTYPE_MAINSTA, APTTYPE_STA, CoGetApartmentType,
+            };
+            let mut kind = 0;
+            let mut qualifier = 0;
+            // SAFETY: both output pointers refer to writable stack values.
+            let initialized = unsafe { CoGetApartmentType(&mut kind, &mut qualifier) } >= 0;
+            if !initialized || (kind != APTTYPE_STA && kind != APTTYPE_MAINSTA) {
+                return kResultFalse;
+            }
+        }
         // SAFETY: the factory ABI passes 16 readable UID bytes.
         let id = unsafe { std::slice::from_raw_parts(cid, 16) };
         if id[..15] != CID[..15] || !(1..=5).contains(&id[15]) {
