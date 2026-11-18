@@ -408,6 +408,9 @@ fn a_plugin_whose_host_went_down_is_copied_as_the_song_last_had_it() {
         }
     }
     assert!(server.pid().is_none(), "the host stopped");
+    // The other host is still live. Hold its state reply so flushing must use the song's
+    // saved value for both inserts, regardless of which host answers first.
+    let _hold = Hold::new();
     drag(&mut s, &g, vocal, guitar);
     s.inserts_wait_flush();
     assert!(s.inserts_wait.is_none());
