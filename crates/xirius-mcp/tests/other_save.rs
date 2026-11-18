@@ -25,6 +25,21 @@ fn folder() -> (tempfile::TempDir, PathBuf) {
     (base, dir)
 }
 
+fn finish(base: tempfile::TempDir) {
+    let dir = base.keep();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match std::fs::remove_dir_all(&dir) {
+            Ok(()) => return,
+            Err(_) if !dir.exists() => return,
+            Err(e) if std::time::Instant::now() >= end => {
+                panic!("test folder remains: {}: {e}", dir.display())
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+}
+
 /// The MCP server's session on `dir`, for an AI that may save without asking.
 fn server(dir: &Path) -> (Arc<Mutex<Session>>, Gateway) {
     let song = Arc::new(Mutex::new(Session::open(dir).unwrap()));
@@ -105,7 +120,7 @@ fn on_disk(dir: &Path) -> Vec<String> {
 
 #[test]
 fn the_screen_s_save_comes_in_as_one_step_before_the_next_command_and_undo_takes_it_back() {
-    let (_tmp, dir) = folder();
+    let (tmp, dir) = folder();
     let mut screen = Session::create(&dir, Project::new("Other")).unwrap();
     add(&mut screen, "A");
     screen.save().unwrap();
@@ -156,11 +171,15 @@ fn the_screen_s_save_comes_in_as_one_step_before_the_next_command_and_undo_takes
     let v = call(&gw, "track_list", json!({}));
     assert!(reloads(&v).is_empty(), "{v}");
     assert_eq!(listed(&v), ["A", "M"]);
+    drop(gw);
+    drop(song);
+    drop(screen);
+    finish(tmp);
 }
 
 #[test]
 fn a_write_goes_on_from_the_screen_s_save_instead_of_writing_over_it() {
-    let (_tmp, dir) = folder();
+    let (tmp, dir) = folder();
     // The server opened the song first (the first lane); the screen came after.
     Session::create(&dir, Project::new("Other")).unwrap();
     let (song, gw) = server(&dir);
@@ -187,11 +206,14 @@ fn a_write_goes_on_from_the_screen_s_save_instead_of_writing_over_it() {
     call(&gw, "history_undo", json!({}));
     assert_eq!(names(&song), ["M"]);
     assert_eq!(on_disk(&dir), ["M"]);
+    drop(gw);
+    drop(song);
+    finish(tmp);
 }
 
 #[test]
 fn with_unsaved_steps_the_song_stays_and_the_ai_s_save_is_refused() {
-    let (_tmp, dir) = folder();
+    let (tmp, dir) = folder();
     let mut screen = Session::create(&dir, Project::new("Other")).unwrap();
     screen.save().unwrap();
     let (song, gw) = server(&dir);
@@ -217,4 +239,8 @@ fn with_unsaved_steps_the_song_stays_and_the_ai_s_save_is_refused() {
     assert!(error, "{v}");
     assert_eq!(v["error"]["code"], "conflict", "{v}");
     assert_eq!(on_disk(&dir), ["S"]);
+    drop(gw);
+    drop(song);
+    drop(screen);
+    finish(tmp);
 }

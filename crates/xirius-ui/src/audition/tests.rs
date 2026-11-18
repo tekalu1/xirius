@@ -34,7 +34,7 @@ fn review_song_play_and_record_stop_preview_sound_and_display() {
     for mixed in [false, true] {
         for record in [false, true] {
             close();
-            let (_tmp, top) = place("song-start");
+            let (mut tmp, top) = place("song-start");
             let mut s = studio(OutputMode::Device, &top);
             let driver = if mixed {
                 "wasapi-exclusive"
@@ -125,6 +125,9 @@ fn review_song_play_and_record_stop_preview_sound_and_display() {
                 s.transport.pause();
             }
             close();
+            s.transport.reset();
+            drop(s);
+            tmp.0.remove();
         }
     }
 }
