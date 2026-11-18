@@ -153,6 +153,23 @@ impl Hold {
     }
 }
 
+/// Keep the answer-path test independent of CI scheduling when a loaded runner
+/// delays the host beyond the ordinary UI deadline.
+struct AnswerClock;
+
+impl AnswerClock {
+    fn new() -> Self {
+        crate::wait::script_time(Some(std::time::Instant::now()));
+        Self
+    }
+}
+
+impl Drop for AnswerClock {
+    fn drop(&mut self) {
+        crate::wait::script_time(None);
+    }
+}
+
 #[test]
 fn a_drag_carries_what_the_plugin_holds_now_and_an_undo_brings_back_what_it_replaced() {
     let _records = crate::shot::CrashRecords::new();
@@ -461,6 +478,7 @@ fn a_macro_copies_what_the_plugin_holds_now_before_its_next_step() {
         ..
     } = song("dedicated");
     turn_silently(&mut s, from, 0.5);
+    let _answer_clock = AnswerClock::new();
     s.song.settings().lock().unwrap().macros.set(
         "Copy",
         vec![
