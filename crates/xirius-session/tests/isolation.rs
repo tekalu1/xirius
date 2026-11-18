@@ -297,7 +297,7 @@ fn a_host_that_goes_down_during_an_export_recovers_without_silence() {
         thread::spawn(move || {
             let r =
                 export::render_with(&mut builder, &p, Select::All, 0, total, 0, Some(&progress));
-            (r, builder)
+            (r, builder, p)
         })
     };
     let begun = Instant::now();
@@ -305,7 +305,7 @@ fn a_host_that_goes_down_during_an_export_recovers_without_silence() {
         thread::sleep(Duration::from_micros(200));
     }
     server.kill();
-    let (r, builder) = render.join().unwrap();
+    let (r, mut builder, p) = render.join().unwrap();
     let out = r.expect("the export finishes");
     assert_eq!(out.left.len() as u64, total);
     let window = RATE as usize / 4;
@@ -331,11 +331,29 @@ fn a_host_that_goes_down_during_an_export_recovers_without_silence() {
     // Both transitions can straddle a measurement window. Neither may be silent.
     assert!(quiet + dry + 2 >= levels.len(), "{levels:?}");
     assert!(levels.iter().all(|level| *level > g.quiet_db - 0.2));
-    assert!((levels.last().unwrap() - g.quiet_db).abs() < 0.1);
+    // An offline export can advance its song clock faster than the process can restart on
+    // the wall clock. Check the restored sound once the host reports that it has reopened.
+    let began = Instant::now();
+    while builder
+        .plugins()
+        .statuses()
+        .iter()
+        .any(|(_, _, s)| s.crashed)
+        && began.elapsed() < GUARD
+    {
+        thread::sleep(Duration::from_millis(5));
+    }
     let st = builder.plugins().statuses();
     assert!(
         st.iter().all(|(_, _, s)| !s.crashed && s.crashes == 1),
         "{st:?}"
+    );
+    let resumed = export::render(&mut builder, &p, Select::All, 0, u64::from(RATE), 0).unwrap();
+    let restored = db(rms(&resumed.left) / unity());
+    assert!(
+        (restored - g.quiet_db).abs() < 0.1,
+        "{restored} vs {}",
+        g.quiet_db
     );
 }
 
