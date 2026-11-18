@@ -485,7 +485,7 @@ fn an_export_from_before_records_kept_the_song_can_still_be_written_again() {
 
 #[test]
 fn the_card_and_its_menu_bring_the_files_in_at_the_head_of_the_exported_range() {
-    let (_tmp, mut s, g, dir) = exported("import");
+    let (mut tmp, mut s, g, _dir) = exported("import");
     let head = s.export.jobs[0]["base"]["span"][0].as_i64().unwrap();
     s.playhead = head + 7680;
     for how in ["button", "menu"] {
@@ -510,7 +510,10 @@ fn the_card_and_its_menu_bring_the_files_in_at_the_head_of_the_exported_range() 
             s.open_export(ANCHOR);
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    // The import may leave song work running after the last UI action. Close the studio before
+    // its folder so the folder guard can wait for that work and remove everything it wrote.
+    drop(s);
+    tmp.remove();
 }
 
 /// The middle of the row of a file of the first card, by the track it is the stem of.
