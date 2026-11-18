@@ -170,27 +170,27 @@ fn the_card_counts_the_tracks_as_their_plugins_open_and_closes_when_the_song_sou
     }
     assert_eq!(card.progress.done, 0);
     assert!(
+        card.progress
+            .units
+            .iter()
+            .any(|(_, state)| *state == UnitState::Working),
+        "the initial card shows the track being prepared"
+    );
+    assert!(
         s.transport.host().is_none(),
         "nothing plays before it is ready"
     );
     let mut counts = vec![0];
-    let mut saw_working = false;
     let t = Instant::now();
     while s.preparing.is_some() {
         assert!(t.elapsed() < Duration::from_secs(60), "{counts:?}");
         s.tick();
-        if let Some(card) = &s.preparing {
-            saw_working |= card
-                .progress
-                .units
-                .iter()
-                .any(|(_, u)| *u == UnitState::Working);
-            if counts.last() != Some(&card.progress.done) {
-                counts.push(card.progress.done);
-            }
+        if let Some(card) = &s.preparing
+            && counts.last() != Some(&card.progress.done)
+        {
+            counts.push(card.progress.done);
         }
     }
-    assert!(saw_working, "the track under way is shown");
     assert!(
         counts.windows(2).all(|w| w[0] < w[1]) && counts.len() > 2,
         "the count goes up a track at a time: {counts:?} of {total}"

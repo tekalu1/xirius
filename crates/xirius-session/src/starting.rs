@@ -147,9 +147,10 @@ impl Starting {
             .iter()
             .map(|u| (u.name.clone(), self.unit(u)))
             .collect();
-        // The one the next step opens is under way too.
-        if self.asked
-            && let Some(next) = units.iter_mut().find(|(_, s)| *s != UnitState::Done)
+        // Preparation has begun even before its first host request. Show the
+        // next track on the initial card, including when opening finishes
+        // before the first frame can poll progress again.
+        if let Some(next) = units.iter_mut().find(|(_, s)| *s != UnitState::Done)
             && next.1 == UnitState::Waiting
         {
             next.1 = UnitState::Working;

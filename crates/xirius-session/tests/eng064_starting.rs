@@ -108,7 +108,12 @@ fn each_step_opens_one_plugin_and_the_build_takes_them() {
         "a track without plugins is not listed"
     );
     assert_eq!(first.done, 0);
-    assert!(first.units.iter().all(|(_, u)| *u == UnitState::Waiting));
+    assert_eq!(first.units[0].1, UnitState::Working);
+    assert!(
+        first.units[1..]
+            .iter()
+            .all(|(_, u)| *u == UnitState::Waiting)
+    );
     // The first step asks each host to open its plugin.
     assert!(!s.step());
     let asked = s.progress();
