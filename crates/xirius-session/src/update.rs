@@ -2642,6 +2642,30 @@ mod tests {
         let _ = window.wait();
         let _ = child.kill();
         let _ = child.wait();
+        drop(child);
+        drop(window);
+
+        // Windows can keep the copied executables mapped briefly after both
+        // processes exit. Finish cleanup here so a failed TempDir drop cannot
+        // leave those copies behind after the test has passed.
+        let mut removed = false;
+        for _ in 0..40 {
+            match std::fs::remove_dir_all(dir) {
+                Ok(()) => {
+                    removed = true;
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    removed = true;
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(error) => panic!("could not remove process fixtures: {error}"),
+            }
+        }
+        assert!(removed, "process fixtures stayed in use after both exited");
     }
 
     /// UI-282: the version in a tag is semver's characters only, so it is safe in a folder name
