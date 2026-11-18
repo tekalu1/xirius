@@ -1002,6 +1002,14 @@ impl SessionHost {
         self.builder.plugins().take_editor_actions(id)
     }
 
+    /// Opening reports from the external editor's host process.
+    pub fn take_editor_open_events(
+        &self,
+        id: PluginId,
+    ) -> Vec<xirius_engine::server::EditorOpenEvent> {
+        self.builder.plugins().take_editor_open_events(id)
+    }
+
     /// Raise asynchronously on the GUI owner without opening another view.
     pub fn raise_plugin_editor(&self, id: PluginId) {
         self.builder.plugins().raise_editor(id);

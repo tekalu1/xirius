@@ -10,22 +10,18 @@
 //! [`xirius_vst3::OFFSCREEN_ENV`] is set, windows open off every screen.
 //!
 
-use std::time::{Duration, Instant};
-
 use xirius_core::id::PluginId;
 use xirius_core::model::Plugin;
+use xirius_engine::server::EditorOpenEvent;
 use xirius_vst3::{Caption, Placement};
 
 use crate::studio::Studio;
-
-/// How long a window the plugin host was asked to open may take to say it is open.
-const HOST_OPEN_WAIT: Duration = Duration::from_secs(3);
 
 /// Where an open window's instance is.
 pub(crate) enum Where {
     /// The plugin host process's instance; the host has the window. `opened` says the host has
     /// said the window is open once, so it is no longer taken as open while it does not answer.
-    Host { asked: Instant, opened: bool },
+    Host { opened: bool },
 }
 
 /// A plugin's own window.
@@ -198,10 +194,7 @@ impl Studio {
         Ok(OpenEditor {
             id: plugin.id,
             title,
-            at: Where::Host {
-                asked: Instant::now(),
-                opened: false,
-            },
+            at: Where::Host { opened: false },
         })
     }
 
@@ -254,11 +247,15 @@ impl Studio {
 
     fn shown(&self, e: &OpenEditor) -> bool {
         match &e.at {
-            Where::Host { asked, opened } => {
-                // Before the host says anything, the window counts as open for a while (it may
-                // take time to make). Once it has said it is open, only the host's word decides:
-                // a window it then says is shut is shut at once (its notice is not waited out).
-                self.host_editor_open(e.id) || (!*opened && asked.elapsed() < HOST_OPEN_WAIT)
+            Where::Host { opened } => {
+                let status = self.transport.host().and_then(|host| {
+                    host.plugin_statuses()
+                        .into_iter()
+                        .find(|(id, ..)| *id == e.id)
+                        .map(|(.., status)| status)
+                });
+                status
+                    .is_some_and(|s| !s.crashed && s.error.is_none() && (!*opened || s.editor_open))
             }
         }
     }
@@ -272,38 +269,30 @@ impl Studio {
             .any(|e| e.id == id && matches!(e.at, Where::Host { opened: true, .. }))
     }
 
-    /// The window of `id` is open in its host process, as the host last said.
-    fn host_editor_open(&self, id: PluginId) -> bool {
-        self.transport.host().is_some_and(|h| {
-            h.plugin_statuses()
-                .iter()
-                .any(|(other, _, s)| *other == id && s.editor_open)
-        })
-    }
-
     /// Between frames too: forgets the windows the person closed, opens a window again on
     /// the instance of a new mix, and takes what was turned in the plugins' windows into the
     /// song. True when the song changed.
     pub fn poll_editors(&mut self) -> bool {
         self.poll_editor_bar();
         let keys = self.poll_editor_keys() | self.mixer.preset_menu.is_some();
-        // Remember the host's word once it opens a window, so a later close is not waited out.
-        let open_in_host: Vec<PluginId> = self
-            .transport
-            .host()
-            .map(|h| {
-                h.plugin_statuses()
-                    .into_iter()
-                    .filter(|(_, _, s)| s.editor_open)
-                    .map(|(id, ..)| id)
-                    .collect()
-            })
-            .unwrap_or_default();
-        for e in &mut self.mixer.editors {
-            let Where::Host { opened, .. } = &mut e.at;
-            if !*opened && open_in_host.contains(&e.id) {
-                *opened = true;
+        let mut failed = Vec::new();
+        if let Some(host) = self.transport.host() {
+            for editor in &mut self.mixer.editors {
+                for event in host.take_editor_open_events(editor.id) {
+                    match event {
+                        EditorOpenEvent::Opening => {}
+                        EditorOpenEvent::Opened { .. } => {
+                            let Where::Host { opened } = &mut editor.at;
+                            *opened = true;
+                        }
+                        EditorOpenEvent::Failed { reason } => failed.push((editor.id, reason)),
+                    }
+                }
             }
+        }
+        for (id, reason) in failed {
+            self.close_editor(id);
+            self.error = Some(reason);
         }
         let gone: Vec<PluginId> = self
             .mixer
@@ -454,10 +443,7 @@ mod activation_tests {
         let mut open = vec![OpenEditor {
             id: PluginId(7),
             title: "Effect".into(),
-            at: Where::Host {
-                asked: Instant::now(),
-                opened: true,
-            },
+            at: Where::Host { opened: true },
         }];
         let requests = |active, restored, views: &[OpenEditor]| {
             main_window_requests(active, restored, views)

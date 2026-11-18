@@ -2129,6 +2129,15 @@ impl PluginLoader {
             .map_or_else(Vec::new, |r| r.link.take_editor_actions())
     }
 
+    /// The host's opening, success, or failure reports for this editor.
+    pub fn take_editor_open_events(
+        &self,
+        id: PluginId,
+    ) -> Vec<xirius_engine::server::EditorOpenEvent> {
+        self.playing_remote(id)
+            .map_or_else(Vec::new, |r| r.link.take_editor_open_events())
+    }
+
     pub fn editor_origin(&self, id: PluginId) -> Option<(i32, i32)> {
         let origin = self.playing_remote(id).and_then(|r| r.link.editor_origin());
         if let Some(origin) = origin

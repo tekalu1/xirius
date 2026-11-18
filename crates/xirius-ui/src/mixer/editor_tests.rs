@@ -307,3 +307,111 @@ fn without_output_opens_only_a_hosted_editor() {
         assert!(s.error.is_some());
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn a_slow_hosted_editor_stays_requested_until_its_open_report_arrives() {
+    struct Delay;
+    impl Drop for Delay {
+        fn drop(&mut self) {
+            // SAFETY: this test owns the setting until its host has shut down.
+            unsafe { std::env::remove_var("XIRIUS_TEST_VST3_EDITOR_OPEN_MS") };
+        }
+    }
+    let _one = one_at_a_time();
+    // SAFETY: nextest isolates tests in processes and the fixture host inherits this value.
+    unsafe { std::env::set_var("XIRIUS_TEST_VST3_EDITOR_OPEN_MS", "3500") };
+    let _delay = Delay;
+    let entries = xirius_plugins::probe(&crate::plugin_fixture_shots::fixture_path()).unwrap();
+    let (mut s, g) = studio(entries.clone());
+    let t = track(&s, "Vocal");
+    assert!(s.run_command(
+        "plugin.add",
+        json!({ "track": t.to_string(), "name": "Fixture", "format": "vst3",
+                "uid": entries[0].uid }),
+    ));
+    let id = s.project().tracks[&t].inserts[0].id;
+    assert!(press(&mut s, &g, MixerHit::Open(t, id)));
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(3100) {
+        s.tick();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        s.mixer.is_open(id),
+        "the client cancelled a slow editor request"
+    );
+    assert!(
+        !s.host_said_editor_open(id),
+        "the fixture did not stay slow"
+    );
+    let end = Instant::now() + Duration::from_secs(8);
+    while !s.host_said_editor_open(id) {
+        s.tick();
+        assert!(
+            Instant::now() < end,
+            "the fixture editor did not open: {:?}",
+            s.error
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(s.error, None);
+    let hwnd = s.mixer.editor_hwnd(id).expect("fixture editor handle");
+    let mut result = 0;
+    // SAFETY: the fixture frame is live; this command contains no borrowed pointers.
+    let sent = unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::SendMessageTimeoutW(
+            hwnd as _,
+            windows_sys::Win32::UI::WindowsAndMessaging::WM_COMMAND,
+            2,
+            0,
+            windows_sys::Win32::UI::WindowsAndMessaging::SMTO_ABORTIFHUNG,
+            5_000,
+            &mut result,
+        )
+    };
+    assert_ne!(sent, 0, "the editor bar stopped responding");
+    let end = Instant::now() + Duration::from_secs(5);
+    while s.mixer.preset_menu.is_none() {
+        s.tick();
+        assert!(
+            Instant::now() < end,
+            "the preset menu request did not reach the studio"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_hosted_editor_failure_reaches_the_studio_with_its_reason() {
+    struct Failure;
+    impl Drop for Failure {
+        fn drop(&mut self) {
+            // SAFETY: this test owns the setting until its host has shut down.
+            unsafe { std::env::remove_var("XIRIUS_TEST_VST3_EDITOR_FAIL") };
+        }
+    }
+    let _one = one_at_a_time();
+    // SAFETY: nextest isolates tests in processes and the fixture host inherits this value.
+    unsafe { std::env::set_var("XIRIUS_TEST_VST3_EDITOR_FAIL", "1") };
+    let _failure = Failure;
+    let entries = xirius_plugins::probe(&crate::plugin_fixture_shots::fixture_path()).unwrap();
+    let (mut s, g) = studio(entries.clone());
+    let t = track(&s, "Vocal");
+    assert!(s.run_command(
+        "plugin.add",
+        json!({ "track": t.to_string(), "name": "Fixture", "format": "vst3",
+                "uid": entries[0].uid }),
+    ));
+    let id = s.project().tracks[&t].inserts[0].id;
+    assert!(press(&mut s, &g, MixerHit::Open(t, id)));
+    let end = Instant::now() + Duration::from_secs(8);
+    while s.error.is_none() {
+        s.tick();
+        assert!(Instant::now() < end, "the host failure was not shown");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!s.mixer.is_open(id));
+    assert!(s.error.as_deref().unwrap().contains("attached"));
+}
