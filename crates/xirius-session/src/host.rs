@@ -1471,6 +1471,26 @@ impl SessionHost {
 
     fn sync_with(&mut self, p: &Project, later: bool) -> SyncReport {
         self.builder.plugins_mut().advance_intents(&self.song, p);
+        let restore_params: Vec<PluginId> =
+            self.song
+                .tracks
+                .iter()
+                .filter_map(|(id, old)| p.tracks.get(id).map(|new| (old, new)))
+                .filter(|(old, _)| old.auto_mode.plays())
+                .flat_map(|(old, new)| {
+                    old.automation.iter().filter_map(move |lane| {
+                        let xirius_core::auto::AutoTarget::Param(id, _) = &lane.target else {
+                            return None;
+                        };
+                        (!lane.points.is_empty()
+                            && (!new.auto_mode.plays()
+                                || !new.automation.iter().any(|next| {
+                                    next.target == lane.target && !next.points.is_empty()
+                                })))
+                        .then_some(*id)
+                    })
+                })
+                .collect();
         // A clip's ARA plugin taken away or the clip deleted: the plugin is told even when no
         // track with its clips is built again.
         let ara_changed = self.song.ara.clips != p.ara.clips;
@@ -1486,11 +1506,26 @@ impl SessionHost {
         let graph = Graph::of(p);
         let scope = Scope::new(p, Select::All);
         let structure = Structure::of(p, &graph, &scope);
-        if structure != self.structure
+        if (structure != self.structure || !restore_params.is_empty())
             && graph == self.graph
             && self.builder.plugins().live()
             && without_plugin_values(&structure) == without_plugin_values(&self.structure)
-            && self.apply_plugin_values(&structure, &mut report)
+            && {
+                // A base-value edit and a playing parameter lane travel on different
+                // channels. Give the host the value heard at this position on both,
+                // so either arrival order leaves the same value in the plugin.
+                let timing = crate::automation_timing::Timing::new(
+                    p,
+                    &graph,
+                    &self.controller.shape(),
+                    self.builder.plugins(),
+                )
+                .with_start(self.automation_start);
+                let heard =
+                    timing.song_at(p, self.status.frame, &self.tmap, f64::from(self.rate()));
+                let heard = Structure::of(&heard, &graph, &scope);
+                self.apply_plugin_values(&structure, &heard, &restore_params, &mut report)
+            }
         {
             self.structure = structure.clone();
         }
@@ -1611,7 +1646,13 @@ impl SessionHost {
 
     /// Gives running plugins the state and parameters the song now has for them. `false` when
     /// one needs a new mix.
-    fn apply_plugin_values(&mut self, new: &Structure, report: &mut SyncReport) -> bool {
+    fn apply_plugin_values(
+        &mut self,
+        new: &Structure,
+        heard: &Structure,
+        restore_params: &[PluginId],
+        report: &mut SyncReport,
+    ) -> bool {
         let rows = |s: &Structure| -> Vec<Plugin> {
             s.tracks
                 .iter()
@@ -1620,15 +1661,18 @@ impl SessionHost {
                 .chain(s.master_inserts.iter().cloned())
                 .collect()
         };
-        let (old, new) = (rows(&self.structure), rows(new));
+        let (old, new, heard) = (rows(&self.structure), rows(new), rows(heard));
         let loader = self.builder.plugins_mut();
-        for (a, b) in old.iter().zip(&new) {
-            if !same_values(a, b) {
+        for ((a, b), effective) in old.iter().zip(&new).zip(&heard) {
+            if !same_values(a, b) || restore_params.contains(&b.id) {
                 if self.windowed && a.samples != b.samples {
                     return false;
                 }
                 let running = is_hosted(b) || loader.is_stock(b.id);
-                if !b.runs() || a.deactivated != b.deactivated || !running || !loader.apply(b) {
+                let mut values = b.clone();
+                values.params.clone_from(&effective.params);
+                if !b.runs() || a.deactivated != b.deactivated || !running || !loader.apply(&values)
+                {
                     return false;
                 }
                 report.warnings.extend(loader.take_file_warnings());

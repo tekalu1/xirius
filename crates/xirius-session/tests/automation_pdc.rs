@@ -281,10 +281,9 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
         .params
         .insert("1".into(), 0.9);
     host.sync(&parameter_song);
-    // The song's explicit value is delivered on the control channel, while the
-    // lane is delivered with an audio block. A returned prefetch chain does not
-    // acknowledge that the host has consumed the lane event. Drive blocks and
-    // inspect captured host state until that event has actually taken effect.
+    // The edit and the lane arrive through different channels. The edit must
+    // carry the value heard under the lane, regardless of which arrives last.
+    // Drive blocks and inspect captured host state after the edit has arrived.
     let mut heard = 0.0;
     for _ in 0..=xirius_engine::prefetch::DEPTH + 2 {
         audio.render(&mut [0.0; 512], 2);
@@ -307,4 +306,9 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
     assert!(!host.sync(&parameter_song).swapped);
     audio.render(&mut [0.0; 1024], 2);
     assert!(audio.prefetch(0).unwrap().lent, "other lanes can run ahead");
+    assert_eq!(
+        remote_param(&mut host, &parameter_song, PluginId(201)),
+        0.8984375,
+        "removing the lane restores the song's explicit parameter value"
+    );
 }
