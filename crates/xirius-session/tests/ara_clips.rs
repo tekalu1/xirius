@@ -211,7 +211,17 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     until("the edited render", || {
         (peak(&mut player, &p) - 0.25).abs() < 1e-3
     });
-    until("the archive", || take(&mut s, &player));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !take(&mut s, &player) {
+        assert!(
+            Instant::now() < deadline,
+            "archive did not arrive: {} reports={:?} violations={:?}",
+            player.ara().doc(PLUGIN).unwrap().archive_diagnostics(),
+            player.ara().reports(),
+            fake::violations()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
     assert_eq!(s.steps().len(), steps, "the archive is not a step");
     let archive = s.project().ara.archives[PLUGIN].clone();
     assert_eq!(archive.version, xirius_core::ara::ARCHIVE_VERSION);

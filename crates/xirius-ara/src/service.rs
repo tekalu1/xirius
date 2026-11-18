@@ -542,6 +542,11 @@ impl Service {
         self.shared.dirty.swap(false, Ordering::AcqRel)
     }
 
+    #[cfg(debug_assertions)]
+    pub fn edit_pending(&self) -> bool {
+        self.shared.dirty.load(Ordering::Acquire)
+    }
+
     /// Why the plugin crashed, if it did.
     pub fn crashed(&self) -> Option<String> {
         lock(&self.shared.crashed).clone()

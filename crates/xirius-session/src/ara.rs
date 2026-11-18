@@ -454,6 +454,21 @@ impl Doc {
         &self.service
     }
 
+    #[cfg(debug_assertions)]
+    pub fn archive_diagnostics(&self) -> String {
+        let pending = match &self.service {
+            ServiceHandle::Local(s) => Some(s.edit_pending()),
+            ServiceHandle::Remote(_) => None,
+        };
+        format!(
+            "asked={} stored={} edit_pending={pending:?} again={} probe={:?}",
+            lock(&self.asked).is_some(),
+            lock(&self.stored).is_some(),
+            self.again.load(Ordering::Acquire),
+            self.service.probe(Duration::from_millis(100))
+        )
+    }
+
     /// The song of `p` as this plugin sees it: its clips that play their files as they are,
     /// each at its file's own rate (PLG-047). Without `wait`, a file not read yet is read on a
     /// thread of its own and its clip waits ([`unread`]).
