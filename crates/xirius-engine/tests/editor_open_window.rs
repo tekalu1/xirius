@@ -74,8 +74,8 @@ fn open_fixture(fail: bool) -> (PluginServer, Arc<PluginLink>, RemotePlugin) {
     }
     remote.prepare(&ProcessSetup {
         sample_rate: 48_000.0,
-        max_block: 128,
-        mode: RenderMode::Offline,
+        max_block: 512,
+        mode: RenderMode::Realtime,
     });
     unsafe {
         std::env::remove_var("XIRIUS_EDITOR_OFFSCREEN");
@@ -175,8 +175,8 @@ fn an_existing_editor_bar_answers_while_another_editor_opens_in_the_same_host() 
     );
     remote.prepare(&ProcessSetup {
         sample_rate: 48_000.0,
-        max_block: 128,
-        mode: RenderMode::Offline,
+        max_block: 512,
+        mode: RenderMode::Realtime,
     });
     assert_eq!(remote.error(), None);
     host.open_editor(&link, "Second fixture", None);
@@ -223,7 +223,7 @@ fn two_real_editors_in_one_host_open_and_answer() {
         remote.prepare(&ProcessSetup {
             sample_rate: 48_000.0,
             max_block: 512,
-            mode: RenderMode::Offline,
+            mode: RenderMode::Realtime,
         });
         eprintln!("instance {n} prepare: {:?}", remote.error());
         assert!(remote.error().is_none());
