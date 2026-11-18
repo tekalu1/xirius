@@ -266,6 +266,11 @@ struct Sound {
     data: Arc<AudioData>,
 }
 
+struct Asked {
+    answer: Stored,
+    edit: bool,
+}
+
 /// The document's service, whether its binary is registered for tests or loaded in the host.
 pub enum ServiceHandle {
     Local(Service),
@@ -386,7 +391,7 @@ pub struct Doc {
     analysis_seen: Mutex<Option<xirius_ara::service::CachedArchive>>,
     restoring: AtomicBool,
     /// The archive asked for and not come yet.
-    asked: Mutex<Option<Stored>>,
+    asked: Mutex<Option<Asked>>,
     /// The newest archive was asked for while [`Doc::asked`] was on its way: asked again when
     /// it comes.
     again: AtomicBool,
@@ -678,37 +683,63 @@ impl Doc {
     /// changed its document since it was last asked and no answer is on its way. `fresh` (the
     /// song is written or the clips leave it), when it changed it at all, counting an edit it
     /// has not told of yet (that comes a turn later): asked again after an answer on its way.
-    fn ask(&self, asked: &mut Option<Stored>, fresh: bool) {
+    fn ask(&self, asked: &mut Option<Asked>, fresh: bool) {
         if asked.is_some() {
             if fresh {
                 self.again.store(true, Ordering::Release);
             }
         } else if fresh {
-            *asked = self.service.store_changed_later();
+            *asked = self.service.store_changed_later().map(|answer| Asked {
+                answer,
+                edit: false,
+            });
         } else if self.service.take_dirty() {
-            *asked = self.service.store_later();
+            *asked = self
+                .service
+                .store_later()
+                .map(|answer| Asked { answer, edit: true });
+            if asked.is_none()
+                && self.service.crashed().is_none()
+                && self.service.failed().is_none()
+            {
+                self.service.mark_changed();
+            }
         }
     }
 
     /// Takes the archive asked for when it has come (with `wait`, waiting at most
     /// [`STORE_WAIT`]). Whether it is still on its way.
-    fn receive(&self, asked: &mut Option<Stored>, wait: bool) -> bool {
+    fn receive(&self, asked: &mut Option<Asked>, wait: bool) -> bool {
         // Reserve the destination before consuming a reply, so contention cannot lose it.
         let Some(mut stored) = archive_lock(&self.stored, wait) else {
             return true;
         };
-        while let Some(rx) = asked.as_ref() {
+        while let Some(request) = asked.as_ref() {
             let got = if wait {
-                rx.recv_timeout(STORE_WAIT)
+                request
+                    .answer
+                    .recv_timeout(STORE_WAIT)
                     .map_err(|e| e == mpsc::RecvTimeoutError::Timeout)
             } else {
-                rx.try_recv().map_err(|e| e == mpsc::TryRecvError::Empty)
+                request
+                    .answer
+                    .try_recv()
+                    .map_err(|e| e == mpsc::TryRecvError::Empty)
             };
             match got {
                 // Still being written: a later call takes it.
                 Err(true) => return true,
                 // The plugin failed or went down, or it did not change: nothing comes.
-                Err(false) | Ok(None) => {}
+                Err(false) | Ok(None) => {
+                    // A failed write must not consume an edit notification. The next frame
+                    // asks again; a failed or crashed document is handled by its status.
+                    if request.edit
+                        && self.service.crashed().is_none()
+                        && self.service.failed().is_none()
+                    {
+                        self.service.mark_changed();
+                    }
+                }
                 Ok(Some((bytes, id))) => {
                     let a = xirius_ara::Archive::new(&self.plugin, &id, &bytes);
                     *stored = Some(xirius_core::ara::Archive {
@@ -721,7 +752,10 @@ impl Doc {
             }
             *asked = None;
             if self.again.swap(false, Ordering::AcqRel) {
-                *asked = self.service.store_changed_later();
+                *asked = self.service.store_changed_later().map(|answer| Asked {
+                    answer,
+                    edit: false,
+                });
             }
         }
         false
@@ -1317,7 +1351,10 @@ mod tests {
         reply
             .send(Some((vec![1, 2, 3], "test-archive".into())))
             .unwrap();
-        *lock(&doc.asked) = Some(rx);
+        *lock(&doc.asked) = Some(Asked {
+            answer: rx,
+            edit: false,
+        });
         while_locked(&doc.stored, || assert!(doc.archive(false).is_none()));
         assert!(
             doc.archive(false).is_some(),

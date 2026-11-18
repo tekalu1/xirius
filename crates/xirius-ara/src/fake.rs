@@ -72,6 +72,18 @@ static EDITS: Mutex<Vec<(String, f32)>> = Mutex::new(Vec::new());
 static WINDOWS: Mutex<Vec<(String, Arc<AtomicBool>)>> = Mutex::new(Vec::new());
 static SELECTION: AtomicU64 = AtomicU64::new(0);
 static STORE_PAUSE_MS: AtomicU64 = AtomicU64::new(0);
+static FAIL_STORE_ONCE: AtomicBool = AtomicBool::new(false);
+static FAILED_STORES: AtomicU64 = AtomicU64::new(0);
+
+/// Makes the next archive write fail, for a retry test.
+pub fn fail_next_store() {
+    FAIL_STORE_ONCE.store(true, Ordering::Release);
+}
+
+/// Archive writes deliberately failed in this process.
+pub fn failed_stores() -> u64 {
+    FAILED_STORES.load(Ordering::Acquire)
+}
 
 fn violation(what: impl Into<String>) {
     lock(&VIOLATIONS).push(what.into());
@@ -1161,6 +1173,10 @@ fn archive_json(s: &State) -> Vec<u8> {
 }
 
 fn write_archive(d: &Dc, writer: Ref) -> Bool {
+    if FAIL_STORE_ONCE.swap(false, Ordering::AcqRel) {
+        FAILED_STORES.fetch_add(1, Ordering::AcqRel);
+        return FALSE;
+    }
     let checkpoint = lock(&STORE_GATE).take();
     if let Some(gate) = checkpoint {
         let _ = gate.entered.send(());

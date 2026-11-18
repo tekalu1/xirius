@@ -1739,7 +1739,12 @@ impl Ara {
             self.cache_analysis();
             return None;
         }
-        self.store()
+        let archive = self.store();
+        if archive.is_none() {
+            // A failed write must leave the edit available to the next archive request.
+            self.shared.dirty.store(true, Ordering::Release);
+        }
+        archive
     }
 
     /// Starts the clip's render, or goes on with it for a step. Whether the clip's state

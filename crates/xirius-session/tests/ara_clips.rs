@@ -211,6 +211,8 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     until("the edited render", || {
         (peak(&mut player, &p) - 0.25).abs() < 1e-3
     });
+    let failed_before = fake::failed_stores();
+    fake::fail_next_store();
     let deadline = Instant::now() + Duration::from_secs(10);
     while !take(&mut s, &player) {
         assert!(
@@ -222,9 +224,25 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
+    assert_eq!(fake::failed_stores(), failed_before + 1);
     assert_eq!(s.steps().len(), steps, "the archive is not a step");
     let archive = s.project().ara.archives[PLUGIN].clone();
     assert_eq!(archive.version, xirius_core::ara::ARCHIVE_VERSION);
+
+    // Saving the song can ask for an archive before the UI takes the edit notice.
+    // A failed write on that path must also leave the edit ready for another request.
+    fake::edit(&modification_id(key), 0.6);
+    let p = s.project().clone();
+    until("the next edited render", || {
+        (peak(&mut player, &p) - 0.3).abs() < 1e-3
+    });
+    let failed_before = fake::failed_stores();
+    fake::fail_next_store();
+    player.ara().ask_archives(s.project());
+    until("the archive after a failed save request", || {
+        take(&mut s, &player)
+    });
+    assert_eq!(fake::failed_stores(), failed_before + 1);
 
     // PLG-036, ARC-025: the window's frames do not wait for the archive. The plugin writes it
     // on its own thread, and a later frame puts it in.
