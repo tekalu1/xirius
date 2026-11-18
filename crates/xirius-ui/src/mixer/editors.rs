@@ -276,19 +276,36 @@ impl Studio {
         self.poll_editor_bar();
         let keys = self.poll_editor_keys() | self.mixer.preset_menu.is_some();
         let mut failed = Vec::new();
+        let mut opened_sizes = Vec::new();
         if let Some(host) = self.transport.host() {
             for editor in &mut self.mixer.editors {
                 for event in host.take_editor_open_events(editor.id) {
                     match event {
                         EditorOpenEvent::Opening => {}
-                        EditorOpenEvent::Opened { .. } => {
+                        EditorOpenEvent::Opened { size, .. } => {
                             let Where::Host { opened } = &mut editor.at;
                             *opened = true;
+                            opened_sizes.push((editor.id, size));
                         }
                         EditorOpenEvent::Failed { reason } => failed.push((editor.id, reason)),
                     }
                 }
             }
+        }
+        if !opened_sizes.is_empty() {
+            let project = self.project();
+            let sizes: Vec<_> = opened_sizes
+                .into_iter()
+                .filter_map(|(id, size)| {
+                    project.tracks.values().find_map(|t| {
+                        t.inserts
+                            .iter()
+                            .find(|p| p.id == id)
+                            .map(|p| (p.uid.clone(), size))
+                    })
+                })
+                .collect();
+            self.mixer.editor_sizes.extend(sizes);
         }
         for (id, reason) in failed {
             self.close_editor(id);

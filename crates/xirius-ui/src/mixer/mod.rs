@@ -644,6 +644,8 @@ pub struct Mixer {
     pub(crate) preset_menu: Option<(TrackId, PluginId, i32, i32, u32)>,
     pub(crate) editor_bars: std::collections::HashMap<PluginId, xirius_vst3::EditorBar>,
     pub(crate) editor_positions: std::collections::HashMap<PluginId, (i32, i32)>,
+    /// Last reported editor body size for each plug-in type, for its opening window.
+    pub(crate) editor_sizes: std::collections::HashMap<String, (i32, i32)>,
     /// The plugins found by the last scan; read when a list first needs it.
     pub catalog: Option<Arc<Catalog>>,
     pub scan: scan::PluginScan,
@@ -1954,6 +1956,9 @@ impl Studio {
         self.instruments.open.retain(|w| w.pinned);
         match self.open_vst3_window(plugin, title, None) {
             Ok(e) => self.mixer.editors.push(e),
+            Err(e) if e == crate::transport::PREPARING => {
+                self.mixer.open_later = Some(crate::loading::OpenLater { track: t, id });
+            }
             Err(e) => self.error = Some(e),
         }
         true

@@ -105,6 +105,7 @@ pub mod drum_view_shots;
 pub mod e2e_shots;
 pub mod edit3_shots;
 pub mod edit_prefs;
+mod editor_loading;
 pub mod editor_settings;
 pub mod eng3_shots;
 pub mod export;

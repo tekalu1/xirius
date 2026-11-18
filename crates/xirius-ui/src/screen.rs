@@ -113,6 +113,7 @@ fn mods(m: Modifiers) -> Mods {
 
 pub(crate) struct Screen {
     device_windows: crate::device_window::Windows,
+    loading_windows: crate::editor_loading::Windows,
     pending_save_input: HeldInput,
     context_touch: crate::context::touch::Touch<MouseDownEvent>,
     replaying_touch: bool,
@@ -1384,6 +1385,7 @@ impl Screen {
 impl Render for Screen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.device_windows.sync(&self.studio, window, cx);
+        self.loading_windows.sync(&self.studio, window, cx);
         // The theme follows `ui.theme` at once (SET-002); `auto` follows the system.
         let theme = self.fixed_theme.unwrap_or_else(|| {
             let system = match window.appearance() {
@@ -1435,6 +1437,7 @@ impl Render for Screen {
                 }
                 Some(crate::context::key_more::WindowAsk::Quit) if studio.close_now() => {
                     self.device_windows.close(cx);
+                    self.loading_windows.close(cx);
                     window.defer(cx, |window, _| window.remove_window());
                 }
                 Some(crate::context::key_more::WindowAsk::Quit) | None => {}
@@ -1442,6 +1445,7 @@ impl Render for Screen {
             let menu_animating = studio.context_hover_tick(&g, std::time::Instant::now());
             let seam_moving = studio.seam_tick(&g, std::time::Instant::now());
             if studio.tick()
+                || self.loading_windows.has_pending()
                 || menu_animating
                 || seam_moving
                 || studio.motion.moving()
@@ -2399,6 +2403,7 @@ pub fn run(opts: Options) {
                             });
                         Screen {
                             device_windows: Default::default(),
+                            loading_windows: Default::default(),
                             pending_save_input: HeldInput::default(),
                             context_touch: Default::default(),
                             replaying_touch: false,
@@ -2480,6 +2485,7 @@ impl Screen {
         window.focus(&focus, cx);
         cx.new(|cx| Screen {
             device_windows: Default::default(),
+            loading_windows: Default::default(),
             pending_save_input: HeldInput::default(),
             context_touch: Default::default(),
             replaying_touch: false,
