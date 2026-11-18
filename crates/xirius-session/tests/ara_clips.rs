@@ -207,14 +207,14 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     // PLG-037: an edit in the plugin is heard and its archive goes into the song, in place.
     let steps = s.steps().len();
     fake::edit(&modification_id(a.parse::<ClipId>().unwrap().0), 0.5);
-    until("the archive", || take(&mut s, &player));
-    assert_eq!(s.steps().len(), steps, "the archive is not a step");
-    let archive = s.project().ara.archives[PLUGIN].clone();
-    assert_eq!(archive.version, xirius_core::ara::ARCHIVE_VERSION);
     let p = s.project().clone();
     until("the edited render", || {
         (peak(&mut player, &p) - 0.25).abs() < 1e-3
     });
+    until("the archive", || take(&mut s, &player));
+    assert_eq!(s.steps().len(), steps, "the archive is not a step");
+    let archive = s.project().ara.archives[PLUGIN].clone();
+    assert_eq!(archive.version, xirius_core::ara::ARCHIVE_VERSION);
 
     // PLG-036, ARC-025: the window's frames do not wait for the archive. The plugin writes it
     // on its own thread, and a later frame puts it in.
