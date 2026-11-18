@@ -741,7 +741,14 @@ impl Host {
             let plugin = xirius_clap::Plugin::new(&bundle, &d.id).map_err(|e| e.to_string())?;
             return Ok((Loaded::Clap(Box::new(plugin)), d.name.clone()));
         }
+        let trace = std::env::var_os("XIRIUS_PLUGIN_HOST_LOG").is_some();
+        if trace {
+            eprintln!("plugin setup: module begin");
+        }
         let module = self.module(&o.bundle)?;
+        if trace {
+            eprintln!("plugin setup: module end, classes begin");
+        }
         let class = module
             .classes()
             .into_iter()
@@ -750,7 +757,13 @@ impl Host {
                 None => c.is_audio_processor(),
             })
             .ok_or_else(|| format!("{} に読み込めるクラスがありません", o.bundle))?;
+        if trace {
+            eprintln!("plugin setup: classes end, instance begin");
+        }
         let plugin = Plugin::new(module, &class).map_err(|e| e.to_string())?;
+        if trace {
+            eprintln!("plugin setup: instance end");
+        }
         Ok((Loaded::Vst3(plugin), class.name))
     }
 

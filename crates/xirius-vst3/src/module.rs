@@ -200,9 +200,16 @@ impl Library {
     #[cfg(target_os = "windows")]
     fn open_windows(binary: &Path) -> Result<(HMODULE, Option<ComPtr<IPluginFactory>>), Error> {
         let w = wide(binary);
+        let trace = std::env::var_os("XIRIUS_PLUGIN_HOST_LOG").is_some();
+        if trace {
+            eprintln!("plugin setup: LoadLibrary begin");
+        }
         // SAFETY: `w` is a NUL-terminated wide path. Loading runs the DLL's initialisers,
         // which is what hosting a plugin means.
         let handle = unsafe { LoadLibraryW(w.as_ptr()) };
+        if trace {
+            eprintln!("plugin setup: LoadLibrary end");
+        }
         if handle.is_null() {
             return Err(error(format!(
                 "LoadLibrary failed for {} ({})",
@@ -214,16 +221,29 @@ impl Library {
         // documented signatures (`bool PLUGIN_API InitDll()` etc.).
         unsafe {
             if let Some(init) = GetProcAddress(handle, c"InitDll".as_ptr().cast()) {
+                if trace {
+                    eprintln!("plugin setup: InitDll begin");
+                }
                 let init: InitDll = std::mem::transmute(init);
                 if !init() {
                     return Err(error("InitDll returned false"));
+                }
+                if trace {
+                    eprintln!("plugin setup: InitDll end");
                 }
             }
             let get = GetProcAddress(handle, c"GetPluginFactory".as_ptr().cast())
                 .ok_or_else(|| error("the module has no GetPluginFactory"))?;
             let get: GetPluginFactory = std::mem::transmute(get);
             // GetPluginFactory returns a reference the caller owns.
-            Ok((handle, ComPtr::from_raw(get())))
+            if trace {
+                eprintln!("plugin setup: GetPluginFactory begin");
+            }
+            let factory = ComPtr::from_raw(get());
+            if trace {
+                eprintln!("plugin setup: GetPluginFactory end");
+            }
+            Ok((handle, factory))
         }
     }
 }
