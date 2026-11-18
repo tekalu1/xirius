@@ -127,6 +127,7 @@ jobs:
           assert os.environ["BUILD_RESULT"] == "success"
           assert os.environ["TEST_RESULT"] == "success"
       - uses: actions/checkout@v7
+        if: always()
       - uses: actions/download-artifact@v8
         with:
           pattern: coverage-${{ matrix.os }}-*
