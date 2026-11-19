@@ -37,6 +37,17 @@ enum Direction {
 }
 
 impl Grab {
+    pub fn cursor(&self) -> Option<crate::roll::Cursor> {
+        self.started
+            .then_some(if self.mapped && self.action == "view.scroll" {
+                crate::roll::Cursor::ResizeH
+            } else if self.direction == Some(Direction::Horizontal) && !self.mapped {
+                crate::roll::Cursor::Cross
+            } else {
+                crate::roll::Cursor::ResizeV
+            })
+    }
+
     pub fn started(&self) -> bool {
         self.started
     }
@@ -213,6 +224,10 @@ mod tests {
             "inside the slop nothing moves"
         );
         assert!(s.ruler_drag_move(&g, x, y + 60.0));
+        assert_eq!(
+            crate::pointer::of_studio(&s, &g).style,
+            gpui::CursorStyle::ResizeUpDown
+        );
         assert!(s.beat_w > before);
         // The tick under the press stays under it, unless the scroll ran out.
         let now = s.px_to_ticks(x - g.lanes.x + s.scroll.0);
