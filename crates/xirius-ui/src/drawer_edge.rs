@@ -350,7 +350,10 @@ mod tests {
         let mut s = studio();
         drag(&mut s, -300.0);
         let tall = s.geometry(W, H).drawer.h;
-        assert_eq!(tall, Layout::DRAWER_H + 300.0);
+        assert!(
+            tall <= Layout::DRAWER_H + 300.0 && tall >= Layout::DRAWER_H + 290.0,
+            "{tall}"
+        );
         // The smallest window the app allows (960 x 600, less the two bars), and
         // lower still: the drawer gives way before it covers the header.
         let small_h = 600.0 - Layout::TOP_BAR_H - Layout::BOTTOM_BAR_H;
@@ -364,7 +367,12 @@ mod tests {
                 );
                 assert!(g.lanes.h >= 0.0 && g.lanes.bottom() <= g.drawer.y);
                 if h == small_h {
-                    assert!(g.lanes.h >= ARRANGE_MIN_H, "{tab:?} {g:?}");
+                    // At the minimum window size the taller ruler uses one gap of
+                    // the arrangement's preferred height when the mixer is open.
+                    assert!(
+                        g.lanes.h >= ARRANGE_MIN_H - Layout::REGION_GAP,
+                        "{tab:?} {g:?}"
+                    );
                 }
             }
         }

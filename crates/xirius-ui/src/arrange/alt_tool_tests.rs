@@ -156,7 +156,7 @@ fn setup(dir: &std::path::Path) -> (Studio, Geometry) {
     s.song.load_settings(dir);
     s.drawer_open = true;
     s.tab = crate::studio::DrawerTab::Roll;
-    let g = s.geometry(1440.0, 820.0);
+    let g = s.geometry(1440.0, 920.0);
     s.resized(&g);
     (s, g)
 }

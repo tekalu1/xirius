@@ -1212,13 +1212,14 @@ fn a_drag_on_the_roll_loop_band_makes_then_moves_the_loop_and_commits_it() {
     let c = context(&s, &g);
     let ppq = c.ppq();
     let base = c.clip.start;
-    // A new range from one beat to three: the press seeks and starts it.
+    // A new range from one beat to three: the upper row starts it without seeking.
     let a = ruler_at(&s, &g, ppq, 5.0);
     let b = ruler_at(&s, &g, 3 * ppq, 5.0);
     let out = s.roll.down(&c, a.0, a.1, Mods::NONE, 1);
-    assert_eq!(out.seek, Some(base + ppq));
+    assert_eq!(out.seek, None);
+    let playhead = s.playhead;
     s.apply_roll(&g, out);
-    assert_eq!(s.playhead, base + ppq);
+    assert_eq!(s.playhead, playhead);
     moved(&mut s, &g, b, Mods::NONE);
     assert_eq!(s.roll.preview.loop_span, Some((base + ppq, base + 3 * ppq)));
     up(&mut s, &g, b, Mods::NONE);

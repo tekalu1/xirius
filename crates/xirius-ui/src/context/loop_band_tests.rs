@@ -187,12 +187,13 @@ fn the_arrangement_band_row_outside_the_band_makes_a_range_and_below_it_moves_th
     arrange_drag(&mut s, &g, a, b);
     assert_eq!(loop_now(&s), Some((12 * BAR, 14 * BAR)));
     assert!(!s.transport.looping);
-    // A press let go there moves the playhead and leaves the loop.
+    // A press on the empty upper row leaves both the playhead and loop in place.
     let out = band_at(&s, &g, 2 * BAR);
+    let playhead = s.playhead;
     arrange_click(&mut s, &g, out);
     assert!(!s.transport.looping);
     assert_eq!(loop_now(&s), Some((12 * BAR, 14 * BAR)));
-    assert!((s.playhead - 2 * BAR).abs() < BAR / 4, "{}", s.playhead);
+    assert_eq!(s.playhead, playhead);
     // Below the band's row, even under the band, a press moves the playhead.
     let below = (s.tick_x(&g, 13 * BAR), g.ruler.y + g.ruler.h - 4.0);
     arrange_click(&mut s, &g, below);

@@ -22,7 +22,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `song.open` | `home.open`, `popup.song` | スタート画面の「開く…」と曲のメニューの「開く…」: 同上 |
 | `song.open_dawproject` | `home.dawproject`, `popup.song` | スタート画面の「DAWproject を開く…」と曲のメニューの同じ項目: 同上 |
 | `audio.no_device.menu` | `home.no_device`, `start.no_device` | スタート画面と新しい曲の画面の「オーディオデバイスなし」: 2026-11-03 の利用者の決定（UI-350）。2 つの画面は同時には出ない |
-| `settings.open` | `popup.nodevice`, `rail.settings` | 「オーディオデバイスなし」のメニューの「オーディオの設定…」と左の帯の設定: 2026-11-03 の利用者の決定（UI-350） |
+| `settings.open` | `home.settings`, `popup.nodevice`, `rail.settings` | 設定の入口は左の帯とスタート画面にある: 2026-11-19 の持ち主の決定（UI-367） |
 
 ## すべての操作
 
@@ -85,7 +85,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `row.select` | `row` |
 | `send.add` | `mixer.add_send` |
 | `send.pick` | `popup.send` |
-| `settings.open` | `popup.nodevice`, `rail.settings` |
+| `settings.open` | `home.settings`, `popup.nodevice`, `rail.settings` |
 | `song.close` | `popup.song` |
 | `song.menu` | `bar.song` |
 | `song.new` | `home.new`, `popup.song` |
