@@ -351,7 +351,7 @@ mod tests {
         drag(&mut s, -300.0);
         let tall = s.geometry(W, H).drawer.h;
         assert!(
-            tall <= Layout::DRAWER_H + 300.0 && tall >= Layout::DRAWER_H + 290.0,
+            (Layout::DRAWER_H + 290.0..=Layout::DRAWER_H + 300.0).contains(&tall),
             "{tall}"
         );
         // The smallest window the app allows (960 x 600, less the two bars), and

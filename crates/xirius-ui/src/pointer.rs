@@ -161,6 +161,15 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
     if studio.lock_hovered(g).is_some() || studio.insert_drag_refused(g) {
         return Pointer::style(CursorStyle::OperationNotAllowed);
     }
+    if studio.head_fader.dragging.is_some()
+        || studio.mixer.level_drag.is_some()
+        || studio.mixer.key_drag.is_some()
+    {
+        return Pointer::style(CursorStyle::ResizeLeftRight);
+    }
+    if studio.mixer.drag.is_some() {
+        return Pointer::style(CursorStyle::ResizeUpDown);
+    }
     if studio.text_index(g, x, y, false).is_some()
         || matches!(
             hit,
@@ -169,6 +178,20 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
         )
     {
         return Pointer::style(CursorStyle::IBeam);
+    }
+    if let crate::studio::Hit::Mixer(hit) = hit {
+        use crate::mixer::MixerHit;
+        return Pointer::style(match hit {
+            MixerHit::Fader(_) | MixerHit::Pan(_) | MixerHit::SendLevel(..) => {
+                CursorStyle::ResizeUpDown
+            }
+            MixerHit::Control(_, control) if !control.is_button() => CursorStyle::ResizeUpDown,
+            MixerHit::Level(..) | MixerHit::KeyLevel(..) | MixerHit::BranchPan(..) => {
+                CursorStyle::ResizeLeftRight
+            }
+            MixerHit::Strip(_) | MixerHit::Heading(..) => CursorStyle::Arrow,
+            _ => CursorStyle::PointingHand,
+        });
     }
     if matches!(
         hit,
@@ -186,12 +209,6 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
             | crate::studio::Hit::Home(crate::home::Spot::Button(_))
             | crate::studio::Hit::Home(crate::home::Spot::Row(..))
             | crate::studio::Hit::Browser(_)
-            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::Open(..))
-            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::AddInsert(..))
-            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::AddInstrument(..))
-            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::AddLayer(..))
-            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::AddSend(..))
-            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::Editor(..))
             | crate::studio::Hit::Keys(..)
             | crate::studio::Hit::TrackIcon(..)
             | crate::studio::Hit::Widen(..)
@@ -201,14 +218,7 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
     ) {
         return Pointer::style(CursorStyle::PointingHand);
     }
-    if matches!(
-        hit,
-        crate::studio::Hit::Mixer(crate::mixer::MixerHit::Fader(..))
-            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::SendLevel(..))
-            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::KeyLevel(..))
-            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::Level(..))
-            | crate::studio::Hit::HeadFader(..)
-    ) {
+    if matches!(hit, crate::studio::Hit::HeadFader(..)) {
         return Pointer::style(CursorStyle::ResizeLeftRight);
     }
     let cursor = crate::arrange::paint::cursor(studio).unwrap_or_else(|| {
@@ -482,6 +492,40 @@ pub use crate::pointer_os as os;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mixer_controls_follow_their_drag_direction_even_outside_the_control() {
+        use crate::mixer::MixerHit;
+        use crate::studio::{DrawerTab, Hit};
+        let mut studio = Studio::sample();
+        studio.tab = DrawerTab::Mixer;
+        let g = studio.geometry(1440.0, 860.0);
+        studio.resized(&g);
+        let track = studio
+            .project()
+            .tracks
+            .values()
+            .find(|t| t.name == "Keys")
+            .unwrap()
+            .id;
+        for (hit, want) in [
+            (MixerHit::Fader(track), CursorStyle::ResizeUpDown),
+            (MixerHit::Pan(track), CursorStyle::ResizeUpDown),
+            (MixerHit::Mute(track), CursorStyle::PointingHand),
+        ] {
+            studio.input_map.pointer = studio
+                .center_of(&g, Hit::Mixer(hit))
+                .expect("visible control");
+            assert_eq!(of_studio(&studio, &g).style, want);
+        }
+        let (x, y) = studio
+            .center_of(&g, Hit::Mixer(MixerHit::Fader(track)))
+            .unwrap();
+        assert!(studio.drag_begin(&g, Hit::Mixer(MixerHit::Fader(track)), y));
+        studio.input_map.pointer = (x, 0.0);
+        assert_eq!(of_studio(&studio, &g).style, CursorStyle::ResizeUpDown);
+        studio.drag_end();
+    }
 
     #[test]
     fn settings_buttons_and_text_fields_keep_their_cursor_over_the_modal() {
