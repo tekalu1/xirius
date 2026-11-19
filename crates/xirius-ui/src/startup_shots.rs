@@ -146,7 +146,7 @@ fn empty(s: &mut Studio, g: &Geometry, devices: &[(&str, usize, usize)]) {
     s.poll_io();
     {
         let mut io = s.song.io.lock().unwrap_or_else(|e| e.into_inner());
-        io.view.ports = vec!["Arturia KeyStep 37".into()];
+        io.view.ports = vec!["MIDI Keys".into()];
         io.view.latency.get_or_insert(latency);
     }
     remember(s);
@@ -181,7 +181,7 @@ fn remember(s: &mut Studio) {
 }
 
 /// An interface with two inputs, and the speakers.
-const RIG: &[(&str, usize, usize)] = &[("Scarlett 2i2 (4th Gen)", 2, 2), ("Speakers", 0, 2)];
+const RIG: &[(&str, usize, usize)] = &[("Audio Interface", 2, 2), ("Speakers", 0, 2)];
 
 /// A newer version than this one.
 fn newer() -> xirius_session::update::Release {

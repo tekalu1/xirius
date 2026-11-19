@@ -18,7 +18,7 @@ ARA の Service とプラグインは `xirius-plugin-host --ara-worker` で動�
 - SDK の `ARA_Examples/MiniHost/MiniHost.c`（540 行）は**純 C のホスト**で、C++ 無しでホストが書けることを示している。Rust で同じ形を書く。
 - `ARA_Library/Dispatch/ARAHostDispatch.{h,cpp}`（計 1474 行）は C++ のクラスで、`ARADocumentControllerInterface` などの呼び出しを包むだけ。使うと C++ の殻と C の層が要るうえ、例外と ABI の境が増える。Rust で包み直すほうが小さい。
 - VST3 側の結び付け（`ARAVST3.h` の `IMainFactory`・`IPlugInEntryPoint2`）は COM の vtable なので、今の `xirius-vst3` と同じ形で手で書く。CLAP 側は `ARACLAP.h`（拡張の取得だけ）。
-- 束縛は、`bindgen` を**手元で一度だけ**走らせて出た Rust のファイルを置く（ビルドで libclang を要求しない）。この PC では Swift の toolchain の `libclang.dll` があるが、CI や他の開発者に libclang を課さないため。ヘッダーは `ARAInterface.h` が C99 で、数百の型だけなので、手直しも小さい。
+- 束縛は、`bindgen` を**手元で一度だけ**走らせて出た Rust のファイルを置く（ビルドで libclang を要求しない）。CI や他の開発者に libclang を課さないため。ヘッダーは `ARAInterface.h` が C99 で、数百の型だけなので、手直しも小さい。
 - 取り込む物: `ARAInterface.h`・`ARAVST3.h`・`ARACLAP.h`・`ARAAudioFileChunks.h` と `LICENSE.txt`・`NOTICE.txt`。`install_JUCE_ARA.cmake` は使わず、取り込まない（JUCE は使わない）。`3rdParty`（cpp-base64・pugixml・ICST AudioFile）は取り込まない。
 
 ## 2. 同じプロセスのままで、落ちても本体が落ちないか

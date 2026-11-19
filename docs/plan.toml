@@ -115,7 +115,7 @@ id = "EDT-005"
 title = "取り消し・やり直し（人と AI で共有、誰が変えたかの印つき）"
 area = "EDT"
 phase = "mvp"
-source = "mockups/daw-plan.html § 機能のマトリクス/編集 ; reports/04-local-repos.md § Gliss の教訓"
+source = "mockups/daw-plan.html § 機能のマトリクス/編集 ; reports/04-local-repos.md"
 done_when = "人と AI の編集が 1 本の履歴に並び、取り消すと誰の編集でも戻る"
 status = "done"
 
@@ -4071,11 +4071,11 @@ done_when = "保存して開き直すと ARA の編集が戻り、修飾を複�
 
 [[item]]
 id = "PLG-038"
-title = "ARA ホストを ARA_Examples の TestHost / TestPlugIn と、Gliss・Melodyne で試す"
+title = "ARA ホストを ARA_Examples の TestHost / TestPlugIn と、市販の ARA プラグイン で試す"
 area = "PLG"
 phase = "v1.1"
 source = "reports/02-audio-plugin-license.md § 3.7 ; reports/02-audio-plugin-license.md § 5.5"
-done_when = "TestPlugIn の全項目が通り、手順と結果が記録され、Gliss と Melodyne で実機の確認ができた"
+done_when = "TestPlugIn の全項目が通り、手順と結果が記録され、市販の ARA プラグイン で実機の確認ができた"
 
 [[item]]
 id = "PLG-039"
@@ -4098,7 +4098,7 @@ remaining = "VST3 は class id、CLAP は id で名指しし、状態（.vstpres
 
 [[item]]
 id = "PLG-041"
-title = "実機のプラグインの試験の表（Melodyne・FabFilter・Waves・u-he・Native Instruments ほか）を早くから作って回す"
+title = "実機のプラグインの試験の表（形式やメーカーの異なるプラグイン）を早くから作って回す"
 area = "PLG"
 phase = "mvp"
 source = "reports/02-audio-plugin-license.md § 5.5"
@@ -5136,7 +5136,7 @@ phase = "mvp"
 source = "mockups/daw-main.html § 02"
 done_when = "バッファを替えると ms と評価の一言が更新され、実際のデバイスの設定が変わる"
 status = "partial"
-remaining = "排他では 32〜1024 が選べ、共有ではバッファの選択肢が薄くなって押せず、共有の報告値 55.4 ms が出ることは実機で確認。排他でバッファを替えると実機の周期が変わる（engine.stats のコールバック頻度で 32〜512→約 520 フレーム・10.8 ms のドライバー下限、1024→約 1043 フレーム・21.7 ms）を実機計測。実際の窓で排他のバッファを 128 に変えられ設定ファイルにも残った（2026-10-20。証拠 UI-084/exclusive-128-realtek.jpg）。排他・共有とも遅延は「— ms」（未取得表示）で、数値と評価語が更新される様子は未観測。残り: ms 表示の連動"
+remaining = "排他では 32〜1024 が選べ、共有ではバッファの選択肢が薄くなって押せず、共有の報告値 55.4 ms が出ることは実機で確認。排他でバッファを替えると実機の周期が変わる（engine.stats のコールバック頻度で 32〜512→約 520 フレーム・10.8 ms のドライバー下限、1024→約 1043 フレーム・21.7 ms）を実機計測。実際の窓で排他のバッファを 128 に変えられ設定ファイルにも残った（2026-10-20）。排他・共有とも遅延は「— ms」（未取得表示）で、数値と評価語が更新される様子は未観測。残り: ms 表示の連動"
 
 [[item]]
 id = "ENG-039"
@@ -6558,7 +6558,7 @@ source = "reports/03-studio-pro-and-prior-art.md § 7.2"
 
 [[dropped]]
 id = "DROP-24"
-title = "Python のエンジン（Gliss の流用）"
+title = "Python のエンジン（既存の実装の流用）"
 reason = "リアルタイムの DAW に不向きで、376MB の配布物は軽量の方針に反する"
 source = "reports/04-local-repos.md § 2.6"
 
@@ -6764,7 +6764,7 @@ decided = "2026-10-19: 左のブラウザーの 1 つのタブ（「曲のファ
 source = "mockups/daw-plan.html § 機能のマトリクス"
 [[open]]
 id = "OPEN-16"
-title = "Gliss のコードの再利用と、ライセンスの付け替え"
+title = "既存の ARA プラグインのコードの再利用と、ライセンスの付け替え"
 proposal = "コードは写さず、考え方だけを使う。再利用するなら作者の許可と MIT OR Apache-2.0 への付け替えの同意を文書で得る"
 decided = "2026-10-19: コードは写さず、考え方だけを使う"
 source = "reports/04-local-repos.md"

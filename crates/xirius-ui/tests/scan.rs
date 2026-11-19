@@ -596,7 +596,7 @@ fn the_settings_plugin_page_scans_again_lists_the_result_and_tries_one_bundle_ag
     // Nothing scanned yet: the page lists nothing (and none of the old mock's plugins).
     let scene = s.settings_scene(&g);
     assert!(scene.has_text("なし"));
-    assert!(!scene.has_text("Pro-Q 4"));
+    assert!(!scene.has_text("Parametric EQ"));
 
     // 再スキャン runs `plugin.rescan` and the page shows the scan while it runs.
     assert!(scene.find(&Do::Rescan).is_some());

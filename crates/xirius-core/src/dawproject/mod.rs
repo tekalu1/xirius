@@ -38,7 +38,7 @@ pub fn is_dawproject(path: &Path) -> bool {
 }
 
 /// Adds to `skips` the VST3 and CLAP plugins of `p` this PC does not have, as `here` tells
-/// (`None` when it cannot, as with no scan to go by): 「Pad の Diva（この PC に無い）」. The song
+/// (`None` when it cannot, as with no scan to go by): 「Pad の Analog Synth（この PC に無い）」. The song
 /// keeps them with their state, for a PC that has them.
 pub fn not_here(p: &Project, skips: &mut Skips, here: &mut dyn FnMut(&Plugin) -> Option<bool>) {
     for t in p.tracks.values() {

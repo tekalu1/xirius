@@ -154,9 +154,9 @@ mod tests {
 
     #[test]
     fn class_keys_differ_and_stay_put() {
-        let a = class_key("com.u-he.diva");
-        assert_eq!(a, class_key("com.u-he.diva"));
-        assert_ne!(a, class_key("com.u-he.Diva"));
+        let a = class_key("org.example.synth");
+        assert_eq!(a, class_key("org.example.synth"));
+        assert_ne!(a, class_key("org.example.Synth"));
         assert_ne!(class_key(""), [0; 16]);
     }
 

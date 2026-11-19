@@ -764,7 +764,7 @@ fn a_track_naming_a_port_that_went_is_left_out_and_keeps_the_name() {
     run(
         &mut s,
         "track.input.set",
-        json!({ "ids": [keys], "input": "KeyStep 37" }),
+        json!({ "ids": [keys], "input": "MIDI Keyboard" }),
     );
     let mut rig = Rig::new(&s);
     let take = |rig: &mut Rig, s: &mut Session, ports: Vec<String>| {
@@ -790,26 +790,26 @@ fn a_track_naming_a_port_that_went_is_left_out_and_keeps_the_name() {
         assert!(r.step.is_some(), "{r:?}");
         started
     };
-    // Only the loopMIDI port is left.
-    let started = take(&mut rig, &mut s, vec!["loopMIDI Port".into()]);
+    // Only the virtual MIDI port is left.
+    let started = take(&mut rig, &mut s, vec!["MIDI Loop".into()]);
     let ids: Vec<String> = started.midi_tracks.iter().map(|t| t.to_string()).collect();
     assert_eq!(ids, std::slice::from_ref(&pads));
     assert!(
         started
             .warnings
             .iter()
-            .any(|w| w.contains("Keys") && w.contains("KeyStep 37")),
+            .any(|w| w.contains("Keys") && w.contains("MIDI Keyboard")),
         "{:?}",
         started.warnings
     );
-    assert_eq!(track(&s, &keys).input.as_deref(), Some("KeyStep 37"));
+    assert_eq!(track(&s, &keys).input.as_deref(), Some("MIDI Keyboard"));
     assert!(clips(&s, &keys).is_empty());
     assert_eq!(clips(&s, &pads).len(), 1);
     // Plugged in again: Keys records from it with no setting.
     let started = take(
         &mut rig,
         &mut s,
-        vec!["loopMIDI Port".into(), "KeyStep 37".into()],
+        vec!["MIDI Loop".into(), "MIDI Keyboard".into()],
     );
     assert_eq!(started.midi_tracks.len(), 2, "{:?}", started.warnings);
     assert!(started.warnings.is_empty(), "{:?}", started.warnings);

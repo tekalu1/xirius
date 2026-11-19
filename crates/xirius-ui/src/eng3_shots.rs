@@ -44,14 +44,14 @@ pub fn stage(s: &mut Studio, g: &Geometry, n: u8) {
     match n {
         0 => {
             crate::midi_out_row::set_test_ports(Some(vec![
-                "loopMIDI Port".into(),
+                "MIDI Loop".into(),
                 "Microsoft GS Wavetable Synth".into(),
             ]));
             s.drawer_open = true;
             s.tab = DrawerTab::Mixer;
         }
         1 => {
-            s.popup_action(g, Action::Output("midi:loopMIDI Port".into()));
+            s.popup_action(g, Action::Output("midi:MIDI Loop".into()));
         }
         2 => {
             s.popup = None;

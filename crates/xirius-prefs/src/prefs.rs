@@ -468,7 +468,7 @@ mod tests {
         p.set("edit.automation.locks-clips", &json!(false)).unwrap();
         p.set("audio.record-offset", &json!("2")).unwrap();
         p.set("midi.inputs.Port. 1", &json!("off")).unwrap();
-        p.set("plugins.process.Serum 2", &json!("dedicated"))
+        p.set("plugins.process.Lead Synth", &json!("dedicated"))
             .unwrap();
         p.edit_list("plugins.clap.paths", "C:\\a \"b\"", true)
             .unwrap();

@@ -17,7 +17,7 @@
 
 ## Windows でのビルド
 
-この PC（Windows 11、Ryzen 9 7950X、RTX 5070）で `cargo build -p xirius-ui --release` が通り、窓が開いて描画と入力が動くことを確かめた。
+Windows 11 で `cargo build -p xirius-ui --release` が通り、窓が開いて描画と入力が動くことを確かめた。
 
 - Windows の描画は Direct3D 11 + DirectWrite。
 - **ビルド時に Windows SDK の `fxc.exe` が要る**（`gpui-pre-windows` の build.rs が HLSL をコンパイルする）。`PATH` に無ければ SDK の `bin\<版>\x64` から探し、見つからないと `Failed to find fxc.exe` で止まる。別の場所に置くときは環境変数 `GPUI_FXC_PATH` に渡す。この PC は Visual Studio / Windows SDK 入りで、設定なしに通った。

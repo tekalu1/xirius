@@ -476,7 +476,7 @@ fn audio_devices_lists_inputs_and_outputs_and_can_keep_only_those_with_inputs() 
     let mut io = Io::new(Box::new(xirius_engine::devices::Unopened {
         devices: vec![device("Speakers", 0, 2), device("Headset", 1, 2)],
     }));
-    io.view.ports = vec!["KeyStep".into()];
+    io.view.ports = vec!["MIDI Keys".into()];
     let mut s = Session::with_registry(
         Project::new("test"),
         xirius_session::commands::shared_registry(),
@@ -510,7 +510,7 @@ fn audio_devices_lists_inputs_and_outputs_and_can_keep_only_those_with_inputs() 
         midi["inputs"],
         json!([
             {"name": "PC のキーボード", "kind": "keyboard"},
-            {"name": "KeyStep", "kind": "port", "on": true},
+            {"name": "MIDI Keys", "kind": "port", "on": true},
         ])
     );
 }

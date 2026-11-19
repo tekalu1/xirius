@@ -1062,7 +1062,7 @@ fn the_plugin_page_lists_what_the_scan_found_and_the_unusable_last_with_the_reas
         scene.has_text("応答がありません"),
         "the unusable one says why"
     );
-    for fixture in ["Pro-Q 4", "Serum 2", "Tape Echo 3", "Melodyne 5"] {
+    for fixture in ["Parametric EQ", "Synth", "Delay", "Pitch Editor"] {
         assert!(!scene.has_text(fixture), "{fixture} was only a fixture");
     }
     // The usable ones are by name; the unusable one is after them.
@@ -1083,7 +1083,7 @@ fn the_plugin_page_with_no_plugin_says_none() {
     s.open_settings(Section::Plugins);
     let scene = s.settings_scene(&g);
     assert!(scene.has_text("なし"));
-    assert!(!scene.has_text("Pro-Q 4"));
+    assert!(!scene.has_text("Parametric EQ"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

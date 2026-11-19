@@ -983,7 +983,7 @@ fn song_with_plugins() -> Project {
         &mut p,
         "vst3",
         "565354414D504C4573616D706C650000",
-        "Diva",
+        "Analog Synth",
         PluginKind::Instrument,
     );
     let mut verb = plugin(
@@ -1018,8 +1018,8 @@ fn a_plugins_state_goes_with_it_both_ways() {
         .unwrap();
     let (class, state) = vstpreset::decode(&zip.read(&preset).unwrap().unwrap()).unwrap();
     assert_eq!(class, "565354414D504C4573616D706C650000");
-    assert_eq!(state.component, b"Diva component");
-    assert_eq!(state.controller, b"Diva controller");
+    assert_eq!(state.component, b"Analog Synth component");
+    assert_eq!(state.controller, b"Analog Synth controller");
 
     let got = import(&out, &dir.path().join("media")).unwrap();
     assert!(got.skipped.is_empty(), "{:?}", got.skipped.lines());

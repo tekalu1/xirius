@@ -79,7 +79,7 @@ fn demo_song(dir: &Path) -> PathBuf {
     <Track contentType="notes" id="p" name="Pad">
       <Channel role="regular" id="pc" destination="mc">
         <Devices>
-          <Vst2Plugin deviceID="1234" deviceName="Diva" deviceRole="instrument" id="d1"/>
+          <Vst2Plugin deviceID="1234" deviceName="Analog Synth" deviceRole="instrument" id="d1"/>
         </Devices>
       </Channel>
     </Track>

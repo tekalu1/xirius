@@ -329,7 +329,7 @@ fn the_list_is_as_wide_as_its_longest_row_and_scrolls_past_twelve() {
             .map(|i| {
                 (
                     format!("とても長い名前のトラック {i} の音源プラグイン"),
-                    "Diva（VST2）".into(),
+                    "Analog Synth（VST2）".into(),
                 )
             })
             .collect(),
@@ -339,7 +339,7 @@ fn the_list_is_as_wide_as_its_longest_row_and_scrolls_past_twelve() {
     let cells = cells(&long, 3);
     assert_eq!(cells.len(), 1 + ROWS);
     assert_eq!(cells[1].text, "とても長い名前のトラック 3 の音源プラグイン");
-    assert_eq!(cells[1].hint, "Diva（VST2）");
+    assert_eq!(cells[1].hint, "Analog Synth（VST2）");
     assert!(cells.iter().all(|c| c.rect.right() <= long.width()));
 }
 

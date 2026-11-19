@@ -129,7 +129,6 @@ ARA の Service とプラグインはホストのプロセスで動く。曲の�
 - `crates/xirius-plugins/src/ara.rs` はクラスの一覧から見分ける規則を確かめる。
 - `crates/xirius-session/tests/ara.rs` は、ARA の印の付いた曲がホストを必須とし、ホストが無ければ読み込みを失敗させることを確かめる。
 - `crates/xirius-ui/src/health.rs` の `an_ara_plugin_uses_the_host` は、メニューがホストの選択肢を示すことを確かめる。
-- 2026-10-13 にこの PC の標準のフォルダー（491 束・741 個）をスキャンし、ARA と見分けたのは Melodyne・Synthesizer V Studio ARA Plugin・Synthesizer V Studio 2 ARA Plugin・VOCALOID Bridge（`OnlyARA`）・Gliss の 5 個だった。
 
 ## 試験道具（PLG-042）
 

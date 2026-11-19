@@ -131,10 +131,7 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             s.press(g, Hit::FolderBus(f));
         }
         5 => {
-            crate::input_row::set_test_ports(Some(vec![
-                "KeyStep 37".into(),
-                "loopMIDI Port".into(),
-            ]));
+            crate::input_row::set_test_ports(Some(vec!["MIDI Keys".into(), "MIDI Loop".into()]));
             s.drawer_open = true;
             s.tab = DrawerTab::Mixer;
             let g = &s.geometry(g.size.0, g.size.1);
@@ -191,7 +188,7 @@ mod tests {
         let p = s.popup.as_ref().expect("the port list");
         let cs = p.choices();
         let labels: Vec<_> = cs.iter().map(|c| c.label.as_str()).collect();
-        assert_eq!(labels, ["すべての入力", "KeyStep 37", "loopMIDI Port"]);
+        assert_eq!(labels, ["すべての入力", "MIDI Keys", "MIDI Loop"]);
         stage(&mut s, &g, 6);
         let p = s.popup.as_ref().expect("the channel list");
         assert_eq!(p.choices()[0].label, "既定（In 1+2）");

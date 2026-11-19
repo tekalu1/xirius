@@ -424,7 +424,7 @@ fn a_plugin_this_pc_does_not_have_is_kept_as_an_empty_slot_and_reported() {
             "pan": 0.0,
             "inserts": [
                 { "name": "Installed", "format": "vst3", "uid": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "kind": "effect", "bypass": false },
-                { "name": "Keyscape", "format": "vst3", "uid": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "kind": "effect", "bypass": false },
+                { "name": "Reverb", "format": "vst3", "uid": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "kind": "effect", "bypass": false },
                 { "name": "EQ", "format": "builtin", "uid": "EQ", "kind": "effect", "bypass": false }
             ],
             "sends": []
@@ -441,7 +441,7 @@ fn a_plugin_this_pc_does_not_have_is_kept_as_an_empty_slot_and_reported() {
     let rows = out["adjusted"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0]["kind"], "rejected");
-    assert_eq!(rows[0]["what"], "Keyscape");
+    assert_eq!(rows[0]["what"], "Reverb");
     assert!(
         rows[0]["reason"]
             .as_str()
@@ -453,7 +453,7 @@ fn a_plugin_this_pc_does_not_have_is_kept_as_an_empty_slot_and_reported() {
         .iter()
         .map(|x| x.name.clone())
         .collect();
-    assert_eq!(names, ["Installed", "Keyscape", "EQ"], "the slot stays");
+    assert_eq!(names, ["Installed", "Reverb", "EQ"], "the slot stays");
 }
 
 #[test]

@@ -167,7 +167,7 @@ fn an_entry_with_bytes_that_are_not_utf8_leaves_the_other_rows_listed() {
     let odd = serde_json::to_string(&root.join("odd").to_string_lossy()).unwrap();
     bytes.extend_from_slice(odd.trim_matches('"').as_bytes());
     // "a katakana letter" in Shift-JIS, cut off in the middle of its pair
-    bytes.extend_from_slice(b"\", \"name\": \"Battery\x83\", \"at_ms\": 9000, \"draft\": false}, ");
+    bytes.extend_from_slice(b"\", \"name\": \"Demo\x83\", \"at_ms\": 9000, \"draft\": false}, ");
     bytes.extend_from_slice(entry(&b, "b", 4000).to_string().as_bytes());
     bytes.extend_from_slice(b"]}");
     std::fs::write(root.join("keep").join("recent.json"), bytes).unwrap();

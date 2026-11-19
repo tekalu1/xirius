@@ -30,7 +30,7 @@ pub fn fixture(s: &mut Studio) {
     s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
     let devices = vec![
         Device {
-            name: "Scarlett 2i2 (4th Gen)".into(),
+            name: "Audio Interface".into(),
             inputs: vec!["In 1".into(), "In 2".into()],
             outputs: (1..=4).map(|i| format!("Out {i}")).collect(),
         },
@@ -78,9 +78,9 @@ pub fn fixture(s: &mut Studio) {
         .unwrap_or_else(|e| e.into_inner())
         .view
         .ports = vec![
-        "Arturia KeyStep 37".into(),
+        "MIDI Keys".into(),
         "nanoKONTROL2".into(),
-        "loopMIDI Port".into(),
+        "MIDI Loop".into(),
     ];
     s.poll_io();
 }
@@ -489,7 +489,7 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
             window,
             cx,
         );
-        pick(studio, "Scarlett 2i2 (4th Gen)", window, cx);
+        pick(studio, "Audio Interface", window, cx);
         press(studio, &g, Do::Input(0), window, cx);
         key("down", window, cx);
         assert_eq!(
@@ -574,7 +574,7 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
                 .unwrap()
                 .view
                 .received
-                .contains(&"Arturia KeyStep 37".into())
+                .contains(&"MIDI Keys".into())
         );
     }
     if n == 18 {

@@ -1624,7 +1624,7 @@ impl PluginLoader {
 
     /// Reads every plugin's state now, so the next [`PluginLoader::take_edits`] has it
     /// whether or not the plugin said anything had changed (PLG-057): a plugin that changes
-    /// its patch in its own window, as Keyscape does, sends no edit, and the song would be
+    /// its patch in its own window may send no edit, and the song would be
     /// saved with the state from when it was opened. The ones in host processes are asked
     /// and waited for, up to `wait` (the ones whose host went down or never opened are not).
     pub fn begin_pull_states(&mut self) -> StatePull {

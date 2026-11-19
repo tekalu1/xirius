@@ -1,4 +1,4 @@
-//! A plugin that changes its patch without saying so (Keyscape does) still reaches the song
+//! A plugin that changes its patch without saying so still reaches the song
 //! when the song is written or left (PLG-057). The fixture's "Latency" parameter is such a
 //! change: it moves the plugin's state and raises neither a gesture nor the values-changed
 //! flag, so the notifications the song waits for never come. Nothing here opens an audio

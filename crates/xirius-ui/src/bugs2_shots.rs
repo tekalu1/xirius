@@ -31,7 +31,7 @@ fn speakers_only(s: &mut Studio, g: &Geometry) {
     *s = Studio::new(crate::song::Song::empty());
     s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
     let speakers = Device {
-        name: "Speakers (Realtek Audio)".into(),
+        name: "Built-in Speakers".into(),
         inputs: Vec::new(),
         outputs: vec!["Out 1".into(), "Out 2".into()],
     };

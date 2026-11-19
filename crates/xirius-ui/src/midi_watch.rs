@@ -250,8 +250,8 @@ mod tests {
         let lists = std::sync::Mutex::new(vec![
             ports(&[]),
             ports(&[]),
-            ports(&["KeyStep 37"]),
-            ports(&["KeyStep 37"]),
+            ports(&["MIDI Keys"]),
+            ports(&["MIDI Keys"]),
             ports(&[]),
             ports(&["A"]),
         ]);
@@ -272,12 +272,7 @@ mod tests {
             .collect();
         assert_eq!(
             got,
-            [
-                ports(&[]),
-                ports(&["KeyStep 37"]),
-                ports(&[]),
-                ports(&["A"])
-            ]
+            [ports(&[]), ports(&["MIDI Keys"]), ports(&[]), ports(&["A"])]
         );
         // The list stays: nothing more comes.
         assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
@@ -300,15 +295,15 @@ mod tests {
         }
         assert_eq!(s.notice_text(), None);
         let steps = s.song.steps();
-        tx.send(ports(&["KeyStep 37"])).unwrap();
+        tx.send(ports(&["MIDI Keys"])).unwrap();
         until_changed(&mut s);
-        assert_eq!(s.notice_text(), Some("「KeyStep 37」 接続"));
-        assert_eq!(s.midi_ports.known(), ports(&["KeyStep 37"]));
+        assert_eq!(s.notice_text(), Some("「MIDI Keys」 接続"));
+        assert_eq!(s.midi_ports.known(), ports(&["MIDI Keys"]));
         // No setting: Keys still takes every port, and the song is as it was.
         assert_eq!(s.project().tracks[&keys].input, None);
         assert_eq!(s.song.steps(), steps);
         // A list the same as the one before says nothing again.
-        assert!(!s.midi_ports_now(ports(&["KeyStep 37"])));
+        assert!(!s.midi_ports_now(ports(&["MIDI Keys"])));
     }
 
     #[test]
@@ -316,44 +311,44 @@ mod tests {
         let (mut s, _) = studio();
         s.midi_ports_now(ports(&[]));
         s.transport.recording = true;
-        assert!(s.midi_ports_now(ports(&["KeyStep 37"])));
-        assert_eq!(s.notice_text(), Some("「KeyStep 37」 接続"));
+        assert!(s.midi_ports_now(ports(&["MIDI Keys"])));
+        assert_eq!(s.notice_text(), Some("「MIDI Keys」 接続"));
         assert!(s.midi_ports_now(ports(&[])));
-        assert_eq!(s.notice_text(), Some("「KeyStep 37」 切断"));
+        assert_eq!(s.notice_text(), Some("「MIDI Keys」 切断"));
         s.transport.recording = false;
     }
 
     #[test]
     fn a_port_pulled_out_leaves_the_song_that_names_it_as_it_is() {
-        set_test_ports(Some(ports(&["KeyStep 37", "loopMIDI Port"])));
+        set_test_ports(Some(ports(&["MIDI Keys", "MIDI Loop"])));
         let (mut s, g) = studio();
         let keys = track(&s, "Keys");
-        s.midi_ports_now(ports(&["KeyStep 37", "loopMIDI Port"]));
-        // Keys names the KeyStep; its list is open.
+        s.midi_ports_now(ports(&["MIDI Keys", "MIDI Loop"]));
+        // Keys names the MIDI Keys; its list is open.
         let (x, y) = s.mixer_center(&g, MixerHit::Input(keys)).unwrap();
         assert_eq!(s.hit(&g, x, y), Hit::Mixer(MixerHit::Input(keys)));
         assert!(s.press(&g, Hit::Mixer(MixerHit::Input(keys))));
-        s.popup_action(&g, Action::Input("KeyStep 37".into()));
+        s.popup_action(&g, Action::Input("MIDI Keys".into()));
         assert!(s.press(&g, Hit::Mixer(MixerHit::Input(keys))));
-        assert_eq!(labels(&s), [ALL_PORTS, "KeyStep 37", "loopMIDI Port"]);
+        assert_eq!(labels(&s), [ALL_PORTS, "MIDI Keys", "MIDI Loop"]);
         let steps = s.song.steps();
         let saved = s.project().tracks[&keys].clone();
         // Pulled out: said, the open list is made again, and the song keeps the name.
-        assert!(s.midi_ports_now(ports(&["loopMIDI Port"])));
-        assert_eq!(s.notice_text(), Some("「KeyStep 37」 切断"));
-        assert_eq!(labels(&s), [ALL_PORTS, "loopMIDI Port", "KeyStep 37"]);
-        assert_eq!(s.popup.as_ref().unwrap().current(), "KeyStep 37");
+        assert!(s.midi_ports_now(ports(&["MIDI Loop"])));
+        assert_eq!(s.notice_text(), Some("「MIDI Keys」 切断"));
+        assert_eq!(labels(&s), [ALL_PORTS, "MIDI Loop", "MIDI Keys"]);
+        assert_eq!(s.popup.as_ref().unwrap().current(), "MIDI Keys");
         assert_eq!(s.song.steps(), steps);
         assert_eq!(*s.project().tracks[&keys], *saved);
         assert_eq!(
             crate::input_row::label(&s.project().tracks[&keys]),
-            "KeyStep 37"
+            "MIDI Keys"
         );
         // Plugged in again: the list has it in its place, and Keys takes it once more.
         s.selected_row = Some(RowKind::Track(keys));
-        assert!(s.midi_ports_now(ports(&["KeyStep 37", "loopMIDI Port"])));
-        assert_eq!(labels(&s), [ALL_PORTS, "KeyStep 37", "loopMIDI Port"]);
-        assert_eq!(s.notice_text(), Some("「KeyStep 37」 接続"));
+        assert!(s.midi_ports_now(ports(&["MIDI Keys", "MIDI Loop"])));
+        assert_eq!(labels(&s), [ALL_PORTS, "MIDI Keys", "MIDI Loop"]);
+        assert_eq!(s.notice_text(), Some("「MIDI Keys」 接続"));
         set_test_ports(None);
     }
 
@@ -364,11 +359,11 @@ mod tests {
         s.selected_row = Some(RowKind::Track(keys));
         assert!(s.run_command(
             "track.input.set",
-            serde_json::json!({ "ids": [keys.to_string()], "input": "loopMIDI Port" }),
+            serde_json::json!({ "ids": [keys.to_string()], "input": "MIDI Loop" }),
         ));
-        s.midi_ports_now(ports(&["loopMIDI Port"]));
-        assert!(s.midi_ports_now(ports(&["loopMIDI Port", "KeyStep 37"])));
-        assert_eq!(s.notice_text(), Some("「KeyStep 37」 接続"));
+        s.midi_ports_now(ports(&["MIDI Loop"]));
+        assert!(s.midi_ports_now(ports(&["MIDI Loop", "MIDI Keys"])));
+        assert_eq!(s.notice_text(), Some("「MIDI Keys」 接続"));
     }
 
     #[test]

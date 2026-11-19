@@ -171,7 +171,7 @@ fn a_name_from_the_browser_resolves_to_its_plugin() {
 
 /// `n` instruments of a few makers, some with long names.
 fn many_synths(n: usize) -> Catalog {
-    let makers = ["Native Instruments", "Arturia", "Spitfire Audio", "u-he"];
+    let makers = ["Instrument Maker", "Maker B", "Sample Library", "Maker D"];
     Catalog {
         entries: (0..n)
             .map(|i| Entry {
@@ -324,8 +324,8 @@ fn ui_297_typing_narrows_by_name_and_maker_and_the_keys_pick() {
     s.mixer.catalog = Some(Arc::new(many_synths(40)));
     let t = track(&s, "Keys");
     assert!(press(&mut s, &g, MixerHit::AddInstrument(t)));
-    // By maker: 「u-he」 makes every fourth.
-    for ch in ["u", "-", "H", "e"] {
+    // By maker: 「Maker D」 makes every fourth.
+    for ch in ["e", "R", " ", "d"] {
         assert!(s.fx_typed(ch, Some(ch)));
     }
     let p = s.popup.as_ref().unwrap();
@@ -333,7 +333,7 @@ fn ui_297_typing_narrows_by_name_and_maker_and_the_keys_pick() {
         .map(|c| c.label.clone())
         .collect();
     assert_eq!(found.len(), 10, "{found:?}");
-    assert!(found.iter().all(|l| l.ends_with("— u-he")));
+    assert!(found.iter().all(|l| l.ends_with("— Maker D")));
     assert!(
         p.layout(g.size).cells.iter().all(|c| c.look != Look::Thumb),
         "ten show at once"

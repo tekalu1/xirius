@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn an_instrument_well_lists_the_midi_ports_and_sets_one() {
-        set_test_ports(Some(vec!["KeyStep 37".into(), "loopMIDI Port".into()]));
+        set_test_ports(Some(vec!["MIDI Keys".into(), "MIDI Loop".into()]));
         let (mut s, g) = studio();
         let keys = track(&s, "Keys");
         assert_eq!(label(&s.project().tracks[&keys]), ANY_MIDI);
@@ -253,19 +253,19 @@ mod tests {
         let popup = s.popup.as_ref().expect("the port list");
         assert_eq!(popup.kind, PopupKind::Input(keys));
         assert_eq!(popup.current(), "none");
-        assert_eq!(labels(&s), [ALL_PORTS, "KeyStep 37", "loopMIDI Port"]);
+        assert_eq!(labels(&s), [ALL_PORTS, "MIDI Keys", "MIDI Loop"]);
         let before = s.song().steps();
-        s.popup_action(&g, Action::Input("loopMIDI Port".into()));
+        s.popup_action(&g, Action::Input("MIDI Loop".into()));
         assert_eq!(s.song().steps(), before + 1);
         let p = s.project();
-        assert_eq!(p.tracks[&keys].input.as_deref(), Some("loopMIDI Port"));
-        assert_eq!(label(&p.tracks[&keys]), "loopMIDI Port");
+        assert_eq!(p.tracks[&keys].input.as_deref(), Some("MIDI Loop"));
+        assert_eq!(label(&p.tracks[&keys]), "MIDI Loop");
         drop(p);
         // The port is gone from this PC: the list still shows it, lit.
-        set_test_ports(Some(vec!["KeyStep 37".into()]));
+        set_test_ports(Some(vec!["MIDI Keys".into()]));
         assert!(press_input(&mut s, &g, keys));
-        assert_eq!(labels(&s), [ALL_PORTS, "KeyStep 37", "loopMIDI Port"]);
-        assert_eq!(s.popup.as_ref().unwrap().current(), "loopMIDI Port");
+        assert_eq!(labels(&s), [ALL_PORTS, "MIDI Keys", "MIDI Loop"]);
+        assert_eq!(s.popup.as_ref().unwrap().current(), "MIDI Loop");
         s.popup_action(&g, Action::Input("none".into()));
         assert_eq!(s.project().tracks[&keys].input, None);
         set_test_ports(None);

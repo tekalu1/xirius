@@ -117,8 +117,7 @@ pub fn child_main(args: &[String]) -> i32 {
 }
 
 /// Ends the process without letting the loaded DLLs run their unload code: some plugins
-/// (seen with Native Instruments and Plugin Alliance bundles) hang there after the answer is
-/// written, and the scan would wait out its whole timeout for each.
+/// hang there after the answer is written, and the scan would wait out its whole timeout for each.
 pub(crate) fn end_now(code: u32) -> i32 {
     #[cfg(windows)]
     {
