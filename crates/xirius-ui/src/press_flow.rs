@@ -96,6 +96,9 @@ impl Studio {
         if self.chain_down(g, x, y) {
             return PressOut::BOTH;
         }
+        if clicks == 2 && self.ruler_double_click(g, x, y) {
+            return PressOut::NOTIFY;
+        }
         self.ruler_drag_down(g, x, y, mods);
         if self.roll_press(g, x, y, mods, clicks) {
             return PressOut::NOTIFY;
@@ -111,6 +114,62 @@ impl Studio {
             return PressOut::NOTIFY;
         }
         self.press_at_hit(g, x, y, clicks, mods)
+    }
+
+    /// The two rows of either ruler have distinct double-click actions.
+    fn ruler_double_click(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        let (ruler, scale) = if let Some(ctx) = self.roll_ctx(g) {
+            let ruler = self.roll.frame(ctx.body).ruler;
+            if ruler.contains(x, y) {
+                (ruler, self.roll.ruler_scale(&ctx))
+            } else {
+                (g.ruler, self.ruler_scale(g))
+            }
+        } else {
+            (g.ruler, self.ruler_scale(g))
+        };
+        if !ruler.contains(x, y) {
+            return false;
+        }
+        let mapped = {
+            let settings = self.song.settings();
+            settings
+                // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only settings snapshot.
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .mousemap
+                .changed
+                .contains_key("ruler.any.empty.click")
+        };
+        if mapped {
+            return false;
+        }
+        let tick = scale.tick(x).max(0);
+        if !crate::ruler::on_band(ruler, y) {
+            // design-lint: allow(ui-blocking-io) PRJ-031: transport seek submits the existing command without external I/O.
+            self.seek(tick);
+            if !self.transport.playing {
+                self.toggle_play();
+            }
+            return true;
+        }
+        let project = self.project();
+        let span = project
+            .loop_range
+            .map(|l| (scale.x(l.start), scale.x(l.end)));
+        if crate::ruler::grip_at(span, x) != crate::ruler::LoopGrip::New {
+            return false;
+        }
+        let map = project.time_map();
+        let bar = map.to_bbt(tick).0;
+        let start = map.bar_start(bar);
+        let end = map.bar_start(bar + 1);
+        // design-lint: allow(ui-blocking-io) PRJ-031: this is the existing synchronous in-memory edit command.
+        self.arrange_run("loop.set", serde_json::json!({"start": start, "end": end}));
+        if !self.transport.looping {
+            self.toggle_loop();
+        }
+        true
     }
 
     /// A right press at (`x`, `y`) in the body that no dialog, setting or palette took: the
@@ -273,5 +332,43 @@ impl Studio {
             notify = true;
         }
         notify
+    }
+}
+
+#[cfg(test)]
+mod ruler_tests {
+    use super::*;
+
+    #[test]
+    fn double_click_on_the_upper_empty_row_makes_one_bar_loop() {
+        let mut studio = Studio::sample();
+        let g = studio.geometry(1440.0, 860.0);
+        studio.resized(&g);
+        let x = g.ruler.x + 300.0;
+        let y = g.ruler.y + 2.0;
+        let playhead = studio.playhead;
+        assert!(studio.ruler_double_click(&g, x, y));
+        assert_eq!(studio.playhead, playhead);
+        assert!(studio.transport.looping);
+        let project = studio.project();
+        let loop_range = project.loop_range.expect("a loop was made");
+        let map = project.time_map();
+        let bar = map.to_bbt(loop_range.start).0;
+        assert_eq!(loop_range.start, map.bar_start(bar));
+        assert_eq!(loop_range.end, map.bar_start(bar + 1));
+    }
+
+    #[test]
+    fn double_click_on_the_lower_row_seeks_and_starts_playing() {
+        let mut studio = Studio::sample();
+        studio.transport.mode = xirius_session::output::OutputMode::Silent { paced: false };
+        let g = studio.geometry(1440.0, 860.0);
+        studio.resized(&g);
+        let x = g.ruler.x + 300.0;
+        let y = g.ruler.bottom() - 3.0;
+        let tick = studio.ruler_scale(&g).tick(x).max(0);
+        assert!(studio.ruler_double_click(&g, x, y));
+        assert_eq!(studio.playhead, tick);
+        assert!(studio.transport.playing);
     }
 }

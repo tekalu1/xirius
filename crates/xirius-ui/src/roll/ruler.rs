@@ -84,7 +84,7 @@ impl Roll {
 
     /// A press on the ruler. Below the band it seeks. On the band a press on a
     /// grip or the body of the loop drags the loop; a press elsewhere on the
-    /// band starts a new range and seeks too, as the arrangement does.
+    /// band starts a new range without locating the playhead.
     pub(super) fn ruler_down(&mut self, ctx: &Ctx, f: &Frame, x: f32, y: f32) -> Out {
         let at = self.ruler_scale(ctx).tick(x).max(0);
         if self.end_grab(ctx, f, x, y) {
@@ -98,10 +98,7 @@ impl Roll {
             };
         };
         self.drag = Some(Drag::new(Mode::Loop(grip), (x, y)));
-        Out {
-            seek: (grip == LoopGrip::New).then_some(at),
-            ..Out::used()
-        }
+        Out::used()
     }
 
     /// The loop a drag on the band would leave now (song ticks), if it changes

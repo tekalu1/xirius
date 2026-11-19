@@ -1,5 +1,6 @@
-//! KEY-016: a drag up and down on the ruler zooms. `ruler.any.empty.drag` says what the drag does:
-//! `view.zoom.time` (the default; the tick under the press stays where it is), `view.zoom.data`
+//! KEY-016: a vertical drag on the ruler zooms and a horizontal drag locates. A changed
+//! `ruler.any.empty.drag` mapping takes precedence and says what the drag does:
+//! `view.zoom.time` (the tick under the press stays where it is), `view.zoom.data`
 //! (the rows' height) or `view.scroll` (the time axis follows the pointer sideways). The press
 //! itself still does the ruler's click (it moves the play position), so this never takes it.
 //! Down zooms in, up zooms out.
@@ -25,6 +26,14 @@ pub struct Grab {
     from: (f32, f32),
     last: (f32, f32),
     started: bool,
+    direction: Option<Direction>,
+    mapped: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Direction {
+    Horizontal,
+    Vertical,
 }
 
 impl Grab {
@@ -56,14 +65,17 @@ impl Studio {
         let Some(place) = self.ruler_place(g, x, y) else {
             return;
         };
-        let action = {
+        let (action, mapped) = {
             let s = self
                 .song
                 .settings()
                 // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            crate::mouse_dispatch::action(&s.mousemap, "ruler.any.empty.drag", mods)
+            (
+                crate::mouse_dispatch::action(&s.mousemap, "ruler.any.empty.drag", mods),
+                s.mousemap.changed.contains_key("ruler.any.empty.drag"),
+            )
         };
         let Some(action) = action.filter(|a| !a.is_empty()) else {
             return;
@@ -74,6 +86,8 @@ impl Studio {
             from: (x, y),
             last: (x, y),
             started: false,
+            direction: None,
+            mapped,
         });
     }
 
@@ -87,10 +101,33 @@ impl Studio {
         {
             return false;
         }
+        if grab.direction.is_none() {
+            let dx = (x - grab.from.0).abs();
+            let dy = (y - grab.from.1).abs();
+            grab.direction = Some(if dx > dy {
+                Direction::Horizontal
+            } else {
+                Direction::Vertical
+            });
+        }
         let (dx, dy) = (x - grab.last.0, y - grab.last.1);
         grab.started = true;
         grab.last = (x, y);
         let (place, at) = (grab.place, grab.from);
+        if !grab.mapped && grab.direction == Some(Direction::Horizontal) {
+            let tick = match place {
+                Place::Arrange => self.ruler_scale(g).tick(x),
+                Place::Roll => {
+                    let Some(ctx) = self.roll_ctx(g) else {
+                        return false;
+                    };
+                    self.roll.ruler_scale(&ctx).tick(x)
+                }
+            };
+            // design-lint: allow(ui-blocking-io) PRJ-031: transport seek updates memory and submits an engine command.
+            self.seek(tick.max(0));
+            return true;
+        }
         let action = grab.action.clone();
         let steps = dy / STEP_PX;
         match (place, action.as_str()) {
@@ -226,6 +263,21 @@ mod tests {
         map(&mut s, "");
         s.ruler_drag_down(&g, x, y, Mods::NONE);
         assert!(s.ruler_grab.is_none(), "taken away on purpose");
+    }
+
+    #[test]
+    fn default_horizontal_drag_seeks_without_zooming() {
+        let (mut s, g) = setup();
+        let (x, y) = below_band(&g);
+        let beat = s.beat_w;
+        s.ruler_drag_down(&g, x, y, Mods::NONE);
+        assert!(s.ruler_drag_move(&g, x + 60.0, y));
+        let first = s.playhead;
+        assert_eq!(first, s.ruler_scale(&g).tick(x + 60.0).max(0));
+        assert!(s.ruler_drag_move(&g, x + 120.0, y + 90.0));
+        assert_eq!(s.playhead, s.ruler_scale(&g).tick(x + 120.0).max(0));
+        assert_eq!(s.beat_w, beat, "direction stays horizontal");
+        s.ruler_drag_up();
     }
 
     #[test]

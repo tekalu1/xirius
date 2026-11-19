@@ -327,9 +327,8 @@ pub fn paint_band(pen: &mut Pen, band: &Band, ruler: Rect, shade_to: Option<Rect
     }
 }
 
-/// The ruler's numbers, each just right of its tick, in the band's row over the loop band
-/// (2026-11-05): a bar's in blue, the others in the ink, and where they cross the band's
-/// fill (`over`, window x) in the ink for a fill. `x_of` puts a tick on screen.
+/// The ruler's numbers, each just right of its tick, below the loop band
+/// (2026-11-19): a bar's in blue, the others in the ink. `x_of` puts a tick on screen.
 pub fn paint_labels(
     pen: &mut Pen,
     marks: &[Mark],
@@ -353,48 +352,19 @@ pub fn paint_labels(
     });
 }
 
-/// Draws text in the band's row of the ruler (the top [`LOOP_H`]) by `draw(pen, row,
-/// on_fill)`: once clipped outside the band's fill (`over`, window x) with `on_fill` false,
-/// once clipped inside it with `on_fill` true. Every number on the ruler goes through it, so
-/// they share the row and the ink over the band.
+/// Draws text in the lower row, outside the loop band's fill.
 pub fn paint_row(
     pen: &mut Pen,
     ruler: Rect,
-    over: Option<(f32, f32)>,
+    _over: Option<(f32, f32)>,
     draw: impl Fn(&mut Pen, Rect, bool),
 ) {
-    let row = band_row(ruler);
-    let parts = row_parts(ruler, over);
-    if let [(_, false)] = parts.as_slice() {
-        draw(pen, row, false);
-        return;
-    }
-    for (clip, on_fill) in parts {
-        pen.mask(clip, |pen| draw(pen, row, on_fill));
-    }
+    draw(pen, band_row(ruler), false);
 }
 
-/// The band's row of the ruler: its top [`LOOP_H`], where every number sits.
+/// The ruler's row for time labels, below the loop band.
 pub fn band_row(ruler: Rect) -> Rect {
-    Rect::new(ruler.x, ruler.y, ruler.w, LOOP_H)
-}
-
-/// The stretches of the band's row a number is drawn in, each with whether it is over the
-/// band's fill (`over`, window x).
-pub fn row_parts(ruler: Rect, over: Option<(f32, f32)>) -> Vec<(Rect, bool)> {
-    let row = band_row(ruler);
-    let Some((x0, x1)) = over.filter(|(x0, x1)| x1 > x0) else {
-        return vec![(row, false)];
-    };
-    let left = Rect::new(row.x, row.y, (x0 - row.x).max(0.0), row.h);
-    let right = Rect::new(x1, row.y, (row.right() - x1).max(0.0), row.h);
-    let mut out: Vec<_> = [left, right]
-        .into_iter()
-        .filter(|side| side.w > 0.0)
-        .map(|side| (side, false))
-        .collect();
-    out.push((Rect::new(x0, row.y, x1 - x0, row.h), true));
-    out
+    Rect::new(ruler.x, ruler.y + LOOP_H, ruler.w, ruler.h - LOOP_H)
 }
 
 /// The ink of a number on the ruler: a bar's (and a bar's time in seconds) blue, the others
