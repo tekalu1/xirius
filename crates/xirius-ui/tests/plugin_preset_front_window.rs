@@ -12,7 +12,13 @@ mod support;
 
 #[test]
 fn native_preset_popup_is_above_both_pinned_and_unpinned_editors() {
-    for (pinned, topmost) in [(false, false), (true, false), (true, true)] {
+    for (pinned, topmost, activate) in [
+        (false, false, false),
+        (true, false, false),
+        (true, true, false),
+        (false, false, true),
+        (true, false, true),
+    ] {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         support::sample_audio(dir);
@@ -38,8 +44,12 @@ fn native_preset_popup_is_above_both_pinned_and_unpinned_editors() {
             .env_remove("XIRIUS_PRESET_PROBE_LONG")
             .env_remove("XIRIUS_PRESET_FRONT_PIN")
             .env_remove("XIRIUS_PRESET_FRONT_TOPMOST")
+            .env_remove("XIRIUS_PRESET_FRONT_ACTIVATE")
             .stdout(log.try_clone().unwrap())
             .stderr(log);
+        if activate {
+            command.env("XIRIUS_PRESET_FRONT_ACTIVATE", "1");
+        }
         if pinned {
             command.env("XIRIUS_PRESET_FRONT_PIN", "1");
         }
@@ -67,6 +77,9 @@ fn native_preset_popup_is_above_both_pinned_and_unpinned_editors() {
         let data: Value =
             serde_json::from_slice(&fs::read(dir.join("front.json")).unwrap()).unwrap();
         eprintln!("pinned={pinned}: {data}");
+        if activate {
+            assert_eq!(data["before"]["foreground"], true, "{data}");
+        }
         assert_eq!(data["before"]["topmost"], topmost, "{data}");
         assert_eq!(data["open"]["above_editor"], true, "{data}");
         assert_eq!(data["open"]["point_is_popup"], true, "{data}");

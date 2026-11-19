@@ -434,6 +434,8 @@ impl Studio {
                 }
                 EditorAction::Channel => self.open_channel(track),
                 EditorAction::PresetMenu { x, y, dpi } => {
+                    #[cfg(windows)]
+                    crate::device_window::preset_front_shots::mark("request_received_ms");
                     self.mixer.preset_menu = Some((track, id, x, y, dpi));
                 }
                 EditorAction::PresetOpen => {

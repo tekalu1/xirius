@@ -51,7 +51,12 @@ closure, and the editor's unchanged owner, pin state and order relative to the m
 window. Each run uses a temporary folder for data and removes it afterwards.
 An additional case gives the editor `WS_EX_TOPMOST`; this is independent of the
 pin button, which retains an editor rather than making it always on top.
-The scenario writes `front.json`, including request-to-popup observation time.
+Two more cases temporarily attach the input queues and activate the editor before
+`BM_CLICK`, asserting `GetForegroundWindow` first. Run this manual test only on an
+unused desktop: these cases deliberately change the foreground window, without
+injecting keyboard or mouse input. Both pin states use ordinary non-topmost editors.
+The scenario writes `front.json`, including notification, creation, first paint callback,
+and request-to-popup observation times. The paint callback is not a GPU presentation timestamp.
 
 ## What a test may leave
 

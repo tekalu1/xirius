@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use windows_sys::Win32::{
     Foundation::{HWND, POINT, RECT},
     Graphics::Gdi::ClientToScreen,
+    System::Threading::{AttachThreadInput, GetCurrentThreadId},
     UI::WindowsAndMessaging::*,
 };
 
@@ -27,6 +28,58 @@ pub const SHOTS: &[Shot] = &[
         acts: &[Act::Stage(Play::Window(stage), 3)],
     },
 ];
+
+type Timings = (Instant, serde_json::Map<String, serde_json::Value>);
+
+thread_local! {
+    static TIMES: RefCell<Option<Timings>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn mark(name: &str) {
+    TIMES.with_borrow_mut(|times| {
+        if let Some((start, values)) = times {
+            values
+                .entry(name.to_owned())
+                .or_insert_with(|| json!(start.elapsed().as_secs_f64() * 1000.0));
+        }
+    });
+}
+
+fn foreground(frame: HWND) {
+    // SAFETY: the explicit desktop scenario only. Remove the parking-only activation
+    // restriction, temporarily share the foreground queue, and never inject input.
+    unsafe {
+        SetWindowLongW(
+            frame,
+            GWL_EXSTYLE,
+            GetWindowLongW(frame, GWL_EXSTYLE) & !(WS_EX_NOACTIVATE as i32),
+        );
+        let own = GetCurrentThreadId();
+        let active = GetWindowThreadProcessId(GetForegroundWindow(), std::ptr::null_mut());
+        let attached = active != 0 && active != own && AttachThreadInput(own, active, 1) != 0;
+        let target = GetWindowThreadProcessId(frame, std::ptr::null_mut());
+        let target_attached = target != own && AttachThreadInput(own, target, 1) != 0;
+        SetForegroundWindow(frame);
+        BringWindowToTop(frame);
+        let mut result = 0;
+        SendMessageTimeoutW(frame, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 2_000, &mut result);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while GetForegroundWindow() != frame && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if target_attached {
+            AttachThreadInput(own, target, 0);
+        }
+        if attached {
+            AttachThreadInput(own, active, 0);
+        }
+        assert_eq!(
+            GetForegroundWindow(),
+            frame,
+            "editor must be foreground before BM_CLICK"
+        );
+    }
+}
 
 fn output() -> std::path::PathBuf {
     let args: Vec<_> = std::env::args().collect();
@@ -94,13 +147,18 @@ fn stage(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App)
         }
     } else if n == 1 {
         let frame = crate::plugin_keys_shots::frame(&studio.borrow());
-        let before = json!({"topmost": topmost(frame), "owner": unsafe { GetWindow(frame, GW_OWNER) } as usize, "order": editor_order(frame)});
+        let activate = std::env::var_os("XIRIUS_PRESET_FRONT_ACTIVATE").is_some();
+        if activate {
+            foreground(frame);
+        }
+        let before = json!({"foreground": unsafe { GetForegroundWindow() == frame }, "topmost": topmost(frame), "owner": unsafe { GetWindow(frame, GW_OWNER) } as usize, "order": editor_order(frame)});
         std::fs::write(
             output(),
             serde_json::to_vec_pretty(&json!({"before": before})).unwrap(),
         )
         .unwrap();
         let start = Instant::now();
+        TIMES.with_borrow_mut(|t| *t = Some((start, serde_json::Map::new())));
         let mut result = 0;
         // SAFETY: the preset control is in this scenario's editor frame. No OS input.
         assert_ne!(
@@ -117,6 +175,7 @@ fn stage(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App)
             },
             0
         );
+        mark("click_return_ms");
         observe(studio.clone(), start, window);
     } else if n == 2 {
         // Send to this GPUI surface, never to the foreground window or OS keyboard.
@@ -143,7 +202,8 @@ fn stage(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App)
         let id = crate::plugin_reload_shots::id(&studio.borrow());
         let mut data: serde_json::Value =
             serde_json::from_slice(&std::fs::read(output()).unwrap()).unwrap();
-        data["after"] = json!({"topmost": topmost(frame), "owner": unsafe { GetWindow(frame, GW_OWNER) } as usize, "order": editor_order(frame),
+        data["timing_ms"] = TIMES.with_borrow(|t| json!(t.as_ref().unwrap().1));
+        data["after"] = json!({"foreground": unsafe { GetForegroundWindow() == frame }, "topmost": topmost(frame), "owner": unsafe { GetWindow(frame, GW_OWNER) } as usize, "order": editor_order(frame),
             "popup_closed": handle(studio, cx).is_none(), "selected": "Clean",
             "pinned": studio.borrow().mixer.editor_pins.contains(&id)});
         std::fs::write(output(), serde_json::to_vec_pretty(&data).unwrap()).unwrap();

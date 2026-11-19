@@ -360,6 +360,8 @@ impl Windows {
                 (Bounds::new(at, popup), None)
             }
         };
+        #[cfg(windows)]
+        preset_front_shots::mark("sync_begin_ms");
         let shared = studio.clone();
         let spec = Spec {
             kind: Kind::Presets,
@@ -370,6 +372,8 @@ impl Windows {
             resizable: false,
             positions: None,
         };
+        #[cfg(windows)]
+        preset_front_shots::mark("create_begin_ms");
         let result = crate::independent::open(cx, main, spec, move |window, cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
@@ -394,6 +398,7 @@ impl Windows {
             Ok(handle) => {
                 #[cfg(windows)]
                 let _ = handle.update(cx, |_, window, _| {
+                    preset_front_shots::mark("create_end_ms");
                     crate::independent::present_popup(window, initial, (x, y));
                 });
                 self.preset = Some(handle);
@@ -919,6 +924,10 @@ impl Render for DeviceWindow {
             |_, _, _| (),
             move |bounds, _, window, cx| {
                 entity.update(cx, |view, cx| {
+                    #[cfg(windows)]
+                    if view.menu_only {
+                        preset_front_shots::mark("first_paint_ms");
+                    }
                     let theme = view.studio.borrow().caption.map_or_else(
                         || view.studio.borrow().wanted_theme(crate::theme::THEME),
                         |c| {
