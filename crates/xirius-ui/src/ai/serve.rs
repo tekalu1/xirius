@@ -1,9 +1,10 @@
 //! The MCP server the window keeps for an outside AI (AI-019, AI-022), and
 //! the OS's wish for less motion (AI-037).
 
-use xirius_mcp::background::{Background, serve_http};
-use xirius_mcp::{Gateway, HttpConfig, Jobs, Scope, bridge};
+use xirius_mcp::background::Background;
+use xirius_mcp::{Gateway, Jobs, Scope, bridge};
 
+#[cfg(test)]
 use super::Connection;
 use crate::studio::Studio;
 
@@ -13,37 +14,64 @@ const AUTHOR: &str = "AI";
 /// What the pop-over shows for where it listens when the setting turned the server off.
 pub(crate) const OFF: &str = "MCP サーバーは設定でオフになっています";
 
-pub(crate) type Starting = xirius_session::background::Job<(Background, Jobs)>;
+pub(crate) type Starting = xirius_session::background::Job<(Background, Jobs, Option<u16>)>;
 
 /// Socket setup, runtime construction and its readiness recv stay on a worker.
 pub(crate) fn start_window(studio: &mut Studio) -> Option<Starting> {
-    if !studio
-        .song
-        .settings()
-        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .prefs
-        .bool("ai.mcp.enabled")
+    begin(studio, false)
+}
+
+pub(crate) fn renew_window(studio: &mut Studio) -> Option<Starting> {
+    begin(studio, true)
+}
+
+fn endpoint_path(studio: &Studio) -> std::io::Result<std::path::PathBuf> {
+    #[cfg(test)]
+    {
+        Ok(studio.song.test_folder().join("mcp-endpoint.json"))
+    }
+    #[cfg(not(test))]
+    {
+        let _ = studio;
+        super::endpoint::path()
+    }
+}
+
+fn begin(studio: &mut Studio, renew: bool) -> Option<Starting> {
+    if !renew
+        && !studio
+            .song
+            .settings()
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .prefs
+            .bool("ai.mcp.enabled")
     {
         studio.ai.connection = Some(Err(OFF.into()));
         return None;
     }
-    match xirius_session::background::Job::spawn("window MCP startup", || {
+    let path = endpoint_path(studio);
+    match xirius_session::background::Job::spawn("window MCP startup", move || {
         #[cfg(any(test, feature = "loading-probe"))]
         xirius_core::io_test::before("mcp_start", std::path::Path::new(""))
             .map_err(|e| e.to_string())?;
         let (host, jobs) = bridge(xirius_session::commands::shared_registry());
-        let server = serve_http(
+        let started = super::endpoint::start(
             Gateway::hosted(host, AUTHOR, Scope::Edit),
-            HttpConfig::default(),
+            path.map_err(|e| e.to_string())?,
+            renew,
         )
         .map_err(|e| e.to_string())?;
-        Ok((server, jobs))
+        Ok((started.server, jobs, started.busy_port))
     }) {
         Ok(job) => Some(job),
         Err(e) => {
-            studio.ai.connection = Some(Err(e));
+            if renew {
+                studio.error = Some(e);
+            } else {
+                studio.ai.connection = Some(Err(e));
+            }
             None
         }
     }
@@ -54,11 +82,11 @@ pub(crate) fn start_window(studio: &mut Studio) -> Option<Starting> {
 /// goes to [`Studio::ai_job`] on the window's thread. The server stops when
 /// the returned [`Background`] is dropped. With the setting `ai.mcp.enabled` off, no server
 /// starts (the setting is read when the window opens).
+#[cfg(test)]
 pub fn start(studio: &mut Studio) -> Option<(Background, Jobs)> {
     let enabled = studio
         .song
         .settings()
-        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .prefs
@@ -68,11 +96,13 @@ pub fn start(studio: &mut Studio) -> Option<(Background, Jobs)> {
         return None;
     }
     let (host, jobs) = bridge(xirius_session::commands::shared_registry());
-    match serve_http(
-        Gateway::hosted(host, AUTHOR, Scope::Edit),
-        HttpConfig::default(),
-    ) {
-        Ok(server) => {
+    let started = endpoint_path(studio).and_then(|path| {
+        super::endpoint::start(Gateway::hosted(host, AUTHOR, Scope::Edit), path, false)
+    });
+    match started {
+        Ok(started) => {
+            let server = started.server;
+            studio.ai.busy_port = started.busy_port;
             studio.ai.connection = Some(Ok(Connection {
                 url: server.mcp_url(),
                 token: server.token.clone(),
@@ -139,7 +169,7 @@ mod tests {
         let end = Instant::now() + Duration::from_secs(30);
         loop {
             if let Some(got) = job.poll() {
-                let (server, _jobs) = got.unwrap();
+                let (server, _jobs, _) = got.unwrap();
                 assert!(server.mcp_url().starts_with("http://127.0.0.1:"));
                 break;
             }

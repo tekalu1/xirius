@@ -980,7 +980,8 @@ impl Screen {
                 if let Some(result) = job.poll() {
                     let _ = this.update(cx, |this, cx| {
                         match result {
-                            Ok((server, jobs)) => {
+                            Ok((server, jobs, busy_port)) => {
+                                this.studio.borrow_mut().ai.busy_port = busy_port;
                                 this.studio.borrow_mut().ai.connection =
                                     Some(Ok(crate::ai::Connection {
                                         url: server.mcp_url(),
@@ -989,8 +990,18 @@ impl Screen {
                                 this._ai_server = Some(server);
                                 Self::listen(jobs, cx);
                             }
-                            Err(e) => this.studio.borrow_mut().ai.connection = Some(Err(e)),
+                            Err(e) => {
+                                let mut studio = this.studio.borrow_mut();
+                                if this._ai_server.is_some() {
+                                    studio.error = Some(e);
+                                } else {
+                                    studio.ai.connection = Some(Err(e));
+                                }
+                            }
                         }
+                        let mut studio = this.studio.borrow_mut();
+                        studio.ai.renewing = false;
+                        studio.refresh_popup();
                         cx.notify();
                     });
                     break;
@@ -1040,7 +1051,20 @@ fn watch(window: &Window, cx: &mut Context<Screen>, attention: bool) {
                     idle.changed = true;
                 }
                 idle.changed |= studio.poll_other_change(|s| geometry(s, window));
+                let restart = if std::mem::take(&mut studio.ai.renew_requested) {
+                    let job = crate::ai::serve::renew_window(&mut studio);
+                    if job.is_none() {
+                        studio.ai.renewing = false;
+                        studio.refresh_popup();
+                    }
+                    job
+                } else {
+                    None
+                };
                 drop(studio);
+                if let Some(job) = restart {
+                    Screen::start_server(job, cx);
+                }
                 if idle.went_down && attention {
                     window.request_attention();
                 }

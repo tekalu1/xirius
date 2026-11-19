@@ -69,6 +69,27 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &AiLook, hot: bool) {
     let hot = hot && cell.live();
     let gap = Space::X2.px();
     match look {
+        AiLook::Confirm => line(pen, &cell.text, FontSize::Small, Weight::Regular, c.ink, r),
+        AiLook::Busy => {
+            pen.icon("alert", icon_at(r, r.x), c.stale);
+            let x = r.x + Layout::ICON_SIZE + gap;
+            line(
+                pen,
+                &cell.text,
+                FontSize::Small,
+                Weight::Medium,
+                c.ink_strong,
+                Rect::new(x, r.y, r.right() - x, 20.0),
+            );
+            line(
+                pen,
+                &cell.hint,
+                FontSize::Small,
+                Weight::Regular,
+                c.ink,
+                Rect::new(x, r.y + 20.0, r.right() - x, 20.0),
+            );
+        }
         AiLook::Head => {
             pen.icon("ai", icon_at(r, r.x), c.ink_ai);
             let x = r.x + Layout::ICON_SIZE + gap;

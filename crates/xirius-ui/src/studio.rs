@@ -1644,7 +1644,10 @@ impl Studio {
                     BarButton::Saved => PopupKind::Versions,
                     BarButton::Grid => PopupKind::Grid,
                     BarButton::History => PopupKind::History,
-                    BarButton::Ai => PopupKind::Ai,
+                    BarButton::Ai => {
+                        self.ai.confirm_renew = false;
+                        PopupKind::Ai
+                    }
                     BarButton::Export => {
                         self.open_export(self.export_anchor(g));
                         return true;

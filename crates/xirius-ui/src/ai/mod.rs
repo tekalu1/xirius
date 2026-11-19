@@ -17,6 +17,7 @@
 //!   position and size change. With the OS's reduced motion, nothing moves
 //!   and the edges stay.
 
+mod endpoint;
 mod paint;
 pub mod serve;
 pub mod shots;
@@ -100,6 +101,9 @@ pub enum Act {
     Level(AiPermission),
     /// Puts how to connect on the clipboard.
     Copy,
+    AskRenew,
+    CancelRenew,
+    Renew,
 }
 
 /// How each part of the pop-over is painted.
@@ -107,6 +111,8 @@ pub enum Act {
 pub enum AiLook {
     /// The stars and the title.
     Head,
+    Busy,
+    Confirm,
     /// The well the levels sit in.
     Tray,
     /// One level: its icon, lit when on.
@@ -114,9 +120,13 @@ pub enum AiLook {
     /// The level's name (`text`) and what it lets the AI do (`hint`).
     About,
     /// Where to connect, or why it cannot be reached.
-    Url { down: bool },
+    Url {
+        down: bool,
+    },
     /// What the AI did last (`text`) and what came of it (`hint`).
-    Last { refused: bool },
+    Last {
+        refused: bool,
+    },
 }
 
 /// Where an MCP client reaches the song.
@@ -158,6 +168,9 @@ pub struct View {
     pub level: AiPermission,
     pub connection: Option<Result<String, String>>,
     pub copied: bool,
+    pub busy_port: Option<u16>,
+    pub confirm_renew: bool,
+    pub renewing: bool,
     pub last: Option<Last>,
 }
 
@@ -203,6 +216,10 @@ pub struct Ai {
     /// Text for the screen to put on the clipboard.
     pub copy: Option<String>,
     copied: bool,
+    pub(crate) busy_port: Option<u16>,
+    pub(crate) confirm_renew: bool,
+    pub(crate) renew_requested: bool,
+    pub(crate) renewing: bool,
     /// The AI's newest history step, and when it was written.
     fresh: Option<(u64, u64)>,
     glide: Option<Glide>,
@@ -354,16 +371,51 @@ pub fn cells(v: &View) -> Vec<Cell> {
     };
     cells.push(ai(Rect::new(PAD, y, cw, 20.0), AiLook::Url { down }).text(url));
     y += 20.0 + 8.0;
-    let copy = Cell::new(Rect::new(PAD, y, cw, 28.0), Look::Button).text(if v.copied {
-        "コピーしました"
+    if let Some(port) = v.busy_port {
+        cells.push(
+            ai(Rect::new(PAD, y, cw, 40.0), AiLook::Busy)
+                .text(format!("ポート {port} は使用中です"))
+                .hint("今回だけ別のポートで待ち受けています"),
+        );
+        y += 48.0;
+    }
+    if v.confirm_renew && !down {
+        cells.push(
+            ai(Rect::new(PAD, y, cw, 20.0), AiLook::Confirm)
+                .text("登録済みの AI のアプリは接続できなくなります"),
+        );
+        y += 28.0;
+        let half = (cw - 4.0) / 2.0;
+        cells.push(
+            Cell::new(Rect::new(PAD, y, half, 28.0), Look::Button)
+                .text("キャンセル")
+                .act(Action::Ai(Act::CancelRenew)),
+        );
+        cells.push(
+            Cell::new(Rect::new(PAD + half + 4.0, y, half, 28.0), Look::Primary)
+                .text("作り直す")
+                .act(Action::Ai(Act::Renew)),
+        );
     } else {
-        "接続情報をコピー"
-    });
-    cells.push(if down {
-        copy.off()
-    } else {
-        copy.act(Action::Ai(Act::Copy))
-    });
+        let copy = Cell::new(Rect::new(PAD, y, cw - 80.0, 28.0), Look::Button).text(if v.copied {
+            "コピーしました"
+        } else {
+            "接続情報をコピー"
+        });
+        let renew =
+            Cell::new(Rect::new(PAD + cw - 76.0, y, 76.0, 28.0), Look::Button).text("作り直す");
+        let disabled = down || v.renewing;
+        cells.push(if disabled {
+            copy.off()
+        } else {
+            copy.act(Action::Ai(Act::Copy))
+        });
+        cells.push(if disabled {
+            renew.off()
+        } else {
+            renew.act(Action::Ai(Act::AskRenew))
+        });
+    }
     y += 28.0;
 
     if let Some(last) = &v.last {
@@ -395,6 +447,9 @@ impl Studio {
                 Err(e) => Err(e.clone()),
             }),
             copied: self.ai.copied,
+            busy_port: self.ai.busy_port,
+            confirm_renew: self.ai.confirm_renew,
+            renewing: self.ai.renewing,
             last: self.ai.last.clone(),
         }
     }
@@ -457,6 +512,23 @@ impl Studio {
                     self.error = Some(e);
                 }
                 self.ai.copied = false;
+            }
+            Act::AskRenew => {
+                if matches!(self.ai.connection, Some(Ok(_))) && !self.ai.renewing {
+                    self.ai.confirm_renew = true;
+                }
+            }
+            Act::CancelRenew => self.ai.confirm_renew = false,
+            Act::Renew => {
+                if self.ai.confirm_renew
+                    && matches!(self.ai.connection, Some(Ok(_)))
+                    && !self.ai.renewing
+                {
+                    self.ai.confirm_renew = false;
+                    self.ai.copied = false;
+                    self.ai.renewing = true;
+                    self.ai.renew_requested = true;
+                }
             }
             Act::Copy => {
                 if let Some(Ok(c)) = &self.ai.connection {

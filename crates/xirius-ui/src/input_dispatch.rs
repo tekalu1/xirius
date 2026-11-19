@@ -286,6 +286,14 @@ impl Studio {
             }
         }
         if key == "escape" {
+            if self
+                .popup
+                .as_ref()
+                .is_some_and(|p| p.kind == crate::popup::PopupKind::Ai)
+                && self.ai.confirm_renew
+            {
+                return self.ai_act(crate::ai::Act::CancelRenew);
+            }
             if self.popup.take().is_some() {
                 self.close_wheel_group();
                 return true;

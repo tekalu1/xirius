@@ -8,10 +8,20 @@ crates/xirius-ui/src/about.rs	stored	1
 crates/xirius-ui/src/about.rs	update :: ready_installer	1
 crates/xirius-ui/src/about.rs	update :: take_failure	1
 crates/xirius-ui/src/about.rs	verify_with	1
+crates/xirius-ui/src/ai/endpoint.rs	OpenOptions :: new	1
+crates/xirius-ui/src/ai/endpoint.rs	fs :: Permissions :: from_mode	1
+crates/xirius-ui/src/ai/endpoint.rs	fs :: create_dir_all	1
+crates/xirius-ui/src/ai/endpoint.rs	fs :: remove_file	1
+crates/xirius-ui/src/ai/endpoint.rs	fs :: rename	1
+crates/xirius-ui/src/ai/endpoint.rs	lock	1
+crates/xirius-ui/src/ai/endpoint.rs	read	1
+crates/xirius-ui/src/ai/endpoint.rs	sync_all	1
+crates/xirius-ui/src/ai/endpoint.rs	write	1
+crates/xirius-ui/src/ai/endpoint.rs	write_all	1
 crates/xirius-ui/src/ai/mod.rs	ai_run	1
 crates/xirius-ui/src/ai/mod.rs	run	1
 crates/xirius-ui/src/ai/mod.rs	xirius_mcp :: persist :: run_and_persist	1
-crates/xirius-ui/src/ai/serve.rs	lock	2
+crates/xirius-ui/src/ai/serve.rs	lock	1
 crates/xirius-ui/src/ancillary_io.rs	lock	1
 crates/xirius-ui/src/ancillary_io.rs	std :: io :: stderr	1
 crates/xirius-ui/src/ancillary_io.rs	writeln	1
