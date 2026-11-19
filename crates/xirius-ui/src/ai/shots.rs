@@ -48,6 +48,22 @@ pub const AI: &[Shot] = &[
         name: "06-off",
         acts: &[staged(6), OPEN],
     },
+    Shot {
+        name: "07-endpoint-busy",
+        acts: &[staged(7)],
+    },
+    Shot {
+        name: "08-endpoint-confirm",
+        acts: &[staged(8)],
+    },
+    Shot {
+        name: "09-endpoint-renewed",
+        acts: &[staged(9)],
+    },
+    Shot {
+        name: "10-server-off",
+        acts: &[staged(10)],
+    },
 ];
 
 /// Into the second half of the history row's glow, and the notes' glide.
@@ -81,7 +97,7 @@ pub fn stage(s: &mut Studio, n: u8) {
         0 => {
             s.ai.clock = Some(0);
             s.ai.connection = Some(Ok(Connection {
-                url: "http://127.0.0.1:52417/mcp".into(),
+                url: "http://127.0.0.1:27431/mcp".into(),
                 token: String::new(),
             }));
         }
@@ -110,6 +126,31 @@ pub fn stage(s: &mut Studio, n: u8) {
         6 => {
             s.ai_act(AiAct::Level(AiPermission::Off));
             s.popup = None;
+        }
+        7 => {
+            s.ai_act(AiAct::Level(AiPermission::Edit));
+            s.ai.busy_port = Some(27431);
+            s.ai.connection.as_mut().unwrap().as_mut().unwrap().url =
+                "http://127.0.0.1:52417/mcp".into();
+            s.ai.last = None;
+            s.refresh_popup();
+        }
+        8 => {
+            s.ai.busy_port = None;
+            s.ai.connection.as_mut().unwrap().as_mut().unwrap().url =
+                "http://127.0.0.1:27431/mcp".into();
+            s.ai_act(AiAct::AskRenew);
+        }
+        9 => {
+            s.ai.confirm_renew = false;
+            s.ai.busy_port = None;
+            s.ai.connection.as_mut().unwrap().as_mut().unwrap().url =
+                "http://127.0.0.1:28673/mcp".into();
+            s.refresh_popup();
+        }
+        10 => {
+            s.ai.connection = Some(Err(super::serve::OFF.into()));
+            s.refresh_popup();
         }
         _ => {}
     }

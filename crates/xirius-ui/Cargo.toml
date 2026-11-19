@@ -47,6 +47,8 @@ raw-window-handle = "0.6.2"
 # The tools' cursors (pointer_os.rs) are bitmaps made for the system and handed to the window.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
     "Win32_Graphics_Gdi",
     "Win32_UI_HiDpi",
     "Win32_System_Console",

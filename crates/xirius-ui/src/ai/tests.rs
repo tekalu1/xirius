@@ -442,9 +442,85 @@ fn the_mcp_server_setting_turned_off_starts_no_server() {
     );
     assert!(s.error.is_none(), "{:?}", s.error);
     assert!(serve::start(&mut s).is_none());
+    assert!(serve::start_window(&mut s).is_none());
+    assert!(!s.song.test_folder().join("mcp-endpoint.json").exists());
+    s.ai_act(Act::AskRenew);
+    s.ai_act(Act::Renew);
+    assert!(!s.ai.confirm_renew && !s.ai.renew_requested);
+    assert!(
+        super::cells(&s.ai_view())
+            .iter()
+            .find(|c| c.text == "作り直す")
+            .unwrap()
+            .action
+            .is_none()
+    );
     // The pop-over says why and has nothing to copy.
     let cells = super::cells(&s.ai_view());
     assert!(cells.iter().any(|c| c.text == serve::OFF));
     let copy = cells.iter().find(|c| c.text == "接続情報をコピー").unwrap();
     assert!(copy.action.is_none());
+}
+
+#[test]
+fn endpoint_renewal_requires_confirmation_and_escape_cancels_it() {
+    let (mut s, g) = studio();
+    s.ai.connection = Some(Ok(Connection {
+        url: "http://127.0.0.1:27431/mcp".into(),
+        token: "test-token".into(),
+    }));
+    s.ai.busy_port = Some(27431);
+    s.ai_act(Act::Renew);
+    assert!(!s.ai.renew_requested);
+    press_in_popover(&mut s, &g, Action::Ai(Act::AskRenew));
+    let cells = super::cells(&s.ai_view());
+    let note = cells
+        .iter()
+        .find(|c| c.look == Look::Ai(AiLook::Busy))
+        .unwrap();
+    assert_eq!(note.text, "ポート 27431 は使用中です");
+    assert_eq!(note.hint, "今回だけ別のポートで待ち受けています");
+    assert!(
+        cells
+            .iter()
+            .any(|c| c.text == "登録済みの AI のアプリは接続できなくなります")
+    );
+    assert!(s.mapped_key(&g, "escape", None, crate::tools::Mods::default()));
+    assert!(!s.ai.confirm_renew);
+    assert!(s.popup.is_some());
+    press_in_popover(&mut s, &g, Action::Ai(Act::AskRenew));
+    press_in_popover(&mut s, &g, Action::Ai(Act::CancelRenew));
+    assert!(!s.ai.confirm_renew && !s.ai.renew_requested);
+    press_in_popover(&mut s, &g, Action::Ai(Act::AskRenew));
+    press_in_popover(&mut s, &g, Action::Ai(Act::Renew));
+    assert!(s.ai.renew_requested && s.ai.renewing);
+    assert!(!s.ai.confirm_renew);
+    assert!(
+        super::cells(&s.ai_view())
+            .iter()
+            .filter(|c| c.text == "作り直す" || c.text == "接続情報をコピー")
+            .all(|c| c.action.is_none())
+    );
+}
+
+#[test]
+fn endpoint_token_is_absent_from_preferences_and_their_public_command() {
+    let dir = crate::shot::TestFolder::new("xirius-endpoint-prefs-");
+    let mut s = Studio::new(crate::song::Song::empty());
+    s.song.load_settings(dir.path());
+    s.song
+        .set("prefs.set", json!({"key":"ai.mcp.enabled", "value":"true"}))
+        .unwrap();
+    let (server, jobs) = serve::start(&mut s).unwrap();
+    let secret = server.token.clone();
+    let admin = server.admin_token.clone();
+    let mut wire = Wire::new();
+    let (v, failed) = wire.call(&mut s, "prefs_get", json!({}));
+    assert!(!failed, "{v}");
+    let text = v.to_string();
+    assert!(!text.contains(&secret) && !text.contains(&admin));
+    let text = std::fs::read_to_string(dir.path().join("prefs.toml")).unwrap();
+    assert!(!text.contains(&secret) && !text.contains(&admin));
+    drop(jobs);
+    server.stop();
 }

@@ -56,9 +56,7 @@ impl XiriusServer {
         ));
         text.push_str("曲は画面で開きます。");
         if self.gateway.has_screen() {
-            text.push_str(
-                "接続先は起動のたびに変わります。AI の画面の「接続情報をコピー」で取ります。",
-            );
+            text.push_str("接続情報は AI の画面の「接続情報をコピー」で取ります。");
         }
         text
     }
