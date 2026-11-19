@@ -771,6 +771,8 @@ impl Plugin {
         pump: bool,
         native_frame: bool,
     ) -> Result<Editor, Error> {
+        let started = Instant::now();
+        let trace = std::env::var_os("XIRIUS_PLUGIN_HOST_LOG").is_some();
         let controller = self
             .shared()
             .controller
@@ -780,6 +782,9 @@ impl Plugin {
         // SAFETY: createView returns a reference we own, or null.
         let view = unsafe { ComPtr::from_raw(controller.createView(ViewType::kEditor)) }
             .ok_or_else(|| error("the plugin has no editor view"))?;
+        if trace {
+            eprintln!("plugin editor: createView in {:?}", started.elapsed());
+        }
         // SAFETY: plain queries.
         if unsafe { view.isPlatformTypeSupported(kPlatformTypeHWND) } != kResultOk {
             return Err(error("the editor does not support HWND"));
@@ -951,6 +956,9 @@ impl Plugin {
             view.setFrame(frame_ptr);
             view.attached(viewport, kPlatformTypeHWND)
         };
+        if trace {
+            eprintln!("plugin editor: attached in {:?}", started.elapsed());
+        }
         let mut editor = Editor {
             hwnd,
             keys,

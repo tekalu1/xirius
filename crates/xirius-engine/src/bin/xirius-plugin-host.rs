@@ -742,12 +742,16 @@ impl Host {
             return Ok((Loaded::Clap(Box::new(plugin)), d.name.clone()));
         }
         let trace = std::env::var_os("XIRIUS_PLUGIN_HOST_LOG").is_some();
+        let started = Instant::now();
         if trace {
             eprintln!("plugin setup: module begin");
         }
         let module = self.module(&o.bundle)?;
         if trace {
-            eprintln!("plugin setup: module end, classes begin");
+            eprintln!(
+                "plugin setup: module end in {:?}, classes begin",
+                started.elapsed()
+            );
         }
         let class = module
             .classes()
@@ -758,16 +762,21 @@ impl Host {
             })
             .ok_or_else(|| format!("{} に読み込めるクラスがありません", o.bundle))?;
         if trace {
-            eprintln!("plugin setup: classes end, instance begin");
+            eprintln!(
+                "plugin setup: classes end in {:?}, instance begin",
+                started.elapsed()
+            );
         }
         let plugin = Plugin::new(module, &class).map_err(|e| e.to_string())?;
         if trace {
-            eprintln!("plugin setup: instance end");
+            eprintln!("plugin setup: instance end in {:?}", started.elapsed());
         }
         Ok((Loaded::Vst3(plugin), class.name))
     }
 
     fn open(&mut self, o: OpenSlot) -> Result<(Instance, Opened), String> {
+        let started = Instant::now();
+        let trace = std::env::var_os("XIRIUS_PLUGIN_HOST_LOG").is_some();
         xirius_engine::crash::note(&format!(
             "slot={} bundle={} class={:?}",
             o.slot, o.bundle, o.class
@@ -784,10 +793,16 @@ impl Host {
         let req = Event::open(&o.req).map_err(|e| e.to_string())?;
         let done = Event::open(&o.done).map_err(|e| e.to_string())?;
         let (mut plugin, name) = self.create(&o)?;
+        if trace {
+            eprintln!("plugin setup: create end in {:?}", started.elapsed());
+        }
         if let Some(state) = o.state.as_ref().filter(|s| !s.component.is_empty()) {
             plugin
                 .set_state(state)
                 .map_err(|e| format!("状態を復元できません: {e}"))?;
+        }
+        if trace {
+            eprintln!("plugin setup: state end in {:?}", started.elapsed());
         }
         let mut warnings = Vec::new();
         for (key, value) in &o.params {
@@ -795,6 +810,9 @@ impl Host {
                 Some(id) => plugin.set_param(id, value.clamp(0.0, 1.0)),
                 None => warnings.push(format!("パラメーター {key} が見つかりません")),
             }
+        }
+        if trace {
+            eprintln!("plugin setup: parameters end in {:?}", started.elapsed());
         }
         let h = rings.header();
         let offline = h.offline != 0;
@@ -805,6 +823,9 @@ impl Host {
             offline,
             xirius_engine::sandbox::NOTE_CAPACITY,
         )?;
+        if trace {
+            eprintln!("plugin setup: audio end in {:?}", started.elapsed());
+        }
         // Setting up is not the user's editing.
         plugin.take_gestures();
         plugin.take_changes();
@@ -840,6 +861,12 @@ impl Host {
         is_up
             .recv()
             .map_err(|_| "プラグインの音声のスレッドが始まりません".to_string())?;
+        if trace {
+            eprintln!(
+                "plugin setup: audio thread ready in {:?}",
+                started.elapsed()
+            );
+        }
         h.ready_epoch.store(o.epoch, Ordering::Release);
 
         let note_names = plugin.note_names();
@@ -851,6 +878,9 @@ impl Host {
             warnings,
             note_names: note_names.clone(),
         };
+        if trace {
+            eprintln!("plugin setup: opened in {:?}", started.elapsed());
+        }
         let inst = Instance {
             updates: xirius_engine::plugin_updates::UpdateGate::new(
                 xirius_engine::plugin_updates::Stamp {
