@@ -317,6 +317,9 @@ pub(crate) fn settle(folder: &std::path::Path) {
     wait_unused(folder);
     crate::browser_prefs_io::wait_read(folder);
     crate::browser_prefs_save::wait_written(folder);
+    // Imports queue peak files independently of preparation and session/save
+    // workers. Drain those last: the workers above can themselves request peaks.
+    xirius_session::peaks::wait_under(folder, std::time::Duration::from_secs(30));
 }
 
 /// Empties `folder` for a test once the work still writing in it has ended ([`settle`]); a folder
@@ -1218,6 +1221,63 @@ mod tests {
     use xirius_session::output::OutputMode;
 
     use super::*;
+
+    #[test]
+    fn removing_a_test_folder_waits_for_peak_writes_even_after_the_request_is_dropped() {
+        use std::{
+            sync::{Arc, mpsc},
+            time::Duration,
+        };
+        use xirius_session::peaks;
+        for abandoned in [false, true] {
+            let mut folder = TestFolder::new("xirius-ui-peaks-cleanup-");
+            let path = folder.path().to_path_buf();
+            let wav = path.join("source.wav");
+            xirius_session::export::write_wav(&wav, &[0.1; 2048], &[0.1; 2048], 48000, 16).unwrap();
+            let release = crate::browser_io_tests::Release::new();
+            let gate = release.0.clone();
+            let prefix = path.clone();
+            let (entered_tx, entered) = mpsc::channel();
+            let (written_tx, written) = mpsc::channel();
+            let _observe = xirius_core::io_test::observe(Arc::new(move |op, p| {
+                if p.starts_with(&prefix) {
+                    if op == "peaks_keep" {
+                        entered_tx.send(()).unwrap();
+                        let held = gate.0.lock().unwrap();
+                        drop(gate.1.wait_while(held, |done| !*done).unwrap());
+                    } else if op == "peaks_result" {
+                        written_tx.send(()).unwrap();
+                    }
+                }
+                Ok(())
+            }));
+            let request = peaks::request(&wav, &path.join("song/Peaks"));
+            entered.recv_timeout(Duration::from_secs(30)).unwrap();
+            if abandoned {
+                peaks::discard(&request);
+            }
+            drop(request);
+            let (removing_tx, removing) = mpsc::channel();
+            let (removed_tx, removed) = mpsc::channel();
+            let cleanup = std::thread::spawn(move || {
+                removing_tx.send(()).unwrap();
+                folder.remove();
+                removed_tx.send(()).unwrap();
+            });
+            removing.recv_timeout(Duration::from_secs(30)).unwrap();
+            let premature = removed.recv_timeout(Duration::from_millis(100)).is_ok();
+            release.release();
+            written.recv_timeout(Duration::from_secs(30)).unwrap();
+            if !premature {
+                removed.recv_timeout(Duration::from_secs(30)).unwrap();
+            }
+            cleanup.join().unwrap();
+            let recreated = path.exists();
+            clear(&path);
+            assert!(!premature, "folder removed before the peak writer finished");
+            assert!(!recreated, "peak writer recreated the removed folder");
+        }
+    }
 
     #[test]
     fn every_target_of_the_script_exists_in_the_sample_song() {

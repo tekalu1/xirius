@@ -292,6 +292,8 @@ pub fn ensure(source: &Path, store: &Path) -> Result<Peaks, String> {
 /// Keeps `peaks`, made from the version of `source` that `stamp` says, in `store`.
 pub fn keep(source: &Path, store: &Path, stamp: Stamp, peaks: &Peaks) -> Result<(), String> {
     let path = file_stamped(source, store, stamp);
+    #[cfg(feature = "test-io")]
+    xirius_core::io_test::before("peaks_keep", store).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(store).map_err(|e| format!("{} を作れません: {e}", store.display()))?;
     // Written beside it and renamed, so a half-written file is never read.
     let tmp = path.with_extension("xpk.part");
@@ -593,6 +595,51 @@ pub fn retained_keys_under(root: &Path) -> usize {
         .keys()
         .filter(|(p, _)| p.starts_with(root))
         .count()
+}
+
+/// Test teardown only, after the owners that could request more peaks are gone.
+/// Drain this folder's subscriptions (including deferred queue admission), then
+/// any physical writes whose subscription was already dropped. Other tests'
+/// folders may have deliberately blocked I/O and must not be waited for here.
+#[cfg(feature = "test-io")]
+pub fn wait_under(root: &Path, within: std::time::Duration) {
+    let matches = |(source, store): &Key| source.starts_with(root) || store.starts_with(root);
+    let subscriptions: Vec<_> = subscriptions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .cloned()
+        .collect();
+    // Upgrading/dropping a last lease can remove it from the registry again.
+    // Do that outside the registry lock.
+    let requests: Vec<_> = subscriptions
+        .iter()
+        .filter_map(std::sync::Weak::upgrade)
+        .filter(|lease| matches(&lease.shared.key))
+        .map(Request)
+        .collect();
+    let end = std::time::Instant::now() + within;
+    loop {
+        let mut complete = true;
+        for request in &requests {
+            if request.accepted() && take_request(request).is_none() {
+                complete = false;
+            }
+        }
+        if complete && !jobs().pending_matching(matches) {
+            latest()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|key, _| !matches(key));
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < end,
+            "peak writes did not finish under {}",
+            root.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
 }
 
 #[cfg(test)]

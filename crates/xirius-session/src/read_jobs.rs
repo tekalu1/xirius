@@ -196,6 +196,15 @@ impl<K: Clone + Eq + Hash + Send + 'static, V: Send + 'static> ReadJobs<K, V> {
             .values()
             .any(|e| e.value.is_none())
     }
+    /// Test teardown must also see running work whose client was discarded.
+    #[cfg(feature = "test-io")]
+    pub(crate) fn pending_matching(&self, matches: impl Fn(&K) -> bool) -> bool {
+        self.results
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|(key, entry)| matches(key) && entry.value.is_none())
+    }
     /// Forget a result without losing the identity of an in-flight job.
     pub fn discard(&self, key: &K, id: u64) {
         let mut r = self.results.lock().unwrap_or_else(|e| e.into_inner());
