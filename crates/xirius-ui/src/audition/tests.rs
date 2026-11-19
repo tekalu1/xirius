@@ -99,6 +99,20 @@ fn review_song_play_and_record_stop_preview_sound_and_display() {
             until(&mut s, "preview started", |_| {
                 progress(&key).is_some_and(|p| p > 0.0)
             });
+            // Hold the writer before it creates its directory. Stopping the transport
+            // must finish this work before the fixture directory can be removed.
+            let release = crate::browser_io_tests::Release::new();
+            let gate = release.0.clone();
+            let prefix = top.parent().unwrap().to_path_buf();
+            let (tx, entered) = std::sync::mpsc::channel();
+            let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+                if op == "record_directory" && path.starts_with(&prefix) {
+                    tx.send(()).unwrap();
+                    let held = gate.0.lock().unwrap();
+                    drop(gate.1.wait_while(held, |done| !*done).unwrap());
+                }
+                Ok(())
+            }));
             if record {
                 s.toggle_record();
             } else {
@@ -120,7 +134,18 @@ fn review_song_play_and_record_stop_preview_sound_and_display() {
                 std::thread::yield_now();
             }
             if record {
+                entered.recv_timeout(GUARD).unwrap();
                 s.stop_transport();
+                assert!(s.transport.finishing_take);
+                release.release();
+                let end = Instant::now() + GUARD;
+                while s.transport.finishing_take {
+                    s.poll_finished_take();
+                    assert!(Instant::now() < end, "recording writer did not finish");
+                    std::thread::yield_now();
+                }
+                assert!(s.transport.take.is_none());
+                assert!(s.error.is_none(), "{:?}", s.error);
             } else {
                 s.transport.pause();
             }
