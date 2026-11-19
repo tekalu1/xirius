@@ -397,12 +397,6 @@ impl Studio {
         }
         let mut changed = false;
         for (id, track, action) in actions {
-            if std::env::var_os("XIRIUS_HEADER_PROBE").is_some() {
-                eprintln!(
-                    "header-action id={id} action={action:?} blocked={}",
-                    self.input_blocked()
-                );
-            }
             if !self.mixer.is_open(id) {
                 continue;
             }
@@ -424,13 +418,10 @@ impl Studio {
             match action {
                 EditorAction::Power => {
                     // design-lint: allow(ui-blocking-io) PRJ-031: guarded dispatcher enqueues the model edit; the plugin GUI never waits for it.
-                    let accepted = self.run_command(
+                    self.run_command(
                         "plugin.bypass",
                         serde_json::json!({"ids": [id.to_string()]}),
                     );
-                    if std::env::var_os("XIRIUS_HEADER_PROBE").is_some() {
-                        eprintln!("header-action id={id} power_accepted={accepted}");
-                    }
                 }
                 EditorAction::Pin => {
                     if !self.mixer.editor_pins.remove(&id) {
