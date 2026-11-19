@@ -739,10 +739,10 @@ fn with_no_midi_port_the_list_of_inputs_has_the_pc_keyboard() {
     assert!(scene.find(&off).is_some(), "it turns off as a port does");
 
     // The ports come after it.
-    let (s, g) = with_device(&dir, &[], &["Keystation 49"], Section::Midi);
+    let (s, g) = with_device(&dir, &[], &["MIDI Keyboard 49"], Section::Midi);
     let scene = s.settings_scene(&g);
     let at = |t: &str| scene.texts.iter().position(|x| x.contains(t)).unwrap();
-    assert!(at(PC_KEYBOARD) < at("Keystation 49"));
+    assert!(at(PC_KEYBOARD) < at("MIDI Keyboard 49"));
     assert!(!scene.has_text("なし"));
     let _ = std::fs::remove_dir_all(&dir);
 }

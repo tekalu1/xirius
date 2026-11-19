@@ -283,16 +283,16 @@ mod tests {
     #[test]
     fn a_port_is_found_by_name_or_part_of_it() {
         let ports = vec![
-            "Keystation 49".to_string(),
-            "Launchpad".to_string(),
-            "Launchkey".to_string(),
+            "MIDI Keyboard 49".to_string(),
+            "USB Pad".to_string(),
+            "USB Keys".to_string(),
         ];
         assert_eq!(find_port(None, &ports), Ok(None));
         assert_eq!(find_port(Some("all"), &ports), Ok(None));
-        assert_eq!(find_port(Some("Launchpad"), &ports), Ok(Some(1)));
-        assert_eq!(find_port(Some("launchkey"), &ports), Ok(Some(2)));
-        assert_eq!(find_port(Some("station"), &ports), Ok(Some(0)));
-        assert!(find_port(Some("launch"), &ports).is_err());
+        assert_eq!(find_port(Some("USB Pad"), &ports), Ok(Some(1)));
+        assert_eq!(find_port(Some("usb keys"), &ports), Ok(Some(2)));
+        assert_eq!(find_port(Some("board 49"), &ports), Ok(Some(0)));
+        assert!(find_port(Some("usb"), &ports).is_err());
         assert!(find_port(Some("Pads"), &ports).is_err());
         assert_eq!(find_port(Some("Pads"), &[]), Ok(None));
     }

@@ -444,9 +444,9 @@ mod tests {
         assert!(p.set("ui.theme", &json!("pink")).is_err());
         assert!(p.set("audio.buffer", &json!("4096")).is_err());
         assert!(p.set("no.such", &json!("1")).is_err());
-        assert_eq!(p.get("midi.inputs.Launchkey 49"), Some(json!(true)));
-        p.set("midi.inputs.Launchkey 49", &json!(false)).unwrap();
-        assert!(!p.bool("midi.inputs.Launchkey 49"));
+        assert_eq!(p.get("midi.inputs.USB Keys 49"), Some(json!(true)));
+        p.set("midi.inputs.USB Keys 49", &json!(false)).unwrap();
+        assert!(!p.bool("midi.inputs.USB Keys 49"));
     }
 
     #[test]

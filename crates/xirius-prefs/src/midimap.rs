@@ -452,7 +452,7 @@ mod tests {
     #[test]
     fn the_file_reads_back_and_a_bad_row_is_skipped_and_named() {
         let mut m = Midimap::default();
-        m.assign(Some("Launchkey \"49\""), Message::Cc(21), vol("t1"));
+        m.assign(Some("USB Keys \"49\""), Message::Cc(21), vol("t1"));
         m.assign(
             None,
             Message::Note(41),
