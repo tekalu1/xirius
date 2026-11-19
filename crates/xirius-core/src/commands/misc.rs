@@ -616,8 +616,17 @@ fn reading() -> Vec<CommandDef> {
         ),
         read(
             "ops.schema",
-            "コマンドの引数の JSON Schema を表示します（MCP では入口の args に渡す形）",
-            vec![ArgDef::text("name", "コマンド名（省略時はすべて）")],
+            "コマンドの引数の JSON Schema を表示します（MCP では入口の args に渡す形。--name か --group で絞り込み）",
+            vec![
+                ArgDef::text(
+                    "name",
+                    "コマンド名（note.transpose。note_transpose でも可。省略時はすべて）",
+                ),
+                ArgDef::text(
+                    "group",
+                    "この群（名前の最初の . より前。例: note・track）のものだけ",
+                ),
+            ],
             |_, _, reg, a| schema(reg, a),
         ),
     ]
@@ -626,13 +635,27 @@ fn reading() -> Vec<CommandDef> {
 fn schema(reg: &Registry, a: &Args) -> CmdResult<Output> {
     match a.opt_str("name") {
         Some(n) => {
+            // The tool name an MCP client may know a command by (note_transpose), as the
+            // entrances take it.
             let d = reg
                 .get(n)
+                .or_else(|| reg.all().iter().find(|d| d.name.replace('.', "_") == n))
                 .ok_or_else(|| CmdError::not_found(format!("コマンド {n} が見つかりません")))?;
-            Ok(Output::with(format!("{n} の Schema"), d.json_schema()))
+            Ok(Output::with(
+                format!("{} の Schema", d.name),
+                d.json_schema(),
+            ))
         }
         None => {
-            let all = reg.tool_schemas();
+            let all: Vec<Value> = match a.opt_str("group") {
+                Some(g) => reg
+                    .all()
+                    .iter()
+                    .filter(|d| d.target() == g)
+                    .map(|d| d.json_schema())
+                    .collect(),
+                None => reg.tool_schemas(),
+            };
             Ok(Output::with(
                 format!("Schema {} 件", all.len()),
                 Value::Array(all),

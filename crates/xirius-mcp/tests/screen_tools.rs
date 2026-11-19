@@ -94,6 +94,7 @@ const SCREEN_COMMANDS: &[&str] = &[
 const LISTED: &[&str] = &[
     "run_read",
     "run_edit",
+    "run_guarded",
     "run_destructive",
     "ops_list",
     "ops_schema",
@@ -173,12 +174,16 @@ async fn the_app_server_runs_them_with_a_read_only_hint_that_matches() {
         .await;
     assert!(reply.get("error").is_none(), "{reply}");
     assert!(reply["result"].is_object(), "{reply}");
-    // The read entrance still refuses a screen command that changes the song.
+    // The read entrance still refuses a screen command that changes the song, and says
+    // which entrance runs it.
     let reply = c
         .request(
             "tools/call",
             json!({"name": READ_TOOL, "arguments": {"command": "project.new"}}),
         )
         .await;
-    assert_eq!(reply["error"]["code"], -32602, "{reply}");
+    assert_eq!(reply["result"]["isError"], true, "{reply}");
+    let v = &reply["result"]["structuredContent"];
+    assert_eq!(v["error"]["code"], "invalid_args", "{reply}");
+    assert_eq!(v["tool"], EDIT_TOOL, "{reply}");
 }

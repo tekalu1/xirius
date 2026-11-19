@@ -3,7 +3,7 @@
 この文書は `xirius --commands-doc docs/commands.md` でコマンド表から生成します。
 検査は `xirius --commands-doc --check docs/commands.md`。
 
-CLI は `xirius --song <曲のフォルダー> <コマンド> --json`。MCP では、見るだけのコマンドは `run_read`、編集と保存・書き出しは `run_edit`、削除を伴うものは `run_destructive` に、`command`（この名前）と `args` を渡します。探すのは `ops_list`、引数は `ops_schema` です。
+CLI は `xirius --song <曲のフォルダー> <コマンド> --json`。MCP では、見るだけのコマンドは `run_read`、編集は `run_edit`、保存と書き出しは `run_guarded`、削除を伴うものは `run_destructive` に、`command`（この名前）と `args` を渡します。探すのは `ops_list`、引数は `ops_schema`（`name` か `group`）です。
 結果は `ok`、`command`、`message`、`data`、`changes`、`dry_run`。失敗は `ok: false` と型付きの `error`。編集結果の `data.state_hash` は変更前後の状態を示します。
 MCP の編集には受領証が付き、完了はイベントでも届きます。大きい結果は要約と `ops.get-result` のページで取得します。
 
@@ -4489,7 +4489,7 @@ MIDI 学習
 
 コマンドの引数
 
-コマンドの引数の JSON Schema を表示します（MCP では入口の args に渡す形）
+コマンドの引数の JSON Schema を表示します（MCP では入口の args に渡す形。--name か --group で絞り込み）
 
 事前条件: AI の権限が読み取り以上。指定した ID が存在し、引数が次の型・範囲に一致すること。
 
@@ -4497,7 +4497,8 @@ MIDI 学習
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
-| `name` | — | `{"type":"string"}` | コマンド名（省略時はすべて） |
+| `group` | — | `{"type":"string"}` | この群（名前の最初の . より前。例: note・track）のものだけ |
+| `name` | — | `{"type":"string"}` | コマンド名（note.transpose。note_transpose でも可。省略時はすべて） |
 
 ## `plugin.activate`
 

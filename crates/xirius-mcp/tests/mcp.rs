@@ -15,8 +15,8 @@ use xirius_mcp::gateway::{lock, tool_name};
 use xirius_mcp::http::{self, HttpConfig, HttpServer};
 use xirius_mcp::persist::run_and_persist;
 use xirius_mcp::{
-    DESTRUCTIVE_TOOL, DIRECT, EDIT_TOOL, ENTRANCES, Gateway, READ_TOOL, Scope, bridge, call_params,
-    serve_on,
+    DESTRUCTIVE_TOOL, DIRECT, EDIT_TOOL, ENTRANCES, GUARDED_TOOL, Gateway, READ_TOOL, Scope,
+    bridge, call_params, serve_on,
 };
 
 const PROTOCOL: &str = "2025-06-18";
@@ -221,6 +221,7 @@ fn assert_tools_match(tools: &[Value], scope: Scope) {
         Scope::Edit => vec![
             READ_TOOL,
             EDIT_TOOL,
+            GUARDED_TOOL,
             DESTRUCTIVE_TOOL,
             "ops_list",
             "ops_schema",
@@ -333,6 +334,39 @@ async fn stdio_tools_and_schemas_are_the_command_table() {
     let d = Registry::standard().get("note.transpose").unwrap().clone();
     assert_eq!(one["inputSchema"], d.json_schema()["inputSchema"], "{r}");
     assert_eq!(one["_meta"]["xirius"]["tool"], EDIT_TOOL, "{r}");
+    // The tool name an MCP client may know a command by finds it too, and saving has its
+    // own entrance.
+    let r = c.tool("ops_schema", json!({"name": "project_save"})).await;
+    assert_eq!(payload(&r)["data"]["name"], "project_save", "{r}");
+    assert_eq!(payload(&r)["data"]["_meta"]["xirius"]["tool"], GUARDED_TOOL);
+    // One group's schemas, and never every schema at once over MCP.
+    let r = c.tool("ops_schema", json!({"group": "history"})).await;
+    let rows = payload(&r)["data"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{r}"))
+        .clone();
+    assert!(!rows.is_empty(), "{r}");
+    assert!(
+        rows.iter().all(|v| v["_meta"]["xirius"]["command"]
+            .as_str()
+            .unwrap()
+            .starts_with("history.")),
+        "{r}"
+    );
+    for arguments in [json!({}), json!({"name": ""}), json!({"name": " "})] {
+        let r = c.tool("ops_schema", arguments.clone()).await;
+        assert_eq!(r["result"]["isError"], true, "{arguments} {r}");
+        assert_eq!(payload(&r)["error"]["code"], "invalid_args", "{r}");
+        let why = payload(&r)["error"]["message"].as_str().unwrap();
+        assert!(why.contains("name") && why.contains("group"), "{why}");
+    }
+    // A command the AI may not run is not found by either name.
+    for name in ["ai.request.accept", "ai_request_accept"] {
+        let r = c.tool("ops_schema", json!({"name": name})).await;
+        assert_eq!(payload(&r)["error"]["code"], "not_found", "{r}");
+        let why = payload(&r)["error"]["message"].as_str().unwrap();
+        assert_eq!(why, format!("コマンド {name} が見つかりません"));
+    }
 
     // The list is narrowed to what the AI may run here, and says where to run it.
     let r = c.tool("ops_list", json!({"group": "ai"})).await;
@@ -345,6 +379,10 @@ async fn stdio_tools_and_schemas_are_the_command_table() {
     assert!(rows.iter().all(|v| v["name"] != "ai.request.accept"), "{r}");
     let batch = rows.iter().find(|v| v["name"] == "ai.batch").unwrap();
     assert_eq!(batch["tool"], EDIT_TOOL);
+    let r = c.tool("ops_list", json!({"group": "project"})).await;
+    let rows = payload(&r)["data"].as_array().unwrap().clone();
+    let save = rows.iter().find(|v| v["name"] == "project.save").unwrap();
+    assert_eq!(save["tool"], GUARDED_TOOL, "{r}");
     let r = c.tool("ops_list", json!({"grep": "mixer"})).await;
     let rows = payload(&r)["data"].as_array().unwrap().clone();
     assert!(rows.iter().all(|v| v["name"] != "view.mixer"), "{r}");
@@ -383,20 +421,28 @@ async fn a_read_only_server_lists_and_runs_only_what_looks() {
     assert_eq!(payload(&r)["error"]["code"], "not_found", "{r}");
 }
 
+/// A call the model can put right: a tool result with `isError` and `invalid_args`, naming
+/// the entrance to use when there is one.
+fn assert_mistake(r: &Value, right: Option<&str>) {
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let e = &payload(r)["error"];
+    assert_eq!(e["code"], "invalid_args", "{r}");
+    if let Some(right) = right {
+        assert_eq!(payload(r)["tool"], right, "{r}");
+        assert!(e["message"].as_str().unwrap().contains(right), "{r}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn each_entrance_runs_only_its_own_kind() {
     let song = shared();
     let mut c = Stdio::start(Gateway::new(song.clone(), "claude", Scope::Edit)).await;
     let add = json!({"command": "track.add.audio", "args": {"name": "Vox"}});
 
-    // A write through the read entrance, or through the destructive one: refused, nothing changed.
-    for wrong in [READ_TOOL, DESTRUCTIVE_TOOL] {
+    // A write through any other entrance: a result saying which to use, and nothing changed.
+    for wrong in [READ_TOOL, GUARDED_TOOL, DESTRUCTIVE_TOOL] {
         let r = c.tool(wrong, add.clone()).await;
-        assert_eq!(r["error"]["code"], -32602, "{r}");
-        assert!(
-            r["error"]["message"].as_str().unwrap().contains(EDIT_TOOL),
-            "{r}"
-        );
+        assert_mistake(&r, Some(EDIT_TOOL));
     }
     assert_eq!(tracks(&song), 0);
     let r = c.tool(EDIT_TOOL, add).await;
@@ -407,21 +453,45 @@ async fn each_entrance_runs_only_its_own_kind() {
     // A delete through the edit entrance: refused.
     let delete = json!({"command": "track.delete", "args": {"ids": [id]}});
     let r = c.tool(EDIT_TOOL, delete.clone()).await;
-    assert_eq!(r["error"]["code"], -32602, "{r}");
+    assert_mistake(&r, Some(DESTRUCTIVE_TOOL));
     assert_eq!(tracks(&song), 1);
+
+    // Saving and writing a file have their own entrance: allowing edits does not allow them.
+    for (command, args) in [
+        ("project.save", json!({})),
+        ("project.save-as", json!({"path": "elsewhere"})),
+    ] {
+        let r = c
+            .tool(EDIT_TOOL, json!({"command": command, "args": args}))
+            .await;
+        assert_mistake(&r, Some(GUARDED_TOOL));
+    }
 
     // A read through the edit entrance: refused too, so an approval never covers a wider kind.
     let r = c.tool(EDIT_TOOL, json!({"command": "track.list"})).await;
-    assert_eq!(r["error"]["code"], -32602, "{r}");
+    assert_mistake(&r, Some(READ_TOOL));
     // The job commands, answered without the song, keep to the read entrance as well.
-    for wrong in [EDIT_TOOL, DESTRUCTIVE_TOOL] {
+    for wrong in [EDIT_TOOL, GUARDED_TOOL, DESTRUCTIVE_TOOL] {
         let r = c.tool(wrong, json!({"command": "job.cancel"})).await;
-        assert_eq!(r["error"]["code"], -32602, "{r}");
+        assert_mistake(&r, Some(READ_TOOL));
     }
     let r = c.tool(READ_TOOL, json!({"command": "job.list"})).await;
     assert_eq!(r["result"]["isError"], false, "{r}");
 
-    // A person's answer has no entrance; an unknown name, a stray key or a non-object args neither.
+    // Arguments of the wrong shape: a result that says the shape.
+    for arguments in [
+        json!({"command": "track.add.audio", "name": "x"}),
+        json!({"command": "track.add.audio", "args": "x"}),
+        json!({"args": {}}),
+        json!({"command": 1}),
+    ] {
+        let r = c.tool(EDIT_TOOL, arguments.clone()).await;
+        assert_mistake(&r, None);
+        assert!(payload(&r).get("tool").is_none(), "{arguments} {r}");
+    }
+
+    // A person's answer has no entrance, and an unknown name none either: not found, as before,
+    // whichever entrance it is sent to.
     for (tool, arguments) in [
         (
             EDIT_TOOL,
@@ -429,15 +499,7 @@ async fn each_entrance_runs_only_its_own_kind() {
         ),
         (READ_TOOL, json!({"command": "ai.decide", "args": {}})),
         (EDIT_TOOL, json!({"command": "no.such.command"})),
-        (
-            EDIT_TOOL,
-            json!({"command": "track.add.audio", "name": "x"}),
-        ),
-        (
-            EDIT_TOOL,
-            json!({"command": "track.add.audio", "args": "x"}),
-        ),
-        (EDIT_TOOL, json!({"args": {}})),
+        (GUARDED_TOOL, json!({"command": "no_such_command"})),
         ("ai_request_accept", json!({})),
         ("track_list", json!({})),
     ] {
@@ -445,6 +507,163 @@ async fn each_entrance_runs_only_its_own_kind() {
         assert_eq!(r["error"]["code"], -32602, "{tool} {arguments} {r}");
     }
     assert_eq!(tracks(&song), 1);
+}
+
+/// `s` with each run of 12 or more digits (a time in milliseconds, as in a backup's file name)
+/// said as `<time>`.
+fn clock_free(s: &str) -> String {
+    let mut out = String::new();
+    let mut digits = String::new();
+    for ch in s.chars().chain(std::iter::once(' ')) {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+            continue;
+        }
+        if digits.len() >= 12 {
+            out.push_str("<time>");
+        } else {
+            out.push_str(&digits);
+        }
+        digits.clear();
+        out.push(ch);
+    }
+    out.pop();
+    out
+}
+
+/// What an answer says once what differs between two songs alike is taken out: the folder each
+/// was saved to, and the clock.
+fn alike(v: &Value, dirs: &[&std::path::Path]) -> Value {
+    match v {
+        Value::String(s) => {
+            let mut s = s.clone();
+            for d in dirs {
+                for form in [d.to_string_lossy().to_string(), d.display().to_string()] {
+                    s = s.replace(&form, "<song>");
+                    s = s.replace(&form.replace('\\', "/"), "<song>");
+                    s = s.replace(&form.replace('\\', "\\\\"), "<song>");
+                }
+            }
+            Value::String(clock_free(&s))
+        }
+        Value::Array(a) => Value::Array(a.iter().map(|x| alike(x, dirs)).collect()),
+        Value::Object(o) => Value::Object(
+            o.iter()
+                .map(|(k, x)| {
+                    // A decision's token is made fresh for each question, and its times are
+                    // the clock's.
+                    let x = if k == "token" {
+                        json!("<token>")
+                    } else if k == "created_ms" || k == "expires_ms" {
+                        json!("<time>")
+                    } else {
+                        alike(x, dirs)
+                    };
+                    (k.clone(), x)
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Every AI permission stage, every entrance and one command of each risk: through its own
+/// entrance a command answers as `Gateway::call` does without one (what the per-command tools
+/// answered), and through any other entrance it is a mistake the model can put right, which
+/// changes nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn each_entrance_answers_as_the_command_did_at_every_permission_stage() {
+    let commands: [(Risk, &str); 4] = [
+        (Risk::Read, "track.list"),
+        (Risk::Write, "note.transpose"),
+        (Risk::Guarded, "project.save"),
+        (Risk::Destructive, "clip.delete"),
+    ];
+    let reg = Registry::standard();
+    for (risk, command) in commands {
+        assert_eq!(reg.get(command).unwrap().risk, risk, "{command}");
+    }
+    let tmp = tempfile::Builder::new()
+        .prefix("xirius-mcp-entrances-")
+        .tempdir()
+        .unwrap();
+    for stage in [
+        AiPermission::Off,
+        AiPermission::Read,
+        AiPermission::Edit,
+        AiPermission::Save,
+    ] {
+        // Two songs alike: one called as before, one through the entrances.
+        let make = |side: &str| {
+            let song = shared();
+            let clip = song_with_notes(&mut lock(&song));
+            let dir = tmp.path().join(format!("{stage:?}-{side}"));
+            lock(&song).save_as(&dir).unwrap();
+            level(&song, stage);
+            (song, clip, dir)
+        };
+        let (before_song, clip, before_dir) = make("before");
+        let (song, clip_b, dir) = make("entrance");
+        assert_eq!(clip, clip_b, "the songs are alike");
+        let before = Gateway::new(before_song.clone(), "claude", Scope::Edit);
+        let mut c = Stdio::start(Gateway::new(song.clone(), "claude", Scope::Edit)).await;
+        let dirs = [before_dir.as_path(), dir.as_path()];
+
+        for (risk, command) in commands {
+            let key = format!("{stage:?}-{command}");
+            let mut args = match command {
+                "note.transpose" => json!({"ids": [clip], "by": 2}),
+                "clip.delete" => json!({"ids": [clip]}),
+                _ => json!({}),
+            };
+            if risk != Risk::Read {
+                args["request_key"] = json!(key);
+            }
+            let right = xirius_mcp::entry(risk).unwrap();
+
+            // The wrong entrances first: each a mistake, and the song as it was.
+            for wrong in ENTRANCES.into_iter().filter(|e| *e != right) {
+                let (notes_then, steps_then, dirty) =
+                    (notes(&song), steps(&song), lock(&song).is_dirty());
+                let r = c
+                    .tool(wrong, json!({"command": command, "args": args}))
+                    .await;
+                assert_mistake(&r, Some(right));
+                assert_eq!(notes(&song), notes_then, "{stage:?} {command} {wrong}");
+                assert_eq!(steps(&song), steps_then, "{stage:?} {command} {wrong}");
+                assert_eq!(lock(&song).is_dirty(), dirty, "{stage:?} {command} {wrong}");
+            }
+
+            // The right one answers as the command did, and leaves the song as it left the other.
+            let raw = args.as_object().unwrap().clone();
+            let gateway = before.clone();
+            let (want, want_error) =
+                tokio::task::spawn_blocking(move || gateway.call(command, &raw))
+                    .await
+                    .unwrap()
+                    .unwrap_or_else(|e| panic!("{stage:?} {command}: {}", e.0));
+            let r = c
+                .tool(right, json!({"command": command, "args": args}))
+                .await;
+            assert_eq!(
+                r["result"]["isError"],
+                json!(want_error),
+                "{stage:?} {command} {r}"
+            );
+            assert_eq!(
+                alike(payload(&r), &dirs),
+                alike(&want, &dirs),
+                "{stage:?} {command}"
+            );
+            assert_eq!(notes(&song), notes(&before_song), "{stage:?} {command}");
+            assert_eq!(steps(&song), steps(&before_song), "{stage:?} {command}");
+            assert_eq!(
+                lock(&song).is_dirty(),
+                lock(&before_song).is_dirty(),
+                "{stage:?} {command}"
+            );
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

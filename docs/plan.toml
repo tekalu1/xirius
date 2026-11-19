@@ -7602,7 +7602,7 @@ status = "done"
 
 [[item]]
 id = "MCP-001"
-title = "画面だけが答えるコマンドを、CLI の MCP の tools/list に出さない（アプリの MCP には出す）。判定はコマンド表の screen_only の印だけで行い、曲を変えるものの readOnlyHint を false にする"
+title = "画面だけが答えるコマンドを、CLI の MCP では探すことも呼ぶこともできなくする（アプリの MCP では ops_list・ops_schema に出し、入口から呼べる）。判定はコマンド表の screen_only の印だけで行い、曲を変えるものの readOnlyHint を false にする"
 area = "MCP"
 phase = "v1"
 source = "impl-17-cli-mcp-bugs-report.md § B-1・B-2"
@@ -7651,7 +7651,7 @@ title = "MCP から曲を開く・新しく作る（人の承認つき）"
 area = "MCP"
 phase = "v1.1"
 source = "impl-17-cli-mcp-bugs-report.md § B-7"
-done_when = "MCP の ops_list に project.open と project.new が出て、入口（run_edit）から呼ぶと人の承認（confirmation_required と decision）を通してから曲を開く・作る。CLI の --song で決めた 1 曲だけのサーバーでは、開き直す手段も分かる形で返す。今は project.open は HumanOnly で一覧に出ず、project.new は画面専用のため CLI のサーバーに出ない（説明に「曲は画面で開きます」と書いてある）"
+done_when = "MCP の ops_list に project.open と project.new が出て、各行の tool の入口から呼ぶと人の承認（confirmation_required と decision）を通してから曲を開く・作る。CLI の --song で決めた 1 曲だけのサーバーでは、開き直す手段も分かる形で返す。今は project.open は HumanOnly で一覧に出ず、project.new は画面専用のため CLI のサーバーに出ない（説明に「曲は画面で開きます」と書いてある）"
 
 [[item]]
 id = "MCP-007"
@@ -7663,11 +7663,12 @@ done_when = "アプリの MCP のポートとトークンを設定（例: ai.mcp
 
 [[item]]
 id = "MCP-008"
-title = "MCP の tools/list をコマンドごとのツール（デスクトップで 511 件・約 500 KB）から、見る・編集・削除の 3 つの入口と ops_list・ops_schema・ai_batch にする。コマンド表（メニュー・キー・パレット・CLI の 1 行 = 1 コマンド）は変えない"
+title = "MCP の tools/list を、コマンドごとのツールから risk ごとの入口と ops_list・ops_schema・ai_batch にする"
 area = "MCP"
 phase = "v1.1"
 source = "2026-11-19 の依頼（MCP のツールの一覧が大きすぎて、AI の文脈を食う）"
-done_when = "tools/list は、Scope が Edit で run_read・run_edit・run_destructive・ops_list・ops_schema・ai_batch の 6 件、Read で run_read・ops_list・ops_schema の 3 件になり、画面の有無で増えない（画面のコマンドも一覧に出さない）。入口は risk で分け（read は run_read で readOnlyHint、write と guarded は run_edit、destructive は run_destructive で destructiveHint）、ほかの入口の種類のコマンドは名前を正しい入口ごと言って断る。入口は command と args だけを受け、HumanOnly・Scope の外・画面の無いときの screen_only は今までと同じ -32602、AI の権限の段（off・read・edit・save）・保存の許可・request_key・wait_ms・dry_run・受領証は前と同じ道（Gateway::call）を通る。ops_list は group で絞れ、MCP では呼べるコマンドだけを各行の tool（実行に使う入口）付きで返し、ops_schema も呼べるものだけを前のツールと同じ形で返す。直接のツールは、入口の前に要るもの（ops_list・ops_schema）と、入口で包むと 1 つの承認にまとめる意味が崩れるもの（ai_batch）だけに絞る。全部のツールを出す昔の形は残さない（使う所が試験だけだった）。crates/xirius-mcp/tests/mcp.rs・screen_tools.rs と crates/xirius-cli/tests の MCP の試験が入口を通り、件数と中身・入口の取り違え・権限ごとの答えを確かめる"
+done_when = "tools/list は、Scope が Edit で run_read・run_edit・run_guarded・run_destructive・ops_list・ops_schema・ai_batch の 7 件、Read で run_read・ops_list・ops_schema の 3 件になり、画面の有無で増えない。入口は risk ごとに 1 つ（read は run_read で readOnlyHint、write は run_edit、guarded は run_guarded、destructive は run_destructive で destructiveHint）で、run_edit を常に許しても保存・書き出しは通らない。入口は command と args だけを受け、入口の取り違えと引数の形の誤りは isError の結果（invalid_args。取り違えは正しい入口を tool と本文に書く）で返す。HumanOnly・Scope の外・画面の無いときの screen_only・知らない名前は今までと同じ -32602。AI の権限の段（off・read・edit・save）・保存の許可・request_key・wait_ms・dry_run・受領証は前と同じ道（Gateway::call）を通り、段 × 入口 × risk の表の試験で、入口を通した答えが Gateway::call を直に呼んだ答えと同じことを確かめる。ops_list は group で絞れ、MCP では呼べるコマンドだけを各行の tool（実行に使う入口）付きで返す。ops_schema は note_transpose の形の名前も受け、group で絞れ、MCP では name か group が無いと invalid_args を返す（CLI は今までどおり全部を返す）。initialize の instructions の group の一覧は Gateway を作るときに覚えた値で、曲のロックを取らない。crates/xirius-mcp/tests/mcp.rs・screen_tools.rs と crates/xirius-cli/tests の MCP の試験が入口を通る"
+notes = "前の tools/list は、デスクトップで 511 件・約 500 KB、CLI で 423 件・約 450 KB。コマンド表（メニュー・キー・パレット・CLI の 1 行 = 1 コマンド）は変えない。直接のツールは、入口の前に要るもの（ops_list・ops_schema）と、入口で包むと 1 つの承認にまとめる意味が崩れるもの（ai_batch）だけ。全部のツールを出す昔の形は残さない（使う所が試験だけだった）。前のツール名（note_transpose など）は tools/call で見つからなくなり、クライアントのツールごとの許可は入口ごとになる（次の版のリリースノートに書く）"
 status = "done"
 
 [[item]]

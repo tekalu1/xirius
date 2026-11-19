@@ -498,11 +498,15 @@ fn mcp_lists_the_registry_and_runs_a_tool() {
             call(7, "ops.list", json!({"group":"folder"})),
             call(8, "ops.schema", json!({"name":"note.quantize"})),
             call(9, "ops.schema", json!({"name":"ai.request.accept"})),
+            call(10, "ops.schema", json!({})),
+            call(11, "ops.schema", json!({"name":"note_quantize"})),
+            json!({"jsonrpc":"2.0","id":12,"method":"tools/call",
+                   "params":{"name":"run_edit","arguments":{"command":"project.save"}}}),
         ],
     );
-    // The notification gets no reply: ids 1..9 only. Calls run side by side,
+    // The notification gets no reply: ids 1..12 only. Calls run side by side,
     // so the replies are matched by id, not by position.
-    assert_eq!(replies.len(), 9);
+    assert_eq!(replies.len(), 12);
     let by_id = |id: u64| replies.iter().find(|r| r["id"] == id).unwrap();
     assert_eq!(by_id(1)["result"]["serverInfo"]["name"], "xirius");
     assert!(by_id(1)["result"]["capabilities"]["tools"].is_object());
@@ -519,6 +523,7 @@ fn mcp_lists_the_registry_and_runs_a_tool() {
         [
             "run_read",
             "run_edit",
+            "run_guarded",
             "run_destructive",
             "ops_list",
             "ops_schema",
@@ -553,6 +558,30 @@ fn mcp_lists_the_registry_and_runs_a_tool() {
     assert_eq!(
         by_id(9)["result"]["structuredContent"]["error"]["code"],
         "not_found"
+    );
+    // Over MCP, ops_schema wants a name or a group, not every schema at once; the command
+    // line still gives them all.
+    assert_eq!(by_id(10)["result"]["isError"], true);
+    assert_eq!(
+        by_id(10)["result"]["structuredContent"]["error"]["code"],
+        "invalid_args"
+    );
+    let all: Value = serde_json::from_slice(&xirius(&["ops", "schema", "--json"]).stdout).unwrap();
+    assert!(
+        all["data"].as_array().unwrap().len() > 100,
+        "{}",
+        all["message"]
+    );
+    // A command's tool name finds its schema too.
+    assert_eq!(
+        by_id(11)["result"]["structuredContent"]["data"]["_meta"]["xirius"]["command"],
+        "note.quantize"
+    );
+    // Saving through the edit entrance is a mistake the result puts right: it names the entrance.
+    assert_eq!(by_id(12)["result"]["isError"], true);
+    assert_eq!(
+        by_id(12)["result"]["structuredContent"]["tool"],
+        "run_guarded"
     );
 
     assert_eq!(by_id(3)["result"]["isError"], false);

@@ -40,8 +40,8 @@ use xirius_core::session::RunOptions;
 use xirius_core::{ErrorCode, Session};
 
 pub use gateway::{
-    ADMIN_COMMANDS, CallError, DESTRUCTIVE_TOOL, DIRECT, EDIT_TOOL, ENTRANCES, Gateway, READ_TOOL,
-    Scope, call_params, entry, tool_name,
+    ADMIN_COMMANDS, CallError, DESTRUCTIVE_TOOL, DIRECT, EDIT_TOOL, ENTRANCES, GUARDED_TOOL,
+    Gateway, READ_TOOL, Refusal, Scope, call_params, entry, tool_name,
 };
 pub use host::{Bridge, Host, Job, Jobs, bridge};
 pub use http::{HttpConfig, HttpServer};

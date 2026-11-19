@@ -8,7 +8,8 @@ fn revoking_permission_also_blocks_receipts_and_stored_result_pages() {
     let session = Arc::new(Mutex::new(Session::new("revoked")));
     let gateway = Gateway::new(session.clone(), "test", Scope::Edit).with_save(false);
     let result = gateway
-        .call("ops_schema", json!({}).as_object().unwrap())
+        // One group of schemas is long enough to be kept in pages.
+        .call("ops_schema", json!({"group": "note"}).as_object().unwrap())
         .unwrap()
         .0;
     let pages = json!({"id": result["result_id"], "page": 0});

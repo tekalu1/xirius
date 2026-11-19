@@ -3,7 +3,7 @@
 //! reachable here with no change. Both transports and the admin endpoint go
 //! through it.
 //!
-//! MCP lists a few tools, not one per command (MCP-008): three entrances that run a
+//! MCP lists a few tools, not one per command (MCP-008): four entrances that run a
 //! command by name, split by what an MCP client may ask a person before ([`entry`]), and
 //! the commands every session uses ([`DIRECT`]). Which commands an AI may run through them
 //! is decided in one place ([`Gateway::offered`]), as it was when every command was a tool.
@@ -49,25 +49,28 @@ pub fn tool_name(command: &str) -> String {
 
 /// The entrance for the commands that only look (`Risk::Read`): `readOnlyHint`.
 pub const READ_TOOL: &str = "run_read";
-/// The entrance for edits (`Risk::Write`) and for saving and writing files (`Risk::Guarded`):
-/// neither read-only nor destructive, as their own tools said.
+/// The entrance for edits to the song (`Risk::Write`).
 pub const EDIT_TOOL: &str = "run_edit";
+/// The entrance for saving and writing files (`Risk::Guarded`): apart from the edits, so that
+/// a client told to always allow `run_edit` does not save or write a file anywhere with it.
+pub const GUARDED_TOOL: &str = "run_guarded";
 /// The entrance for edits that remove something (`Risk::Destructive`): `destructiveHint`.
 pub const DESTRUCTIVE_TOOL: &str = "run_destructive";
-/// The three entrances, in the order `tools/list` gives them.
-pub const ENTRANCES: [&str; 3] = [READ_TOOL, EDIT_TOOL, DESTRUCTIVE_TOOL];
+/// The four entrances, in the order `tools/list` gives them.
+pub const ENTRANCES: [&str; 4] = [READ_TOOL, EDIT_TOOL, GUARDED_TOOL, DESTRUCTIVE_TOOL];
 
 /// Commands that stay tools of their own: the two that find a command and its arguments,
 /// and the one that runs several edits as one step. Everything else goes through [`entry`].
 pub const DIRECT: &[&str] = &["ops.list", "ops.schema", "ai.batch"];
 
-/// The entrance that runs a command of `risk`. A command has exactly one, so the hints an
-/// MCP client asks a person by never say less than the command does. Human-only commands
-/// have none.
+/// The entrance that runs a command of `risk`. A command has exactly one, and each entrance
+/// runs one risk, so allowing an entrance in a client never allows more than that kind.
+/// Human-only commands have none.
 pub fn entry(risk: Risk) -> Option<&'static str> {
     match risk {
         Risk::Read => Some(READ_TOOL),
-        Risk::Write | Risk::Guarded => Some(EDIT_TOOL),
+        Risk::Write => Some(EDIT_TOOL),
+        Risk::Guarded => Some(GUARDED_TOOL),
         Risk::Destructive => Some(DESTRUCTIVE_TOOL),
         Risk::HumanOnly => None,
     }
@@ -104,7 +107,13 @@ fn entry_tool(name: &'static str) -> Value {
             false,
         ),
         EDIT_TOOL => (
-            "曲を編集するコマンド（risk が write）と、保存・ファイルの書き出し（risk が guarded。保存の許可が必要です）を名前で実行します。\
+            "曲を編集するコマンド（risk が write）を名前で実行します。保存と書き出しは run_guarded、削除は run_destructive です。\
+             args には dry_run・request_key・wait_ms も渡せます。コマンドは ops_list で、引数は ops_schema で調べます",
+            false,
+            false,
+        ),
+        GUARDED_TOOL => (
+            "曲の保存とファイルの書き出し（risk が guarded）を名前で実行します。「編集と保存・書き出し」の権限か、ユーザーの承認が必要です（結果に confirmation_required と decision が付きます）。\
              args には dry_run・request_key・wait_ms も渡せます。コマンドは ops_list で、引数は ops_schema で調べます",
             false,
             false,
@@ -134,15 +143,64 @@ fn entry_tool(name: &'static str) -> Value {
 
 /// `job.list` and `job.cancel` (EXP-047), which the gateway answers without reaching the song:
 /// a running bounce holds it, and these are what stop one.
-fn job_command(tool: &str) -> Option<&'static str> {
+fn job_command(name: &str) -> Option<&'static str> {
     jobs::NAMES
         .into_iter()
-        .find(|n| *n == tool || tool_name(n) == tool)
+        .find(|n| *n == name || tool_name(n) == name)
 }
 
-/// A failure to even start a command: wrong tool name or arguments shape.
+/// A failure to even start a command: a tool or command that is not there.
 #[derive(Debug)]
 pub struct CallError(pub String);
+
+/// Why an entrance did not run a call ([`Gateway::resolve`]).
+#[derive(Debug)]
+pub enum Refusal {
+    /// No such tool, or no such command from here (unknown, human-only, out of the scope, the
+    /// screen's without one): the protocol error it always was, which tells nothing of what
+    /// exists.
+    NotFound(CallError),
+    /// A call the model can put right: a command sent to the wrong entrance, or arguments of
+    /// the wrong shape. A tool result with `isError`, saying what to send instead.
+    Mistake(Value),
+}
+
+/// A [`Refusal::Mistake`]: `invalid_args` with the reason, and the entrance to use when the
+/// command was sent to another.
+fn mistake(why: String, tool: Option<&str>) -> Refusal {
+    let mut v = invalid_args(&why);
+    if let Some(tool) = tool {
+        v["tool"] = json!(tool);
+    }
+    Refusal::Mistake(v)
+}
+
+/// What a command's group needs to say whether the AI may reach it, kept from the table when
+/// the gateway is made: the server's instructions then need no lock on the song.
+#[derive(Clone, Debug)]
+struct Kind {
+    group: String,
+    risk: Risk,
+    screen_only: bool,
+}
+
+fn kinds(host: &dyn Host) -> Arc<Vec<Kind>> {
+    let mut out = Vec::new();
+    host.with_registry(&mut |r| {
+        let mut seen = std::collections::BTreeSet::new();
+        out = r
+            .all()
+            .iter()
+            .filter(|d| seen.insert((d.target().to_string(), d.risk, d.screen_only)))
+            .map(|d| Kind {
+                group: d.target().to_string(),
+                risk: d.risk,
+                screen_only: d.screen_only,
+            })
+            .collect();
+    });
+    Arc::new(out)
+}
 
 #[derive(Clone)]
 pub struct Gateway {
@@ -157,6 +215,8 @@ pub struct Gateway {
     save: bool,
     receipts: crate::receipts::Receipts,
     results: crate::results::Results,
+    /// The table's groups, by risk and screen ([`Kind`]).
+    kinds: Arc<Vec<Kind>>,
 }
 
 impl Gateway {
@@ -165,6 +225,7 @@ impl Gateway {
     pub fn new(session: Arc<Mutex<Session>>, author: impl Into<String>, scope: Scope) -> Gateway {
         lock(&session).set_confirm(Confirm::OPEN_04);
         Gateway {
+            kinds: kinds(&*session),
             host: session.clone(),
             session: Some(session),
             author: author.into(),
@@ -181,6 +242,7 @@ impl Gateway {
     /// owner's to set on its session.
     pub fn hosted(host: Arc<dyn Host>, author: impl Into<String>, scope: Scope) -> Gateway {
         Gateway {
+            kinds: kinds(&*host),
             host,
             session: None,
             author: author.into(),
@@ -275,7 +337,7 @@ impl Gateway {
                     v["description"] = json!(format!(
                         "{}。group（{}）か grep で絞ってください。各行の tool が実行に使うツールです",
                         d.summary,
-                        groups(&offered).join("・")
+                        self.groups().join("・")
                     ));
                 }
                 tools.push(v);
@@ -284,31 +346,40 @@ impl Gateway {
         })
     }
 
-    /// The groups of the commands the AI may run from here (`note` for `note.quantize`).
+    /// The groups of the commands the AI may run from here (`note` for `note.quantize`). Kept
+    /// from when the gateway was made, so it takes no lock: `initialize` answers while a bounce
+    /// holds the song.
     pub fn groups(&self) -> Vec<String> {
-        self.registry(|r| {
-            let offered: Vec<_> = r.all().iter().filter(|d| self.offered(d)).collect();
-            groups(&offered)
-        })
+        let set: std::collections::BTreeSet<&str> = self
+            .kinds
+            .iter()
+            .filter(|k| self.reachable(k.risk) && (!k.screen_only || self.screen))
+            .map(|k| k.group.as_str())
+            .collect();
+        set.into_iter().map(str::to_string).collect()
     }
 
-    fn command_of(&self, tool: &str) -> Option<&'static str> {
+    /// The command `name` (a command name, or its tool name) stands for, when the AI may run it
+    /// from here.
+    fn command_of(&self, name: &str) -> Option<&'static str> {
         self.registry(|r| {
             r.all()
                 .iter()
-                .find(|d| (d.name == tool || tool_name(d.name) == tool) && self.offered(d))
+                .find(|d| (d.name == name || tool_name(d.name) == name) && self.offered(d))
                 .map(|d| d.name)
         })
     }
 
     /// Turns a call of a listed tool into the command it runs and that command's arguments.
-    /// An entrance runs only the commands of its own kind ([`entry`]); a command the AI may
-    /// not reach from here, or that does not exist, is the same "not found" as before.
+    /// An entrance runs only the commands of its own kind ([`entry`]). A command the AI may not
+    /// reach from here, or that does not exist, is the same "not found" protocol error as
+    /// before; the wrong entrance or arguments of the wrong shape come back as a result the
+    /// model can act on ([`Refusal::Mistake`]).
     pub fn resolve(
         &self,
         tool: &str,
         raw: Map<String, Value>,
-    ) -> Result<(&'static str, Map<String, Value>), CallError> {
+    ) -> Result<(&'static str, Map<String, Value>), Refusal> {
         if !ENTRANCES.contains(&tool) {
             let direct = DIRECT
                 .iter()
@@ -316,54 +387,71 @@ impl Gateway {
                 .and_then(|c| self.command_of(c));
             return match direct {
                 Some(command) => Ok((command, raw)),
-                None => Err(CallError(format!("ツール `{tool}` が見つかりません"))),
+                None => Err(Refusal::NotFound(CallError(format!(
+                    "ツール `{tool}` が見つかりません"
+                )))),
             };
         }
         if let Some(key) = raw.keys().find(|k| *k != "command" && *k != "args") {
-            return Err(CallError(format!(
-                "{tool} の引数は command と args です（`{key}` はコマンドの引数として args に入れてください）"
-            )));
+            return Err(mistake(
+                format!(
+                    "{tool} の引数は command と args です（`{key}` はコマンドの引数として args に入れてください）"
+                ),
+                None,
+            ));
         }
         let Some(name) = raw.get("command").and_then(Value::as_str) else {
-            return Err(CallError(format!(
-                "{tool} には command にコマンド名を渡してください"
-            )));
+            return Err(mistake(
+                format!("{tool} には command にコマンド名（例: note.transpose）を渡してください"),
+                None,
+            ));
         };
         let args = match raw.get("args") {
             None | Some(Value::Null) => Map::new(),
             Some(Value::Object(args)) => args.clone(),
             Some(_) => {
-                return Err(CallError(format!(
-                    "{tool} の args はオブジェクトで渡してください"
-                )));
+                return Err(mistake(
+                    format!(
+                        "{tool} の args はオブジェクト（例: {{\"ids\": [\"clp_1\"]}}）で渡してください"
+                    ),
+                    None,
+                ));
             }
+        };
+        let wrong = |command: &str, right: &'static str| {
+            mistake(
+                format!(
+                    "{command} は {tool} では実行できません。{right} に同じ command と args を渡してください"
+                ),
+                Some(right),
+            )
         };
         if let Some(job) = job_command(name) {
             // Answered without the registry, which waits for the song a running bounce holds
             // (EXP-047). Both are read commands, reachable in every scope and without a screen.
             return match tool {
                 READ_TOOL => Ok((job, args)),
-                _ => Err(CallError(format!(
-                    "{job} は {tool} では実行できません。{READ_TOOL} を使ってください"
-                ))),
+                _ => Err(wrong(job, READ_TOOL)),
             };
         }
         let Some(command) = self.command_of(name) else {
-            return Err(CallError(format!("コマンド `{name}` が見つかりません")));
+            return Err(Refusal::NotFound(CallError(format!(
+                "コマンド `{name}` が見つかりません"
+            ))));
         };
-        let right = self.registry(|r| r.get(command).and_then(|d| entry(d.risk)));
-        if right != Some(tool) {
-            return Err(CallError(format!(
-                "{command} は {tool} では実行できません。{} を使ってください",
-                right.unwrap_or("（なし）")
-            )));
+        // Reached here, the command is offered, so it is not human-only and has an entrance.
+        let right = self
+            .registry(|r| r.get(command).and_then(|d| entry(d.risk)))
+            .expect("an offered command has an entrance");
+        if right != tool {
+            return Err(wrong(command, right));
         }
         Ok((command, args))
     }
 
     /// `ops.list` and `ops.schema` over MCP say only what this connection may run, and which
     /// tool runs it.
-    fn narrow(&self, command: &str, mut value: Value) -> Value {
+    fn narrow(&self, command: &str, asked: Option<&str>, mut value: Value) -> Value {
         if value["ok"] != true {
             return value;
         }
@@ -391,10 +479,12 @@ impl Gateway {
                 }
                 ("ops.schema", one) => {
                     let name = one["name"].as_str().unwrap_or_default();
+                    // Said with the name asked for, as the table says a name it does not know.
+                    let asked = asked.unwrap_or(name);
                     match offered(name) {
                         Some(d) => Ok((format!("{} の Schema", d.name), command_schema(d))),
                         None => Err(CmdError::not_found(format!(
-                            "コマンド {name} が見つかりません"
+                            "コマンド {asked} が見つかりません"
                         ))),
                     }
                 }
@@ -411,9 +501,9 @@ impl Gateway {
         }
     }
 
-    /// Whether the tool's command takes an argument called `arg`.
-    pub fn takes(&self, tool: &str, arg: &str) -> bool {
-        let Some(command) = self.command_of(tool) else {
+    /// Whether `command` (a command name, or its tool name) takes an argument called `arg`.
+    pub fn takes(&self, command: &str, arg: &str) -> bool {
+        let Some(command) = self.command_of(command) else {
             return false;
         };
         self.registry(|r| {
@@ -422,10 +512,16 @@ impl Gateway {
         })
     }
 
-    /// Runs a tool as the AI. `Ok((json, is_error))`: a command that fails is
-    /// a result with a typed error code, not a protocol error.
-    pub fn call(&self, tool: &str, raw: &Map<String, Value>) -> Result<(Value, bool), CallError> {
-        if let Some(command) = job_command(tool) {
+    /// Runs `command` (a command name, or its tool name) as the AI, with its own arguments
+    /// `raw` (what an entrance got as `args`). `Ok((json, is_error))`: a command that fails is
+    /// a result with a typed error code, not a protocol error. A command the AI may not reach
+    /// from here is `Err`, as an unknown one is.
+    pub fn call(
+        &self,
+        command: &str,
+        raw: &Map<String, Value>,
+    ) -> Result<(Value, bool), CallError> {
+        if let Some(command) = job_command(command) {
             // Answered without the song, which a running bounce holds (EXP-047).
             return Ok(match jobs::answer(command, &Args(raw.clone())) {
                 Ok(out) => {
@@ -445,11 +541,29 @@ impl Gateway {
                 Err(e) => (error_json(&e), true),
             });
         }
-        let Some(command) = self.command_of(tool) else {
-            return Err(CallError(format!("ツール `{tool}` が見つかりません")));
+        let name = command;
+        let Some(command) = self.command_of(name) else {
+            return Err(CallError(format!("コマンド `{name}` が見つかりません")));
         };
         let opts = RunOptions::ai(self.author.clone());
         let mut raw = raw.clone();
+        if command == "ops.schema" {
+            // Over MCP, every schema at once is half a megabyte: ask for one command or a group.
+            let given = |key: &str| {
+                raw.get(key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|v| !v.trim().is_empty())
+            };
+            if !given("name") && !given("group") {
+                return Ok((
+                    invalid_args(&format!(
+                        "ops_schema には name（コマンド名。例: note.transpose）か group（{}）を渡してください",
+                        self.groups().join("・")
+                    )),
+                    true,
+                ));
+            }
+        }
         if command == "ops.receipt" || command == "ops.get-result" {
             if let Err(error) = self
                 .host
@@ -475,7 +589,7 @@ impl Gateway {
         // The command table declares which operations can run in the background. The MCP
         // server keeps starting them in the background when the caller says nothing (a render
         // can take minutes), but a caller that says `false` waits for the end.
-        let takes_background = self.takes(tool, "background");
+        let takes_background = self.takes(command, "background");
         let asked = raw.get("background").and_then(|value| match value {
             Value::Bool(b) => Some(*b),
             Value::String(s) if s == "true" => Some(true),
@@ -494,7 +608,9 @@ impl Gateway {
         if !changes {
             let (value, error) = self.run(command, &raw, &opts);
             let value = match command {
-                "ops.list" | "ops.schema" => self.narrow(command, value),
+                "ops.list" | "ops.schema" => {
+                    self.narrow(command, raw.get("name").and_then(Value::as_str), value)
+                }
                 _ => value,
             };
             let id = crate::http::new_token().map_err(|e| CallError(e.to_string()))?;
@@ -660,11 +776,13 @@ impl Gateway {
         self.receipts.get(id)
     }
 
-    pub fn receipted(&self, tool: &str) -> bool {
-        if job_command(tool).is_some() {
+    /// Whether a run of `command` gets a receipt (it changes something), so the server sends
+    /// its progress.
+    pub fn receipted(&self, command: &str) -> bool {
+        if job_command(command).is_some() {
             return false;
         }
-        self.command_of(tool)
+        self.command_of(command)
             .is_some_and(|name| self.registry(|r| r.get(name).unwrap().risk != Risk::Read))
     }
 
@@ -725,11 +843,6 @@ fn command_schema(d: &xirius_core::CommandDef) -> Value {
         }
     }
     v
-}
-
-fn groups(defs: &[&xirius_core::CommandDef]) -> Vec<String> {
-    let set: std::collections::BTreeSet<&str> = defs.iter().map(|d| d.target()).collect();
-    set.into_iter().map(str::to_string).collect()
 }
 
 pub fn error_json(e: &CmdError) -> Value {

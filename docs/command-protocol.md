@@ -2,7 +2,7 @@
 
 引数とコマンドの一覧は、コマンド表から生成する [commands.md](commands.md)。
 CLI の直接実行は標準出力の JSON と終了コードを返す。`request_key`・`wait_ms` は MCP の制御欄。
-MCP の tools/list はコマンドごとのツールではなく、入口 3 つ（見るだけの `run_read`・編集と保存・書き出しの `run_edit`・削除を伴う `run_destructive`）と `ops_list`・`ops_schema`・`ai_batch` だけを出す（MCP-008）。コマンドは `ops_list`（`group`・`grep` で絞る。各行の `tool` が実行に使う入口）で探し、`ops_schema` で引数を調べ、入口に `command` と `args` を渡す。`request_key`・`wait_ms`・`dry_run` は `args` の中に書く。入口は risk の違うコマンドを断り、Scope・AI の権限・画面の有無の判定は前のコマンドごとのツールと同じ。
+MCP の tools/list はコマンドごとのツールではなく、入口 4 つ（見るだけの `run_read`・編集の `run_edit`・保存とファイルの書き出しの `run_guarded`・削除を伴う `run_destructive`）と `ops_list`・`ops_schema`・`ai_batch` だけを出す（MCP-008）。コマンドは `ops_list`（`group`・`grep` で絞る。各行の `tool` が実行に使う入口）で探し、`ops_schema`（`name` か `group`。`note_transpose` の形の名前も受ける）で引数を調べ、入口に `command` と `args` を渡す。`request_key`・`wait_ms`・`dry_run` は `args` の中に書く。入口は risk の違うコマンドと形の違う引数を `isError` の結果（`invalid_args`。入口の取り違えは正しい入口を `tool` に書く）で断る。呼べないコマンド（人だけのもの・Scope の外・画面の無いときの画面のもの・知らない名前）は前と同じ -32602 で、Scope・AI の権限・画面の有無の判定は前のコマンドごとのツールと同じ。
 
 ## 版の照合
 

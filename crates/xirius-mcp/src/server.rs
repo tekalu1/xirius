@@ -9,13 +9,14 @@ use rmcp::model::{
 };
 use rmcp::service::{RequestContext, RoleServer};
 
-use crate::gateway::Gateway;
+use crate::gateway::{Gateway, Refusal};
 
 type McpError = rmcp::ErrorData;
 
 const INSTRUCTIONS: &str = "Xirius の曲を操作します。操作はすべてコマンド（例: note.transpose）で、\
 ops_list（group か grep で絞る）で探し、ops_schema の name に渡して引数を調べます。\
-実行は、ops_list の各行の tool が示す入口に command と args を渡します。見るだけは run_read、編集・保存・書き出しは run_edit、削除を伴うものは run_destructive です。\
+実行は、ops_list の各行の tool が示す入口に command と args を渡します。見るだけは run_read、編集は run_edit、保存とファイルの書き出しは run_guarded、削除を伴うものは run_destructive です。\
+入口を取り違えると、結果のエラーの tool に正しい入口が付きます。\
 dry_run を true にすると、曲は変更せず変更内容だけを返します。\
 削除と保存はユーザーの承認を待ちます（結果に confirmation_required と decision が付きます）。\
 複数の編集を 1 つの操作にまとめるには ai_batch を、作業コピーで試すには run_edit で ai.request.begin から始めてください。";
@@ -102,10 +103,16 @@ impl ServerHandler for XiriusServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let (command, mut raw) = self
+        let (command, mut raw) = match self
             .gateway
             .resolve(&request.name, request.arguments.unwrap_or_default())
-            .map_err(|e| McpError::invalid_params(e.0, None))?;
+        {
+            Ok(call) => call,
+            Err(Refusal::NotFound(e)) => return Err(McpError::invalid_params(e.0, None)),
+            Err(Refusal::Mistake(value)) => {
+                return Ok(CallToolResult::structured_error(value).into());
+            }
+        };
         let mut notifications = None;
         if self.gateway.receipted(command) {
             let id = raw
