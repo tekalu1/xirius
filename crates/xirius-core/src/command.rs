@@ -457,7 +457,7 @@ impl Registry {
             .collect()
     }
 
-    /// The MCP `tools/list` payload.
+    /// Every command's schema (what `ops.schema` lists; MCP runs them through its entrances).
     pub fn tool_schemas(&self) -> Vec<Value> {
         self.defs.iter().map(CommandDef::json_schema).collect()
     }

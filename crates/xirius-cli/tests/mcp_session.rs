@@ -8,6 +8,11 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+/// `tools/call` params for a command (or its old tool name): through its MCP entrance.
+fn params(command: &str, args: Value) -> Value {
+    xirius_mcp::call_params(&xirius_session::commands::registry(), command, args)
+}
+
 struct Client {
     child: Child,
     input: Option<ChildStdin>,
@@ -101,8 +106,22 @@ impl Client {
         }
     }
 
+    /// The schema MCP gives for `command` (what its own tool used to list).
+    fn schema(&mut self, command: &str) -> Value {
+        let r = self.request(
+            "tools/call",
+            json!({"name": "ops_schema", "arguments": {"name": command}}),
+        );
+        r["result"]["structuredContent"]["data"].clone()
+    }
+
+    /// Whether the AI can run `command` here.
+    fn offers(&mut self, command: &str) -> bool {
+        self.schema(command)["_meta"]["xirius"]["command"] == command
+    }
+
     fn call(&mut self, name: &str, arguments: Value) -> Value {
-        let r = self.request("tools/call", json!({"name": name, "arguments": arguments}));
+        let r = self.request("tools/call", params(name, arguments));
         assert_eq!(r["result"]["isError"], false, "{r}");
         let mut result = r["result"]["structuredContent"].clone();
         let receipt = result["receipt"]["id"].clone();
@@ -133,7 +152,7 @@ impl Client {
             for page in 0..result["pages"].as_u64().unwrap() {
                 let part = self.request(
                     "tools/call",
-                    json!({"name": "ops_get-result", "arguments": {"id": id, "page": page}}),
+                    params("ops.get-result", json!({"id": id, "page": page})),
                 );
                 text.push_str(
                     part["result"]["structuredContent"]["text"]
@@ -199,7 +218,13 @@ fn export_completion_arrives_without_status_polling() {
     let track = client.call("track_add_instrument", json!({"name": "Keys"}))["id"].clone();
     client.call("clip_add_midi", json!({"track": track, "at": 0, "bars": 1}));
     let output = client.dir.join("event.wav");
-    let reply = client.request("tools/call", json!({"name": "export_mixdown", "arguments": {"out": output, "request_key": "export-event"}}));
+    let reply = client.request(
+        "tools/call",
+        params(
+            "export_mixdown",
+            json!({"out": output, "request_key": "export-event"}),
+        ),
+    );
     let receipt = &reply["result"]["structuredContent"]["receipt"];
     assert_eq!(receipt["id"], "export-event");
     assert!(matches!(
@@ -230,18 +255,10 @@ fn export_completion_arrives_without_status_polling() {
 #[test]
 fn mcp_exports_polls_cancels_and_controls_silent_playback() {
     let mut c = Client::start("main");
-    let list = c.request("tools/list", json!({}));
-    let tools = list["result"]["tools"].as_array().unwrap();
     for name in xirius_session::commands::NAMES {
-        assert!(
-            tools.iter().any(|t| t["name"] == name.replace('.', "_")),
-            "{name}"
-        );
+        assert!(c.offers(name), "{name}");
     }
-    let mix = tools
-        .iter()
-        .find(|t| t["name"] == "export_mixdown")
-        .unwrap();
+    let mix = c.schema("export.mixdown");
     assert_eq!(
         mix["inputSchema"]["properties"]["background"]["default"],
         true
@@ -257,9 +274,7 @@ fn mcp_exports_polls_cancels_and_controls_silent_playback() {
     let out = c.dir.join("mix.wav");
     let dry = c.request(
         "tools/call",
-        json!({"name": "export_mixdown", "arguments": {
-            "out": out, "dry_run": true
-        }}),
+        params("export_mixdown", json!({"out": out, "dry_run": true})),
     );
     assert_eq!(dry["result"]["structuredContent"]["dry_run"], true);
     assert!(!out.exists());
@@ -357,15 +372,8 @@ fn cli(dir: &std::path::Path, args: &[&str]) -> Value {
 #[test]
 fn key_022_settings_commands_share_the_cli_and_mcp_and_external_reload() {
     let mut c = Client::start("settings");
-    let tools = c.request("tools/list", json!({}));
     for command in xirius_prefs::ext::NAMES {
-        assert!(
-            tools["result"]["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|t| t["name"] == command.replace('.', "_"))
-        );
+        assert!(c.offers(command), "{command}");
     }
     let changed = c.call(
         "keymap_set",
@@ -557,14 +565,7 @@ fn export_jobs_live_in_the_song_folder_and_outlast_the_server() {
 #[test]
 fn ai_013_listen_is_one_name_in_the_cli_and_mcp_and_gives_the_same_numbers() {
     let mut c = Client::start("listen");
-    let tools = c.request("tools/list", json!({}));
-    assert!(
-        tools["result"]["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|t| t["name"] == "mix_listen")
-    );
+    assert!(c.offers("mix.listen"));
     let t = sounding_track(&mut c);
     let clip = c.call("clip_add_midi", json!({"track": t, "at": 0, "bars": 2}))["id"].clone();
     c.call(
@@ -585,21 +586,13 @@ fn ai_013_listen_is_one_name_in_the_cli_and_mcp_and_gives_the_same_numbers() {
 #[test]
 fn brw_004_the_pools_commands_are_one_name_in_the_cli_and_mcp() {
     let mut c = Client::start("pool");
-    let tools = c.request("tools/list", json!({}));
     for name in [
-        "file_collect",
-        "file_locate",
-        "select_using_file",
-        "file_list",
+        "file.collect",
+        "file.locate",
+        "select.using_file",
+        "file.list",
     ] {
-        assert!(
-            tools["result"]["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|t| t["name"] == name),
-            "{name}"
-        );
+        assert!(c.offers(name), "{name}");
     }
     let take = c.dir.join("Media").join("Recordings").join("take.wav");
     std::fs::create_dir_all(take.parent().unwrap()).unwrap();
@@ -610,9 +603,6 @@ fn brw_004_the_pools_commands_are_one_name_in_the_cli_and_mcp() {
     assert_eq!(listed["files"][0]["kind"], "record");
     // Another process reading the song lists the same.
     assert_eq!(cli(&c.dir, &["file.list"]), listed);
-    let r = c.request(
-        "tools/call",
-        json!({"name": "file_collect", "arguments": {}}),
-    );
+    let r = c.request("tools/call", params("file_collect", json!({})));
     assert_eq!(r["result"]["isError"], true, "{r}");
 }

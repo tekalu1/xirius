@@ -2,6 +2,7 @@
 
 引数とコマンドの一覧は、コマンド表から生成する [commands.md](commands.md)。
 CLI の直接実行は標準出力の JSON と終了コードを返す。`request_key`・`wait_ms` は MCP の制御欄。
+MCP の tools/list はコマンドごとのツールではなく、入口 3 つ（見るだけの `run_read`・編集と保存・書き出しの `run_edit`・削除を伴う `run_destructive`）と `ops_list`・`ops_schema`・`ai_batch` だけを出す（MCP-008）。コマンドは `ops_list`（`group`・`grep` で絞る。各行の `tool` が実行に使う入口）で探し、`ops_schema` で引数を調べ、入口に `command` と `args` を渡す。`request_key`・`wait_ms`・`dry_run` は `args` の中に書く。入口は risk の違うコマンドを断り、Scope・AI の権限・画面の有無の判定は前のコマンドごとのツールと同じ。
 
 ## 版の照合
 
@@ -39,7 +40,7 @@ HTTP は起動時に返す `events_url` の SSE でもイベントを送る。MC
 長い処理の完了結果にも、元のコマンド名とハッシュが付く。
 
 大きい結果は `summary`・`result_id`・`pages` を返す。成功・失敗・承認待ちの旗と承認トークンは要約でも残す。
-MCP の `ops_get-result` に `id` と 0 始まりの `page` を渡し、各ページの `text` を順に連結して JSON として読む。ページは Unicode の文字数で 4,096 文字ずつ分ける。
+MCP の `run_read` に `command: "ops.get-result"` と、`args` の `id` と 0 始まりの `page` を渡し、各ページの `text` を順に連結して JSON として読む。ページは Unicode の文字数で 4,096 文字ずつ分ける。
 結果の保存上限は 256 件または合計 64 MiB。古い結果のページは削除され、取得時に `not_found` を返す。
 
 ## 別プロセス

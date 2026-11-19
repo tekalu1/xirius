@@ -1,12 +1,13 @@
-//! B-1 / B-2: the commands only a window answers are tools of the app's server, not of the
-//! CLI's, and the read-only hint tells the truth about the ones that change the song.
+//! B-1 / B-2 / MCP-008: the commands only a window answers run from the app's server, not
+//! from the CLI's, and neither lists them in `tools/list` (they are reached through an
+//! entrance by name). Their read-only hint tells the truth about the ones that change the song.
 
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use xirius_core::Session;
-use xirius_mcp::{Gateway, Scope, serve_on};
+use xirius_mcp::{EDIT_TOOL, Gateway, READ_TOOL, Scope, serve_on};
 
 const PROTOCOL: &str = "2025-06-18";
 
@@ -78,57 +79,106 @@ fn song() -> Arc<Mutex<Session>> {
     Arc::new(Mutex::new(Session::new("screen")))
 }
 
-const SCREEN_TOOLS: &[&str] = &[
-    "project_new",
-    "view_mixer",
-    "view_zoom_full",
-    "view_zoom_time",
-    "edit_nudge_right",
-    "loop_selection",
-    "transport_start",
-    "browser_put",
-    "tool_select",
+const SCREEN_COMMANDS: &[&str] = &[
+    "project.new",
+    "view.mixer",
+    "view.zoom.full",
+    "view.zoom.time",
+    "edit.nudge.right",
+    "loop.selection",
+    "transport.start",
+    "browser.put",
+    "tool.select",
 ];
 
-fn has(tools: &[Value], name: &str) -> bool {
-    tools.iter().any(|t| t["name"] == name)
+const LISTED: &[&str] = &[
+    "run_read",
+    "run_edit",
+    "run_destructive",
+    "ops_list",
+    "ops_schema",
+    "ai_batch",
+];
+
+fn names(tools: &[Value]) -> Vec<&str> {
+    tools.iter().map(|t| t["name"].as_str().unwrap()).collect()
+}
+
+async fn schema(c: &mut Stdio, command: &str) -> Value {
+    let r = c
+        .request(
+            "tools/call",
+            json!({"name": "ops_schema", "arguments": {"name": command}}),
+        )
+        .await;
+    r["result"]["structuredContent"].clone()
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_cli_server_leaves_out_the_screens_own_commands() {
     let mut c = Stdio::start(Gateway::new(song(), "cli", Scope::Edit)).await;
-    let tools = c.tools().await;
-    for name in SCREEN_TOOLS {
-        assert!(!has(&tools, name), "{name} is a tool of the CLI server");
+    assert_eq!(names(&c.tools().await), LISTED);
+    for name in SCREEN_COMMANDS {
+        let v = schema(&mut c, name).await;
+        assert_eq!(v["error"]["code"], "not_found", "{name}: {v}");
     }
-    assert!(has(&tools, "track_add_audio"), "the rest stays");
-    // Calling one is not a quiet success either: the tool is simply not there.
+    assert_eq!(schema(&mut c, "track.add.audio").await["ok"], true);
+    // Calling one is not a quiet success either: the command is simply not there.
+    let reply = c
+        .request(
+            "tools/call",
+            json!({"name": READ_TOOL, "arguments": {"command": "view.mixer"}}),
+        )
+        .await;
+    assert!(reply.get("result").is_none(), "{reply}");
+    assert_eq!(reply["error"]["code"], -32602, "{reply}");
+    // Nor by its old tool name.
     let reply = c
         .request("tools/call", json!({"name": "view_mixer", "arguments": {}}))
         .await;
-    assert!(reply.get("result").is_none(), "{reply}");
     assert_eq!(reply["error"]["code"], -32602, "{reply}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_app_server_offers_them_with_a_read_only_hint_that_matches() {
+async fn the_app_server_runs_them_with_a_read_only_hint_that_matches() {
     let mut c = Stdio::start(Gateway::new(song(), "app", Scope::Edit).with_screen(true)).await;
-    let tools = c.tools().await;
-    for name in SCREEN_TOOLS {
-        assert!(has(&tools, name), "{name} is missing from the app server");
+    // The list stays the same few tools: the screen adds commands, not tools.
+    assert_eq!(names(&c.tools().await), LISTED);
+    for name in SCREEN_COMMANDS {
+        let v = schema(&mut c, name).await;
+        assert_eq!(v["ok"], true, "{name}: {v}");
+        assert_eq!(v["data"]["_meta"]["xirius"]["screen_only"], true, "{name}");
     }
-    let by = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap();
-    // Placing a file and making a song change the song: never read-only.
-    for name in ["browser_put", "project_new"] {
-        assert_eq!(by(name)["annotations"]["readOnlyHint"], false, "{name}");
-        assert_eq!(by(name)["_meta"]["xirius"]["screen_only"], true, "{name}");
+    // Placing a file and making a song change the song: never read-only, and they run
+    // through the edit entrance.
+    for name in ["browser.put", "project.new"] {
+        let v = schema(&mut c, name).await;
+        assert_eq!(v["data"]["annotations"]["readOnlyHint"], false, "{name}");
+        assert_eq!(v["data"]["_meta"]["xirius"]["tool"], EDIT_TOOL, "{name}");
     }
-    for name in ["view_mixer", "tool_select"] {
-        assert_eq!(by(name)["annotations"]["readOnlyHint"], true, "{name}");
-        assert_eq!(by(name)["_meta"]["xirius"]["screen_only"], true, "{name}");
+    for name in ["view.mixer", "tool.select"] {
+        let v = schema(&mut c, name).await;
+        assert_eq!(v["data"]["annotations"]["readOnlyHint"], true, "{name}");
+        assert_eq!(v["data"]["_meta"]["xirius"]["tool"], READ_TOOL, "{name}");
     }
-    assert_eq!(
-        by("track_add_audio")["_meta"]["xirius"]["screen_only"],
-        false
-    );
+    let v = schema(&mut c, "track.add.audio").await;
+    assert_eq!(v["data"]["_meta"]["xirius"]["screen_only"], false);
+    // With a screen, the entrance reaches the command (the answer is the command's own,
+    // not a protocol error).
+    let reply = c
+        .request(
+            "tools/call",
+            json!({"name": READ_TOOL, "arguments": {"command": "view.mixer"}}),
+        )
+        .await;
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert!(reply["result"].is_object(), "{reply}");
+    // The read entrance still refuses a screen command that changes the song.
+    let reply = c
+        .request(
+            "tools/call",
+            json!({"name": READ_TOOL, "arguments": {"command": "project.new"}}),
+        )
+        .await;
+    assert_eq!(reply["error"]["code"], -32602, "{reply}");
 }

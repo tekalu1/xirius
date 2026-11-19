@@ -14,12 +14,20 @@ use xirius_mcp::background::{Background, serve_http};
 use xirius_mcp::gateway::{lock, tool_name};
 use xirius_mcp::http::{self, HttpConfig, HttpServer};
 use xirius_mcp::persist::run_and_persist;
-use xirius_mcp::{Gateway, Scope, bridge, serve_on};
+use xirius_mcp::{
+    DESTRUCTIVE_TOOL, DIRECT, EDIT_TOOL, ENTRANCES, Gateway, READ_TOOL, Scope, bridge, call_params,
+    serve_on,
+};
 
 const PROTOCOL: &str = "2025-06-18";
 
 fn shared() -> Arc<Mutex<Session>> {
     Arc::new(Mutex::new(Session::new("mcp")))
+}
+
+/// `tools/call` params for a command (or its old tool name): through its entrance.
+fn params(command: &str, args: Value) -> Value {
+    call_params(&Registry::standard(), command, args)
 }
 
 /// Tracks other than the master.
@@ -96,8 +104,14 @@ impl Stdio {
         }
     }
 
-    async fn call(&mut self, tool: &str, args: Value) -> Value {
-        self.request("tools/call", json!({"name": tool, "arguments": args}))
+    /// Runs a command through the entrance `tools/list` offers for it.
+    async fn call(&mut self, command: &str, args: Value) -> Value {
+        self.request("tools/call", params(command, args)).await
+    }
+
+    /// Calls a listed tool by its own name, as a client that skips the helper would.
+    async fn tool(&mut self, name: &str, arguments: Value) -> Value {
+        self.request("tools/call", json!({"name": name, "arguments": arguments}))
             .await
     }
 }
@@ -184,11 +198,11 @@ async fn command_protocol_mismatch_is_reported_at_initialize() {
     );
 }
 
-// ---- the tool list is the command table ---------------------------------------------------
+// ---- the tool list: entrances, and the command table behind them ----------------------------
 
-fn assert_tools_match(tools: &[Value], scope: Scope) {
-    let registry = Registry::standard();
-    let want: Vec<_> = registry
+/// The commands this scope may run from MCP without a screen.
+fn reachable(scope: Scope) -> Vec<xirius_core::command::CommandDef> {
+    Registry::standard()
         .all()
         .iter()
         .filter(|d| !d.screen_only)
@@ -196,15 +210,70 @@ fn assert_tools_match(tools: &[Value], scope: Scope) {
             Scope::Edit => d.risk != Risk::HumanOnly,
             Scope::Read => d.risk == Risk::Read,
         })
-        .collect();
-    assert_eq!(tools.len(), want.len());
+        .cloned()
+        .collect()
+}
+
+/// `tools/list` is the entrances that run something here, then the direct tools.
+fn assert_tools_match(tools: &[Value], scope: Scope) {
+    let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+    let want: Vec<&str> = match scope {
+        Scope::Edit => vec![
+            READ_TOOL,
+            EDIT_TOOL,
+            DESTRUCTIVE_TOOL,
+            "ops_list",
+            "ops_schema",
+            "ai_batch",
+        ],
+        Scope::Read => vec![READ_TOOL, "ops_list", "ops_schema"],
+    };
+    assert_eq!(names, want);
+    for t in tools {
+        let name = t["name"].as_str().unwrap();
+        if ENTRANCES.contains(&name) {
+            assert_eq!(t["inputSchema"]["required"], json!(["command"]), "{name}");
+            assert_eq!(
+                t["annotations"]["readOnlyHint"],
+                json!(name == READ_TOOL),
+                "{name}"
+            );
+            assert_eq!(
+                t["annotations"]["destructiveHint"],
+                json!(name == DESTRUCTIVE_TOOL),
+                "{name}"
+            );
+        } else {
+            let command = DIRECT
+                .iter()
+                .find(|c| tool_name(c) == name)
+                .unwrap_or_else(|| panic!("{name} is not a direct tool"));
+            let d = Registry::standard().get(command).unwrap().clone();
+            assert_eq!(t["inputSchema"], d.json_schema()["inputSchema"], "{name}");
+            assert_eq!(
+                t["annotations"]["readOnlyHint"],
+                json!(d.risk == Risk::Read)
+            );
+        }
+    }
+    // A person's answers are never a tool, and no command hides behind an entrance's name.
+    for hidden in ["ai_decide", "ai_request_accept", "ai_request_revert"] {
+        assert!(names.iter().all(|t| *t != hidden), "{hidden}");
+    }
+}
+
+/// What `ops_schema` gives for every command is that command's own schema, as its
+/// tool used to say.
+fn assert_schemas_match(schemas: &[Value], scope: Scope) {
+    let want = reachable(scope);
+    assert_eq!(schemas.len(), want.len());
     for d in want {
-        let t = tools
+        let t = schemas
             .iter()
-            .find(|t| t["name"] == tool_name(d.name))
-            .unwrap_or_else(|| panic!("{} is not a tool", d.name));
+            .find(|t| t["_meta"]["xirius"]["command"] == d.name)
+            .unwrap_or_else(|| panic!("{} has no schema", d.name));
         let schema = d.json_schema();
-        assert_eq!(t["description"], schema["description"], "{}", d.name);
+        assert_eq!(t["name"], json!(tool_name(d.name)), "{}", d.name);
         assert_eq!(t["inputSchema"], schema["inputSchema"], "{}", d.name);
         assert_eq!(
             t["annotations"]["readOnlyHint"],
@@ -218,37 +287,164 @@ fn assert_tools_match(tools: &[Value], scope: Scope) {
             "{}",
             d.name
         );
-        assert_eq!(t["_meta"]["xirius"]["command"], d.name);
         assert_eq!(t["_meta"]["xirius"]["history"], json!(d.history));
+        assert_eq!(
+            t["_meta"]["xirius"]["tool"],
+            json!(xirius_mcp::entry(d.risk)),
+            "{}",
+            d.name
+        );
     }
-    // A person's answers are never a tool.
-    for hidden in ["ai_decide", "ai_request_accept", "ai_request_revert"] {
-        assert!(tools.iter().all(|t| t["name"] != hidden), "{hidden}");
+    for hidden in ["ai.decide", "ai.request.accept", "ai.request.revert"] {
+        assert!(
+            schemas
+                .iter()
+                .all(|t| t["_meta"]["xirius"]["command"] != hidden),
+            "{hidden}"
+        );
+    }
+}
+
+#[test]
+fn no_command_takes_an_entrance_s_name() {
+    for d in Registry::standard().all() {
+        assert!(
+            !ENTRANCES.contains(&tool_name(d.name).as_str()),
+            "{}",
+            d.name
+        );
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stdio_tools_and_schemas_are_the_command_table() {
-    let mut c = Stdio::start(Gateway::new(shared(), "claude", Scope::Edit)).await;
+    let gateway = Gateway::new(shared(), "claude", Scope::Edit);
+    assert_schemas_match(&gateway.commands(), Scope::Edit);
+    let mut c = Stdio::start(gateway).await;
     let list = c.request("tools/list", json!({})).await;
     let tools = list["result"]["tools"].as_array().unwrap();
     assert_tools_match(tools, Scope::Edit);
-    assert!(tools.len() > 80, "{}", tools.len());
+
+    // One command's schema over the wire is what the table says.
+    let r = c
+        .tool("ops_schema", json!({"name": "note.transpose"}))
+        .await;
+    let one = &payload(&r)["data"];
+    let d = Registry::standard().get("note.transpose").unwrap().clone();
+    assert_eq!(one["inputSchema"], d.json_schema()["inputSchema"], "{r}");
+    assert_eq!(one["_meta"]["xirius"]["tool"], EDIT_TOOL, "{r}");
+
+    // The list is narrowed to what the AI may run here, and says where to run it.
+    let r = c.tool("ops_list", json!({"group": "ai"})).await;
+    let rows = payload(&r)["data"].as_array().unwrap().clone();
+    assert!(!rows.is_empty(), "{r}");
+    assert!(
+        rows.iter()
+            .all(|v| v["name"].as_str().unwrap().starts_with("ai."))
+    );
+    assert!(rows.iter().all(|v| v["name"] != "ai.request.accept"), "{r}");
+    let batch = rows.iter().find(|v| v["name"] == "ai.batch").unwrap();
+    assert_eq!(batch["tool"], EDIT_TOOL);
+    let r = c.tool("ops_list", json!({"grep": "mixer"})).await;
+    let rows = payload(&r)["data"].as_array().unwrap().clone();
+    assert!(rows.iter().all(|v| v["name"] != "view.mixer"), "{r}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_read_only_server_lists_and_runs_only_what_looks() {
     let song = shared();
-    let mut c = Stdio::start(Gateway::new(song.clone(), "claude", Scope::Read)).await;
+    let gateway = Gateway::new(song.clone(), "claude", Scope::Read);
+    assert_schemas_match(&gateway.commands(), Scope::Read);
+    let mut c = Stdio::start(gateway).await;
     let list = c.request("tools/list", json!({})).await;
     assert_tools_match(list["result"]["tools"].as_array().unwrap(), Scope::Read);
 
-    // An edit is not a tool at all: a protocol error, and nothing changed.
+    // An edit is not reachable at all: a protocol error, and nothing changed,
+    // whichever door it knocks on.
     let r = c.call("track_add_audio", json!({"name": "Vox"})).await;
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+    let r = c
+        .tool(
+            READ_TOOL,
+            json!({"command": "track.add.audio", "args": {"name": "Vox"}}),
+        )
+        .await;
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+    let r = c.tool("track_add_audio", json!({"name": "Vox"})).await;
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+    let r = c.tool("ai_batch", json!({"steps": []})).await;
     assert_eq!(r["error"]["code"], -32602, "{r}");
     assert_eq!(tracks(&song), 0);
     let r = c.call("track_list", json!({})).await;
     assert_eq!(r["result"]["isError"], false, "{r}");
+    let r = c
+        .tool("ops_schema", json!({"name": "track.add.audio"}))
+        .await;
+    assert_eq!(payload(&r)["error"]["code"], "not_found", "{r}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_entrance_runs_only_its_own_kind() {
+    let song = shared();
+    let mut c = Stdio::start(Gateway::new(song.clone(), "claude", Scope::Edit)).await;
+    let add = json!({"command": "track.add.audio", "args": {"name": "Vox"}});
+
+    // A write through the read entrance, or through the destructive one: refused, nothing changed.
+    for wrong in [READ_TOOL, DESTRUCTIVE_TOOL] {
+        let r = c.tool(wrong, add.clone()).await;
+        assert_eq!(r["error"]["code"], -32602, "{r}");
+        assert!(
+            r["error"]["message"].as_str().unwrap().contains(EDIT_TOOL),
+            "{r}"
+        );
+    }
+    assert_eq!(tracks(&song), 0);
+    let r = c.tool(EDIT_TOOL, add).await;
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    let id = payload(&r)["data"]["id"].clone();
+    assert_eq!(tracks(&song), 1);
+
+    // A delete through the edit entrance: refused.
+    let delete = json!({"command": "track.delete", "args": {"ids": [id]}});
+    let r = c.tool(EDIT_TOOL, delete.clone()).await;
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+    assert_eq!(tracks(&song), 1);
+
+    // A read through the edit entrance: refused too, so an approval never covers a wider kind.
+    let r = c.tool(EDIT_TOOL, json!({"command": "track.list"})).await;
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+    // The job commands, answered without the song, keep to the read entrance as well.
+    for wrong in [EDIT_TOOL, DESTRUCTIVE_TOOL] {
+        let r = c.tool(wrong, json!({"command": "job.cancel"})).await;
+        assert_eq!(r["error"]["code"], -32602, "{r}");
+    }
+    let r = c.tool(READ_TOOL, json!({"command": "job.list"})).await;
+    assert_eq!(r["result"]["isError"], false, "{r}");
+
+    // A person's answer has no entrance; an unknown name, a stray key or a non-object args neither.
+    for (tool, arguments) in [
+        (
+            EDIT_TOOL,
+            json!({"command": "ai.request.accept", "args": {}}),
+        ),
+        (READ_TOOL, json!({"command": "ai.decide", "args": {}})),
+        (EDIT_TOOL, json!({"command": "no.such.command"})),
+        (
+            EDIT_TOOL,
+            json!({"command": "track.add.audio", "name": "x"}),
+        ),
+        (
+            EDIT_TOOL,
+            json!({"command": "track.add.audio", "args": "x"}),
+        ),
+        (EDIT_TOOL, json!({"args": {}})),
+        ("ai_request_accept", json!({})),
+        ("track_list", json!({})),
+    ] {
+        let r = c.tool(tool, arguments.clone()).await;
+        assert_eq!(r["error"]["code"], -32602, "{tool} {arguments} {r}");
+    }
+    assert_eq!(tracks(&song), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -577,12 +773,12 @@ impl Http {
         (status, v)
     }
 
-    async fn call(&self, tool: &str, args: Value) -> Value {
+    async fn call(&self, command: &str, args: Value) -> Value {
         let (status, v) = self
             .rpc(
                 Some(&self.server.token),
                 "tools/call",
-                json!({"name": tool, "arguments": args}),
+                params(command, args),
             )
             .await;
         assert_eq!(status, 200, "{v}");
@@ -633,7 +829,7 @@ async fn http_lists_the_same_tools_and_changes_the_song_undoably() {
 async fn http_without_the_token_or_with_a_wrong_one_is_refused() {
     let song = shared();
     let h = Http::start(Gateway::new(song.clone(), "claude", Scope::Edit)).await;
-    let call = json!({"name": "track_add_audio", "arguments": {"name": "No"}});
+    let call = params("track_add_audio", json!({"name": "No"}));
 
     let (status, _) = h.rpc(None, "tools/call", call.clone()).await;
     assert_eq!(status, 401);
@@ -960,9 +1156,9 @@ async fn each_permission_level_answers_the_ai_with_its_reason() {
 
 // ---- a song the app owns, reached through a bridge --------------------------------------------------
 
-async fn call_over_http(server: &Background, tool: &str, args: Value) -> Value {
+async fn call_over_http(server: &Background, command: &str, args: Value) -> Value {
     let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                      "params": {"name": tool, "arguments": args}});
+                      "params": params(command, args)});
     let headers = vec![
         ("Accept", "application/json, text/event-stream".to_string()),
         ("Authorization", format!("Bearer {}", server.token)),

@@ -3,7 +3,7 @@
 この文書は `xirius --commands-doc docs/commands.md` でコマンド表から生成します。
 検査は `xirius --commands-doc --check docs/commands.md`。
 
-CLI は `xirius --song <曲のフォルダー> <コマンド> --json`。MCP のツール名は `.` を `_` に置き換えます。
+CLI は `xirius --song <曲のフォルダー> <コマンド> --json`。MCP では、見るだけのコマンドは `run_read`、編集と保存・書き出しは `run_edit`、削除を伴うものは `run_destructive` に、`command`（この名前）と `args` を渡します。探すのは `ops_list`、引数は `ops_schema` です。
 結果は `ok`、`command`、`message`、`data`、`changes`、`dry_run`。失敗は `ok: false` と型付きの `error`。編集結果の `data.state_hash` は変更前後の状態を示します。
 MCP の編集には受領証が付き、完了はイベントでも届きます。大きい結果は要約と `ops.get-result` のページで取得します。
 
@@ -4460,7 +4460,7 @@ MIDI 学習
 
 コマンドの一覧
 
-使用できるコマンドを一覧表示します（--grep で名前と説明を絞り込み）
+使用できるコマンドを一覧表示します（--group で群を、--grep で名前と説明を絞り込み）
 
 事前条件: AI の権限が読み取り以上。指定した ID が存在し、引数が次の型・範囲に一致すること。
 
@@ -4469,6 +4469,7 @@ MIDI 学習
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
 | `grep` | — | `{"type":"string"}` | この語句を含むものだけ |
+| `group` | — | `{"type":"string"}` | この群（名前の最初の . より前。例: note・track）のものだけ |
 
 ## `ops.receipt`
 
@@ -4488,7 +4489,7 @@ MIDI 学習
 
 コマンドの引数
 
-コマンドの引数の JSON Schema を表示します（MCP の tools/list と同じ形式）
+コマンドの引数の JSON Schema を表示します（MCP では入口の args に渡す形）
 
 事前条件: AI の権限が読み取り以上。指定した ID が存在し、引数が次の型・範囲に一致すること。
 

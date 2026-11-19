@@ -4,7 +4,7 @@ use std::fmt::Write;
 
 pub fn markdown(registry: &Registry) -> String {
     let mut out = String::from(
-        "# コマンド一覧\n\nこの文書は `xirius --commands-doc docs/commands.md` でコマンド表から生成します。\n検査は `xirius --commands-doc --check docs/commands.md`。\n\nCLI は `xirius --song <曲のフォルダー> <コマンド> --json`。MCP のツール名は `.` を `_` に置き換えます。\n結果は `ok`、`command`、`message`、`data`、`changes`、`dry_run`。失敗は `ok: false` と型付きの `error`。編集結果の `data.state_hash` は変更前後の状態を示します。\nMCP の編集には受領証が付き、完了はイベントでも届きます。大きい結果は要約と `ops.get-result` のページで取得します。\n\n",
+        "# コマンド一覧\n\nこの文書は `xirius --commands-doc docs/commands.md` でコマンド表から生成します。\n検査は `xirius --commands-doc --check docs/commands.md`。\n\nCLI は `xirius --song <曲のフォルダー> <コマンド> --json`。MCP では、見るだけのコマンドは `run_read`、編集と保存・書き出しは `run_edit`、削除を伴うものは `run_destructive` に、`command`（この名前）と `args` を渡します。探すのは `ops_list`、引数は `ops_schema` です。\n結果は `ok`、`command`、`message`、`data`、`changes`、`dry_run`。失敗は `ok: false` と型付きの `error`。編集結果の `data.state_hash` は変更前後の状態を示します。\nMCP の編集には受領証が付き、完了はイベントでも届きます。大きい結果は要約と `ops.get-result` のページで取得します。\n\n",
     );
     let mut defs: Vec<_> = registry.all().iter().collect();
     defs.sort_by_key(|def| def.name);

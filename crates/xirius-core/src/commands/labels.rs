@@ -697,6 +697,7 @@ pub fn argument(name: &str) -> &str {
         "answer" => "回答",
         "token" => "承認",
         "query" | "grep" => "検索",
+        "group" => "群",
         "automation" => "オートメーション",
         "timing" | "ticks" => "タイミング",
         "arm" => "録音準備",

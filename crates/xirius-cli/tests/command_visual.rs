@@ -15,7 +15,7 @@ fn complete_registry_keys_and_mcp_metadata_share_the_command_names() {
     }
     let session = Session::with_registry(Project::new("metadata"), Arc::new(registry.clone()));
     let gateway = Gateway::new(Arc::new(Mutex::new(session)), "test", Scope::Edit).with_save(false);
-    let tools = gateway.tools();
+    let tools = gateway.commands();
     for def in registry
         .all()
         .iter()

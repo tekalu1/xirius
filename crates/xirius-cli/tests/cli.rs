@@ -8,6 +8,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use serde_json::{Value, json};
 
+/// `tools/call` params for a command (or its old tool name): through its MCP entrance.
+fn call(id: u64, command: &str, args: Value) -> Value {
+    let params = xirius_mcp::call_params(&xirius_session::commands::registry(), command, args);
+    json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params})
+}
+
 static NEXT: AtomicU32 = AtomicU32::new(0);
 
 /// A song folder in the system temp dir, removed afterwards.
@@ -485,41 +491,69 @@ fn mcp_lists_the_registry_and_runs_a_tool() {
                              "clientInfo":{"name":"t","version":"0"}}}),
             json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
             json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
-            json!({"jsonrpc":"2.0","id":3,"method":"tools/call",
-                   "params":{"name":"track_add_audio","arguments":{"name":"Via MCP"}}}),
-            json!({"jsonrpc":"2.0","id":4,"method":"tools/call",
-                   "params":{"name":"track_add_audio","arguments":{"name":"Dry","dry_run":true}}}),
-            json!({"jsonrpc":"2.0","id":5,"method":"tools/call",
-                   "params":{"name":"track_delete","arguments":{"ids":"trk_999"}}}),
-            json!({"jsonrpc":"2.0","id":6,"method":"tools/call",
-                   "params":{"name":"project_save","arguments":{}}}),
+            call(3, "track.add.audio", json!({"name":"Via MCP"})),
+            call(4, "track.add.audio", json!({"name":"Dry","dry_run":true})),
+            call(5, "track.delete", json!({"ids":"trk_999"})),
+            call(6, "project.save", json!({})),
+            call(7, "ops.list", json!({"group":"folder"})),
+            call(8, "ops.schema", json!({"name":"note.quantize"})),
+            call(9, "ops.schema", json!({"name":"ai.request.accept"})),
         ],
     );
-    // The notification gets no reply: ids 1..6 only. Calls run side by side,
+    // The notification gets no reply: ids 1..9 only. Calls run side by side,
     // so the replies are matched by id, not by position.
-    assert_eq!(replies.len(), 6);
+    assert_eq!(replies.len(), 9);
     let by_id = |id: u64| replies.iter().find(|r| r["id"] == id).unwrap();
     assert_eq!(by_id(1)["result"]["serverInfo"]["name"], "xirius");
     assert!(by_id(1)["result"]["capabilities"]["tools"].is_object());
 
-    let tools = by_id(2)["result"]["tools"].as_array().unwrap();
+    // MCP-008: the list is the entrances and a few direct tools, not one tool per command.
+    let tools: Vec<&str> = by_id(2)["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        tools,
+        [
+            "run_read",
+            "run_edit",
+            "run_destructive",
+            "ops_list",
+            "ops_schema",
+            "ai_batch"
+        ]
+    );
     let registry: Value = {
-        let out = xirius(&["ops", "list", "--json"]);
+        let out = xirius(&["ops", "list", "--group", "folder", "--json"]);
         serde_json::from_slice(&out.stdout).unwrap()
     };
-    // CLI and MCP expose the same table, except for human-only commands.
-    let reachable = registry["data"]
+    // CLI and MCP list the same table, except for human-only and screen commands.
+    let reachable: Vec<&Value> = registry["data"]
         .as_array()
         .unwrap()
         .iter()
         .filter(|c| c["risk"] != "human_only" && c["screen_only"] != true)
-        .count();
-    assert_eq!(tools.len(), reachable);
-    assert!(tools.iter().all(|t| t["name"] != "ai_request_accept"));
-    assert!(tools.iter().any(|t| t["name"] == "folder_bus_add"));
-    let t = tools.iter().find(|t| t["name"] == "note_quantize").unwrap();
+        .map(|c| &c["name"])
+        .collect();
+    let rows = by_id(7)["result"]["structuredContent"]["data"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        rows.iter().map(|r| &r["name"]).collect::<Vec<_>>(),
+        reachable
+    );
+    let bus = rows.iter().find(|r| r["name"] == "folder.bus.add").unwrap();
+    assert_eq!(bus["tool"], "run_edit");
+    let t = &by_id(8)["result"]["structuredContent"]["data"];
     assert_eq!(t["inputSchema"]["type"], "object");
     assert!(t["description"].as_str().unwrap().len() > 3);
+    assert_eq!(
+        by_id(9)["result"]["structuredContent"]["error"]["code"],
+        "not_found"
+    );
 
     assert_eq!(by_id(3)["result"]["isError"], false);
     assert_eq!(by_id(3)["result"]["structuredContent"]["step"], 1);
@@ -555,8 +589,8 @@ fn cli_and_mcp_create_silent_empty_instruments_and_drum_pads() {
             let s = Song::new();
             let t = if mcp {
                 let (name, arguments) = match instrument {
-                    None => ("track_add_instrument", json!({})),
-                    Some(name) => ("track_add_with-instrument", json!({"instrument": name})),
+                    None => ("track.add.instrument", json!({})),
+                    Some(name) => ("track.add.with-instrument", json!({"instrument": name})),
                 };
                 let replies = mcp_exchange(
                     &s.dir,
@@ -565,7 +599,7 @@ fn cli_and_mcp_create_silent_empty_instruments_and_drum_pads() {
                         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
                         "protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}),
                         json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
-                        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":arguments}}),
+                        call(2, name, arguments),
                     ],
                 );
                 let reply = replies.iter().find(|r| r["id"] == 2).unwrap();
@@ -644,14 +678,21 @@ fn mcp_reports_protocol_mistakes() {
             json!({"jsonrpc":"2.0","id":4,"method":"tools/call",
                    "params":{"name":"ai_request_accept"}}),
             json!({"jsonrpc":"2.0","id":5,"method":"ping"}),
+            json!({"jsonrpc":"2.0","id":6,"method":"tools/call",
+                   "params":{"name":"run_edit","arguments":{"command":"ai.request.accept"}}}),
+            json!({"jsonrpc":"2.0","id":7,"method":"tools/call",
+                   "params":{"name":"run_read","arguments":{"command":"x.y"}}}),
         ],
     );
     let by_id = |id: u64| replies.iter().find(|r| r["id"] == id).unwrap();
     assert_eq!(by_id(2)["error"]["code"], -32601);
-    // A tool that does not exist, and one a person alone may run, look the same.
+    // A tool that does not exist, and one a person alone may run, look the same,
+    // by a tool name or through an entrance.
     assert_eq!(by_id(3)["error"]["code"], -32602);
     assert_eq!(by_id(4)["error"]["code"], -32602);
     assert_eq!(by_id(5)["result"], json!({}));
+    assert_eq!(by_id(6)["error"]["code"], -32602);
+    assert_eq!(by_id(7)["error"]["code"], -32602);
 }
 
 #[test]

@@ -1,5 +1,6 @@
 //! The MCP side: an rmcp `ServerHandler` over the [`Gateway`]. It holds no
-//! logic of its own; the tool list and every call come from the command table.
+//! logic of its own; the tool list and every call come from the gateway, which
+//! takes them from the command table.
 
 use rmcp::ServerHandler;
 use rmcp::model::{
@@ -12,10 +13,12 @@ use crate::gateway::Gateway;
 
 type McpError = rmcp::ErrorData;
 
-const INSTRUCTIONS: &str = "Xirius の曲を操作します。ツールは登録されたコマンドと 1 対 1 で対応します。\
+const INSTRUCTIONS: &str = "Xirius の曲を操作します。操作はすべてコマンド（例: note.transpose）で、\
+ops_list（group か grep で絞る）で探し、ops_schema の name に渡して引数を調べます。\
+実行は、ops_list の各行の tool が示す入口に command と args を渡します。見るだけは run_read、編集・保存・書き出しは run_edit、削除を伴うものは run_destructive です。\
 dry_run を true にすると、曲は変更せず変更内容だけを返します。\
 削除と保存はユーザーの承認を待ちます（結果に confirmation_required と decision が付きます）。\
-複数の編集を 1 つの操作にまとめるには ai_batch を、作業コピーで試すには ai_request_begin から始めてください。";
+複数の編集を 1 つの操作にまとめるには ai_batch を、作業コピーで試すには run_edit で ai.request.begin から始めてください。";
 
 #[derive(Clone)]
 pub struct XiriusServer {
@@ -46,6 +49,10 @@ impl XiriusServer {
     /// server has a window (and a new address every launch), the CLI's has one song.
     fn instructions(&self) -> String {
         let mut text = INSTRUCTIONS.to_string();
+        text.push_str(&format!(
+            "コマンドの group は {} です。",
+            self.gateway.groups().join("・")
+        ));
         text.push_str("曲は画面で開きます。");
         if self.gateway.has_screen() {
             text.push_str(
@@ -95,9 +102,12 @@ impl ServerHandler for XiriusServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let mut raw = request.arguments.unwrap_or_default();
+        let (command, mut raw) = self
+            .gateway
+            .resolve(&request.name, request.arguments.unwrap_or_default())
+            .map_err(|e| McpError::invalid_params(e.0, None))?;
         let mut notifications = None;
-        if self.gateway.receipted(&request.name) {
+        if self.gateway.receipted(command) {
             let id = raw
                 .entry("request_key")
                 .or_insert(serde_json::json!(crate::http::new_token().map_err(
@@ -107,13 +117,12 @@ impl ServerHandler for XiriusServer {
             notifications = id.as_str().map(|id| (id.to_owned(), self.gateway.events()));
         }
         let gateway = self.gateway.clone();
-        let (value, is_error) =
-            tokio::task::spawn_blocking(move || gateway.call(&request.name, &raw))
-                .await
-                .map_err(|e| {
-                    McpError::internal_error(format!("コマンドの実行に失敗しました: {e}"), None)
-                })?
-                .map_err(|e| McpError::invalid_params(e.0, None))?;
+        let (value, is_error) = tokio::task::spawn_blocking(move || gateway.call(command, &raw))
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("コマンドの実行に失敗しました: {e}"), None)
+            })?
+            .map_err(|e| McpError::invalid_params(e.0, None))?;
         if let Some((id, mut events)) = notifications
             && value.get("receipt").is_some()
         {

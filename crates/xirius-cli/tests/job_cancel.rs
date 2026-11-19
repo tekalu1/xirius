@@ -11,6 +11,11 @@ use serde_json::{Value, json};
 use xirius_core::Project;
 use xirius_core::session::{RunOptions, Session};
 
+/// `tools/call` params for a command (or its old tool name): through its MCP entrance.
+fn params(command: &str, args: Value) -> Value {
+    xirius_mcp::call_params(&xirius_session::commands::registry(), command, args)
+}
+
 /// 400 bars at 120 BPM: long enough to be stopped while it renders.
 const LONG: i64 = 3840 * 400;
 
@@ -202,7 +207,7 @@ impl Mcp {
     }
 
     fn call(&mut self, tool: &str, arguments: Value) -> Value {
-        let r = self.request("tools/call", json!({"name": tool, "arguments": arguments}));
+        let r = self.request("tools/call", params(tool, arguments));
         r["result"]["structuredContent"].clone()
     }
 

@@ -1,7 +1,12 @@
-//! The one place that turns a tool call into a command run. The tool list is
-//! generated from the command table (single definition): a command added to
-//! the core is a tool here with no change. Both transports and the admin
-//! endpoint go through it.
+//! The one place that turns a tool call into a command run. The commands come
+//! from the command table (single definition): a command added to the core is
+//! reachable here with no change. Both transports and the admin endpoint go
+//! through it.
+//!
+//! MCP lists a few tools, not one per command (MCP-008): three entrances that run a
+//! command by name, split by what an MCP client may ask a person before ([`entry`]), and
+//! the commands every session uses ([`DIRECT`]). Which commands an AI may run through them
+//! is decided in one place ([`Gateway::offered`]), as it was when every command was a tool.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -40,6 +45,91 @@ pub const ADMIN_COMMANDS: &[&str] = &[
 /// `note.transpose` → `note_transpose` (some clients reject dots).
 pub fn tool_name(command: &str) -> String {
     command.replace('.', "_")
+}
+
+/// The entrance for the commands that only look (`Risk::Read`): `readOnlyHint`.
+pub const READ_TOOL: &str = "run_read";
+/// The entrance for edits (`Risk::Write`) and for saving and writing files (`Risk::Guarded`):
+/// neither read-only nor destructive, as their own tools said.
+pub const EDIT_TOOL: &str = "run_edit";
+/// The entrance for edits that remove something (`Risk::Destructive`): `destructiveHint`.
+pub const DESTRUCTIVE_TOOL: &str = "run_destructive";
+/// The three entrances, in the order `tools/list` gives them.
+pub const ENTRANCES: [&str; 3] = [READ_TOOL, EDIT_TOOL, DESTRUCTIVE_TOOL];
+
+/// Commands that stay tools of their own: the two that find a command and its arguments,
+/// and the one that runs several edits as one step. Everything else goes through [`entry`].
+pub const DIRECT: &[&str] = &["ops.list", "ops.schema", "ai.batch"];
+
+/// The entrance that runs a command of `risk`. A command has exactly one, so the hints an
+/// MCP client asks a person by never say less than the command does. Human-only commands
+/// have none.
+pub fn entry(risk: Risk) -> Option<&'static str> {
+    match risk {
+        Risk::Read => Some(READ_TOOL),
+        Risk::Write | Risk::Guarded => Some(EDIT_TOOL),
+        Risk::Destructive => Some(DESTRUCTIVE_TOOL),
+        Risk::HumanOnly => None,
+    }
+}
+
+/// The `tools/call` params that run `command` (a command name, or its tool name) with `args`:
+/// the command's own tool when it is one of [`DIRECT`], else its entrance with `command` and
+/// `args`. A name the table does not know, or a human-only command, is sent as a tool name of
+/// its own, which the server refuses as before.
+pub fn call_params(registry: &Registry, command: &str, args: Value) -> Value {
+    let def = registry
+        .all()
+        .iter()
+        .find(|d| d.name == command || tool_name(d.name) == command);
+    match def {
+        Some(d) if DIRECT.contains(&d.name) => {
+            json!({"name": tool_name(d.name), "arguments": args})
+        }
+        Some(d) if entry(d.risk).is_some() => json!({
+            "name": entry(d.risk),
+            "arguments": {"command": d.name, "args": args},
+        }),
+        _ => json!({"name": tool_name(command), "arguments": args}),
+    }
+}
+
+/// What an entrance says about itself in `tools/list`.
+fn entry_tool(name: &'static str) -> Value {
+    let (description, read_only, destructive) = match name {
+        READ_TOOL => (
+            "見るだけのコマンド（risk が read）を名前で実行します。一覧・状態・選択・表示の切り替え・job.list などです。\
+             コマンドは ops_list で、引数は ops_schema で調べます",
+            true,
+            false,
+        ),
+        EDIT_TOOL => (
+            "曲を編集するコマンド（risk が write）と、保存・ファイルの書き出し（risk が guarded。保存の許可が必要です）を名前で実行します。\
+             args には dry_run・request_key・wait_ms も渡せます。コマンドは ops_list で、引数は ops_schema で調べます",
+            false,
+            false,
+        ),
+        _ => (
+            "削除を伴うコマンド（risk が destructive）を名前で実行します。ユーザーの承認を待つことがあります（結果に confirmation_required と decision が付きます）。\
+             args には dry_run・request_key・wait_ms も渡せます。コマンドは ops_list で、引数は ops_schema で調べます",
+            false,
+            true,
+        ),
+    };
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "コマンド名（例: note.transpose。note_transpose とも書けます）"},
+                "args": {"type": "object", "description": "コマンドの引数（ops_schema の inputSchema のとおり）。省略時は引数なし"},
+            },
+            "required": ["command"],
+            "additionalProperties": false,
+        },
+        "annotations": {"readOnlyHint": read_only, "destructiveHint": destructive},
+    })
 }
 
 /// `job.list` and `job.cancel` (EXP-047), which the gateway answers without reaching the song:
@@ -152,45 +242,53 @@ impl Gateway {
         self.reachable(def.risk) && (!def.screen_only || self.screen)
     }
 
-    /// The tools, one per reachable command: the command's JSON Schema with
-    /// the tool name and the command name added.
-    pub fn tools(&self) -> Vec<Value> {
+    /// Every command the AI may run from here, with the schema its arguments follow: the
+    /// command's JSON Schema with the tool name, the command name and the entrance that runs
+    /// it added. `ops.schema` answers with these over MCP.
+    pub fn commands(&self) -> Vec<Value> {
         self.registry(|r| {
             r.all()
                 .iter()
                 .filter(|d| self.offered(d))
-                .map(|d| {
-                    let mut v = d.json_schema();
-                    if d.risk != Risk::Read {
-                        v["inputSchema"]["properties"]["request_key"] = json!({"type": "string", "description": "再送時にも同じ操作キーを使います"});
-                        v["inputSchema"]["properties"]["wait_ms"] = json!({"type": "integer", "minimum": 0, "maximum": 30000, "description": "結果を待つ時間。0 は受付後すぐに返します"});
-                    }
-                    if d.args.iter().any(|a| a.name == "background") {
-                        let background = &mut v["inputSchema"]["properties"]["background"];
-                        background["default"] = json!(true);
-                        background["description"] = json!(
-                            "バックグラウンドで始め、すぐに job の id を返します（進行状況は export.status）。省略時は背景で始めます。false を渡すと終わるまで待ちます"
-                        );
-                    }
-                    if let Value::Object(m) = &mut v {
-                        m.insert("name".into(), json!(tool_name(d.name)));
-                        let x = m
-                            .get("annotations")
-                            .and_then(|a| a.get("xirius"))
-                            .cloned()
-                            .unwrap_or(Value::Null);
-                        let mut x = x.as_object().cloned().unwrap_or_default();
-                        x.insert("command".into(), json!(d.name));
-                        // The part of the schema clients read lives in `annotations`;
-                        // ours goes under `_meta`.
-                        m.insert("_meta".into(), json!({"xirius": x}));
-                        if let Some(a) = m.get_mut("annotations").and_then(Value::as_object_mut) {
-                            a.remove("xirius");
-                        }
-                    }
-                    v
-                })
+                .map(command_schema)
                 .collect()
+        })
+    }
+
+    /// What `tools/list` returns: the entrances that run at least one command from here, then
+    /// [`DIRECT`]. Never the screen's own commands (MCP-001): with a window they are run
+    /// through an entrance by name.
+    pub fn tools(&self) -> Vec<Value> {
+        self.registry(|r| {
+            let offered: Vec<_> = r.all().iter().filter(|d| self.offered(d)).collect();
+            let mut tools: Vec<Value> = ENTRANCES
+                .into_iter()
+                .filter(|name| offered.iter().any(|d| entry(d.risk) == Some(*name)))
+                .map(entry_tool)
+                .collect();
+            for name in DIRECT {
+                let Some(d) = offered.iter().find(|d| d.name == *name && !d.screen_only) else {
+                    continue;
+                };
+                let mut v = command_schema(d);
+                if d.name == "ops.list" {
+                    v["description"] = json!(format!(
+                        "{}。group（{}）か grep で絞ってください。各行の tool が実行に使うツールです",
+                        d.summary,
+                        groups(&offered).join("・")
+                    ));
+                }
+                tools.push(v);
+            }
+            tools
+        })
+    }
+
+    /// The groups of the commands the AI may run from here (`note` for `note.quantize`).
+    pub fn groups(&self) -> Vec<String> {
+        self.registry(|r| {
+            let offered: Vec<_> = r.all().iter().filter(|d| self.offered(d)).collect();
+            groups(&offered)
         })
     }
 
@@ -201,6 +299,116 @@ impl Gateway {
                 .find(|d| (d.name == tool || tool_name(d.name) == tool) && self.offered(d))
                 .map(|d| d.name)
         })
+    }
+
+    /// Turns a call of a listed tool into the command it runs and that command's arguments.
+    /// An entrance runs only the commands of its own kind ([`entry`]); a command the AI may
+    /// not reach from here, or that does not exist, is the same "not found" as before.
+    pub fn resolve(
+        &self,
+        tool: &str,
+        raw: Map<String, Value>,
+    ) -> Result<(&'static str, Map<String, Value>), CallError> {
+        if !ENTRANCES.contains(&tool) {
+            let direct = DIRECT
+                .iter()
+                .find(|c| **c == tool || tool_name(c) == tool)
+                .and_then(|c| self.command_of(c));
+            return match direct {
+                Some(command) => Ok((command, raw)),
+                None => Err(CallError(format!("ツール `{tool}` が見つかりません"))),
+            };
+        }
+        if let Some(key) = raw.keys().find(|k| *k != "command" && *k != "args") {
+            return Err(CallError(format!(
+                "{tool} の引数は command と args です（`{key}` はコマンドの引数として args に入れてください）"
+            )));
+        }
+        let Some(name) = raw.get("command").and_then(Value::as_str) else {
+            return Err(CallError(format!(
+                "{tool} には command にコマンド名を渡してください"
+            )));
+        };
+        let args = match raw.get("args") {
+            None | Some(Value::Null) => Map::new(),
+            Some(Value::Object(args)) => args.clone(),
+            Some(_) => {
+                return Err(CallError(format!(
+                    "{tool} の args はオブジェクトで渡してください"
+                )));
+            }
+        };
+        if let Some(job) = job_command(name) {
+            // Answered without the registry, which waits for the song a running bounce holds
+            // (EXP-047). Both are read commands, reachable in every scope and without a screen.
+            return match tool {
+                READ_TOOL => Ok((job, args)),
+                _ => Err(CallError(format!(
+                    "{job} は {tool} では実行できません。{READ_TOOL} を使ってください"
+                ))),
+            };
+        }
+        let Some(command) = self.command_of(name) else {
+            return Err(CallError(format!("コマンド `{name}` が見つかりません")));
+        };
+        let right = self.registry(|r| r.get(command).and_then(|d| entry(d.risk)));
+        if right != Some(tool) {
+            return Err(CallError(format!(
+                "{command} は {tool} では実行できません。{} を使ってください",
+                right.unwrap_or("（なし）")
+            )));
+        }
+        Ok((command, args))
+    }
+
+    /// `ops.list` and `ops.schema` over MCP say only what this connection may run, and which
+    /// tool runs it.
+    fn narrow(&self, command: &str, mut value: Value) -> Value {
+        if value["ok"] != true {
+            return value;
+        }
+        let data = value["data"].take();
+        let narrowed = self.registry(|r| {
+            let offered = |name: &str| r.get(name).filter(|d| self.offered(d));
+            match (command, data) {
+                ("ops.list", Value::Array(rows)) => {
+                    let rows: Vec<Value> = rows
+                        .into_iter()
+                        .filter_map(|mut v| {
+                            let d = offered(v["name"].as_str()?)?;
+                            v["tool"] = json!(entry(d.risk));
+                            Some(v)
+                        })
+                        .collect();
+                    Ok((format!("コマンド {} 件", rows.len()), Value::Array(rows)))
+                }
+                ("ops.schema", Value::Array(rows)) => {
+                    let rows: Vec<Value> = rows
+                        .into_iter()
+                        .filter_map(|v| offered(v["name"].as_str()?).map(command_schema))
+                        .collect();
+                    Ok((format!("Schema {} 件", rows.len()), Value::Array(rows)))
+                }
+                ("ops.schema", one) => {
+                    let name = one["name"].as_str().unwrap_or_default();
+                    match offered(name) {
+                        Some(d) => Ok((format!("{} の Schema", d.name), command_schema(d))),
+                        None => Err(CmdError::not_found(format!(
+                            "コマンド {name} が見つかりません"
+                        ))),
+                    }
+                }
+                (_, data) => Ok((value["message"].as_str().unwrap_or("").to_string(), data)),
+            }
+        });
+        match narrowed {
+            Ok((message, data)) => {
+                value["message"] = json!(message);
+                value["data"] = data;
+                value
+            }
+            Err(e) => error_json(&e),
+        }
     }
 
     /// Whether the tool's command takes an argument called `arg`.
@@ -285,6 +493,10 @@ impl Gateway {
         let changes = self.registry(|r| r.get(command).unwrap().risk != Risk::Read);
         if !changes {
             let (value, error) = self.run(command, &raw, &opts);
+            let value = match command {
+                "ops.list" | "ops.schema" => self.narrow(command, value),
+                _ => value,
+            };
             let id = crate::http::new_token().map_err(|e| CallError(e.to_string()))?;
             let value = self.results.store(&id, value);
             let failed = error || value["ok"] == false;
@@ -483,6 +695,41 @@ impl Gateway {
             Err(e) => (error_json(&e), true),
         }
     }
+}
+
+/// A command's schema as the AI reads it over MCP: the tool name, the command name and the
+/// entrance that runs it under `_meta.xirius`, and a background that starts by default.
+fn command_schema(d: &xirius_core::CommandDef) -> Value {
+    let mut v = d.json_schema();
+    if d.args.iter().any(|a| a.name == "background") {
+        let background = &mut v["inputSchema"]["properties"]["background"];
+        background["default"] = json!(true);
+        background["description"] = json!(
+            "バックグラウンドで始め、すぐに job の id を返します（進行状況は export.status）。省略時は背景で始めます。false を渡すと終わるまで待ちます"
+        );
+    }
+    if let Value::Object(m) = &mut v {
+        m.insert("name".into(), json!(tool_name(d.name)));
+        let x = m
+            .get("annotations")
+            .and_then(|a| a.get("xirius"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let mut x = x.as_object().cloned().unwrap_or_default();
+        x.insert("command".into(), json!(d.name));
+        x.insert("tool".into(), json!(entry(d.risk)));
+        // The part of the schema clients read lives in `annotations`; ours goes under `_meta`.
+        m.insert("_meta".into(), json!({"xirius": x}));
+        if let Some(a) = m.get_mut("annotations").and_then(Value::as_object_mut) {
+            a.remove("xirius");
+        }
+    }
+    v
+}
+
+fn groups(defs: &[&xirius_core::CommandDef]) -> Vec<String> {
+    let set: std::collections::BTreeSet<&str> = defs.iter().map(|d| d.target()).collect();
+    set.into_iter().map(str::to_string).collect()
 }
 
 pub fn error_json(e: &CmdError) -> Value {

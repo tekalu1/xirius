@@ -583,12 +583,20 @@ fn reading() -> Vec<CommandDef> {
         ),
         read(
             "ops.list",
-            "使用できるコマンドを一覧表示します（--grep で名前と説明を絞り込み）",
-            vec![ArgDef::text("grep", "この語句を含むものだけ")],
+            "使用できるコマンドを一覧表示します（--group で群を、--grep で名前と説明を絞り込み）",
+            vec![
+                ArgDef::text("grep", "この語句を含むものだけ"),
+                ArgDef::text(
+                    "group",
+                    "この群（名前の最初の . より前。例: note・track）のものだけ",
+                ),
+            ],
             |_, _, reg, a| {
+                let group = a.opt_str("group");
                 let rows: Vec<Value> = reg
                     .find(a.opt_str("grep"))
                     .into_iter()
+                    .filter(|d| group.is_none_or(|g| d.target() == g))
                     .map(|d| {
                         json!({
                             "name": d.name,
@@ -608,7 +616,7 @@ fn reading() -> Vec<CommandDef> {
         ),
         read(
             "ops.schema",
-            "コマンドの引数の JSON Schema を表示します（MCP の tools/list と同じ形式）",
+            "コマンドの引数の JSON Schema を表示します（MCP では入口の args に渡す形）",
             vec![ArgDef::text("name", "コマンド名（省略時はすべて）")],
             |_, _, reg, a| schema(reg, a),
         ),

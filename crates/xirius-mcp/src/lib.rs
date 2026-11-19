@@ -1,5 +1,7 @@
-//! The MCP server for Xirius. The tools are the command table of
-//! `xirius-core`, so a command added there is a tool here with no change.
+//! The MCP server for Xirius. The commands are the command table of
+//! `xirius-core`, so a command added there is reachable here with no change.
+//! `tools/list` is a few entrances that run a command by name and the commands
+//! every session uses, not one tool per command (MCP-008).
 //!
 //! * [`Gateway`] turns a tool call into a command run (and decides which
 //!   commands an AI may reach).
@@ -37,7 +39,10 @@ use xirius_core::autosave::{Autosave, DEFAULT_INTERVAL};
 use xirius_core::session::RunOptions;
 use xirius_core::{ErrorCode, Session};
 
-pub use gateway::{ADMIN_COMMANDS, CallError, Gateway, Scope, tool_name};
+pub use gateway::{
+    ADMIN_COMMANDS, CallError, DESTRUCTIVE_TOOL, DIRECT, EDIT_TOOL, ENTRANCES, Gateway, READ_TOOL,
+    Scope, call_params, entry, tool_name,
+};
 pub use host::{Bridge, Host, Job, Jobs, bridge};
 pub use http::{HttpConfig, HttpServer};
 pub use server::XiriusServer;

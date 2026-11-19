@@ -13,6 +13,11 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
+/// `tools/call` params for a command (or its old tool name): through its MCP entrance.
+fn params(command: &str, args: Value) -> Value {
+    xirius_mcp::call_params(&xirius_session::commands::registry(), command, args)
+}
+
 /// A song folder with the AI allowed to save, and a tone to import.
 fn song(dir: &Path) {
     let _ = std::fs::remove_dir_all(dir);
@@ -217,10 +222,7 @@ impl Endpoint for Mcp {
     }
 
     fn run(&mut self, name: &str, args: Value) -> Result<Value, Value> {
-        let r = self.request(
-            "tools/call",
-            json!({"name": name.replace('.', "_"), "arguments": args}),
-        );
+        let r = self.request("tools/call", params(name, args));
         let mut result = r["result"]["structuredContent"].clone();
         if r["result"]["isError"] == true {
             return Err(result);
@@ -252,7 +254,7 @@ impl Endpoint for Mcp {
             for page in 0..result["pages"].as_u64().unwrap() {
                 let part = self.request(
                     "tools/call",
-                    json!({"name": "ops_get-result", "arguments": {"id": id, "page": page}}),
+                    params("ops.get-result", json!({"id": id, "page": page})),
                 );
                 text.push_str(
                     part["result"]["structuredContent"]["text"]

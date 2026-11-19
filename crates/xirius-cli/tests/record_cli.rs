@@ -12,6 +12,11 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+/// `tools/call` params for a command (or its old tool name): through its MCP entrance.
+fn params(command: &str, args: Value) -> Value {
+    xirius_mcp::call_params(&xirius_session::commands::registry(), command, args)
+}
+
 static NEXT: AtomicU32 = AtomicU32::new(0);
 
 /// A song folder with an armed audio track "Vox", removed when dropped.
@@ -239,13 +244,15 @@ fn mcp_records_on_its_silent_player_and_one_undo_takes_it_out() {
                "clientInfo": {"name": "record-test", "version": "0"}}),
     );
     request("notifications/initialized", json!({}));
-    let list = request("tools/list", json!({}));
-    let tools = list["result"]["tools"].as_array().unwrap();
-    for name in ["record_start", "record_stop", "record_status"] {
-        assert!(tools.iter().any(|t| t["name"] == name), "{name}");
+    for name in ["record.start", "record.stop", "record.status"] {
+        let r = request(
+            "tools/call",
+            json!({"name": "ops_schema", "arguments": {"name": name}}),
+        );
+        assert_eq!(r["result"]["structuredContent"]["ok"], true, "{name}: {r}");
     }
     let mut call = |name: &str, args: Value| -> Value {
-        let r = request("tools/call", json!({"name": name, "arguments": args}));
+        let r = request("tools/call", params(name, args));
         assert_eq!(r["result"]["isError"], false, "{r}");
         r["result"]["structuredContent"].clone()
     };
@@ -371,7 +378,7 @@ fn mcp_records_midi_from_a_script() {
                "clientInfo": {"name": "record-test", "version": "0"}}),
     );
     let mut call = |name: &str, args: Value| -> Value {
-        let r = request("tools/call", json!({"name": name, "arguments": args}));
+        let r = request("tools/call", params(name, args));
         assert_eq!(r["result"]["isError"], false, "{r}");
         r["result"]["structuredContent"].clone()
     };
