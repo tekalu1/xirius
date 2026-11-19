@@ -118,6 +118,9 @@ impl MidiInput for EnabledInput {
     fn ports(&self) -> Vec<String> {
         self.ports.clone()
     }
+    fn recording(&mut self, on: bool) {
+        self.input.recording(on);
+    }
     fn read(&mut self, frames: usize, f: &mut dyn FnMut(usize, [u8; 3])) {
         self.read_ports(frames, &mut |at, _, msg| f(at, msg));
     }

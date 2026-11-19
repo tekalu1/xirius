@@ -2408,9 +2408,12 @@ mod tests {
         assert!(peak > 1.0 && peak <= 3.0, "{peak}");
     }
 
-    /// Plays `events` (frame, message) as the MIDI input of the next recording.
+    /// Plays `events` (frame, message) as the MIDI input of the next recording, the frames
+    /// counted from the one its count-in, or its take without one, begins on.
     fn play_notes(s: &mut Studio, events: Vec<(u64, [u8; 3])>) {
-        s.live_midi_input(Box::new(xirius_engine::record::MockMidi::new(events)));
+        s.live_midi_input(Box::new(
+            xirius_engine::record::MockMidi::new(events).from_the_take(),
+        ));
     }
 
     /// The notes of the clip the recording on Keys made, as (pitch, tick in the song).
@@ -3702,6 +3705,8 @@ mod tests {
         let mut s = studio(OutputMode::Device);
         s.transport.set_drivers(input_held(&refuse, &lost, &asked));
         let vocal = track(&s, "Vocal");
+        // The first try is made in the tick below, so a later try is due [`REOPEN`] after this.
+        let began = Instant::now();
         s.song.toggle_arm(vocal).unwrap();
         s.tick();
         // Not a silent meter: the screen says why, and the output is not let go.
@@ -3724,7 +3729,7 @@ mod tests {
         }
         assert_eq!(asked.load(SeqCst), 2);
         assert!(!drawn, "a try that failed again was drawn");
-        assert!(t.elapsed() >= REOPEN - Duration::from_millis(100));
+        assert!(began.elapsed() >= REOPEN, "tried again before it was due");
         assert_eq!(s.error.as_deref(), Some(said.as_str()));
         assert!(!watching(&s));
 

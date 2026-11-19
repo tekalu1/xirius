@@ -106,6 +106,11 @@ pub trait MidiInput: Send {
     fn ports(&self) -> Vec<String> {
         Vec::new()
     }
+
+    /// Told before each block is read whether a take is being recorded: a capture is set and
+    /// the transport plays or counts in. A device has nothing to do with it; a scripted input
+    /// counts its frames from the take ([`MockMidi::from_the_take`]).
+    fn recording(&mut self, _on: bool) {}
 }
 
 /// The note a channel message plays, if it is a note on or off.
@@ -323,6 +328,9 @@ pub struct MockMidi {
     ports: Vec<String>,
     next: usize,
     frame: u64,
+    /// Counts only the frames of a take ([`MockMidi::from_the_take`]).
+    from_the_take: bool,
+    recording: bool,
 }
 
 impl MockMidi {
@@ -342,16 +350,34 @@ impl MockMidi {
             ports,
             next: 0,
             frame: 0,
+            from_the_take: false,
+            recording: false,
         }
+    }
+
+    /// Counts the frames from the one the take, or its count-in, begins on, not from the
+    /// first `read`: the engine may render a block between the commands that set the input and
+    /// start the recording, and the messages would land that much early. Until then nothing is
+    /// read and no frame passes.
+    pub fn from_the_take(mut self) -> MockMidi {
+        self.from_the_take = true;
+        self
     }
 }
 
 impl MidiInput for MockMidi {
+    fn recording(&mut self, on: bool) {
+        self.recording = on;
+    }
+
     fn read(&mut self, frames: usize, f: &mut dyn FnMut(usize, [u8; 3])) {
         self.read_ports(frames, &mut |offset, _, msg| f(offset, msg));
     }
 
     fn read_ports(&mut self, frames: usize, f: &mut dyn FnMut(usize, usize, [u8; 3])) {
+        if self.from_the_take && !self.recording {
+            return;
+        }
         let end = self.frame + frames as u64;
         while let Some(&(at, port, msg)) = self.events.get(self.next) {
             if at >= end {
