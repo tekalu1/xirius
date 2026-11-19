@@ -201,6 +201,9 @@ impl Studio {
     /// Shuts a plugin's window.
     pub(crate) fn close_editor(&mut self, id: PluginId) {
         self.mixer.editor_bars.remove(&id);
+        self.mixer
+            .editor_pending
+            .retain(|(other, _, _)| *other != id);
         let gone: Vec<OpenEditor> = self.mixer.take_editors(|e| e.id == id);
         let shut = !gone.is_empty();
         for _ in gone {
@@ -273,8 +276,8 @@ impl Studio {
     /// the instance of a new mix, and takes what was turned in the plugins' windows into the
     /// song. True when the song changed.
     pub fn poll_editors(&mut self) -> bool {
-        self.poll_editor_bar();
-        let keys = self.poll_editor_keys() | self.mixer.preset_menu.is_some();
+        let bar = self.poll_editor_bar();
+        let keys = bar | self.poll_editor_keys() | self.mixer.preset_menu.is_some();
         let mut failed = Vec::new();
         let mut opened_sizes = Vec::new();
         if let Some(host) = self.transport.host() {
@@ -345,9 +348,9 @@ impl Studio {
         keys | edits
     }
 
-    fn poll_editor_bar(&mut self) {
+    pub(crate) fn poll_editor_bar(&mut self) -> bool {
         use xirius_vst3::EditorAction;
-        let mut actions = Vec::new();
+        let mut actions = std::mem::take(&mut self.mixer.editor_pending);
         let p = self.project();
         for e in &self.mixer.editors {
             let origin = self
@@ -392,14 +395,42 @@ impl Studio {
                 .map_or_else(Vec::new, |h| h.take_editor_actions(e.id));
             actions.extend(events.into_iter().map(|a| (e.id, track.id, a)));
         }
+        let mut changed = false;
         for (id, track, action) in actions {
+            if std::env::var_os("XIRIUS_HEADER_PROBE").is_some() {
+                eprintln!(
+                    "header-action id={id} action={action:?} blocked={}",
+                    self.input_blocked()
+                );
+            }
+            if !self.mixer.is_open(id) {
+                continue;
+            }
+            let needs_song = matches!(
+                action,
+                EditorAction::Power
+                    | EditorAction::PresetSelect(_)
+                    | EditorAction::PresetPrevious
+                    | EditorAction::PresetNext
+                    | EditorAction::Sidechain
+            );
+            if needs_song
+                && (self.input_blocked() || (self.macro_run.is_some() && !self.macro_stepping))
+            {
+                self.mixer.editor_pending.push((id, track, action));
+                continue;
+            }
+            changed = true;
             match action {
                 EditorAction::Power => {
                     // design-lint: allow(ui-blocking-io) PRJ-031: guarded dispatcher enqueues the model edit; the plugin GUI never waits for it.
-                    self.run_command(
+                    let accepted = self.run_command(
                         "plugin.bypass",
                         serde_json::json!({"ids": [id.to_string()]}),
                     );
+                    if std::env::var_os("XIRIUS_HEADER_PROBE").is_some() {
+                        eprintln!("header-action id={id} power_accepted={accepted}");
+                    }
                 }
                 EditorAction::Pin => {
                     if !self.mixer.editor_pins.remove(&id) {
@@ -439,6 +470,7 @@ impl Studio {
                 }
             }
         }
+        changed
     }
 }
 

@@ -643,6 +643,8 @@ pub struct Mixer {
     pub(crate) editor_pins: std::collections::HashSet<PluginId>,
     pub(crate) preset_menu: Option<(TrackId, PluginId, i32, i32, u32)>,
     pub(crate) editor_bars: std::collections::HashMap<PluginId, xirius_vst3::EditorBar>,
+    /// Native bar commands received while a song operation holds the command dispatcher.
+    pub(crate) editor_pending: Vec<(PluginId, TrackId, xirius_vst3::EditorAction)>,
     pub(crate) editor_positions: std::collections::HashMap<PluginId, (i32, i32)>,
     /// Last reported editor body size for each plug-in type, for its opening window.
     pub(crate) editor_sizes: std::collections::HashMap<String, (i32, i32)>,

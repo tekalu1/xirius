@@ -384,6 +384,181 @@ fn a_slow_hosted_editor_stays_requested_until_its_open_report_arrives() {
 
 #[cfg(windows)]
 #[test]
+fn the_hosted_editor_power_button_keeps_its_window_and_restores_audio() {
+    let _temp = crate::shot::TestTemp::new();
+    let _one = one_at_a_time();
+    let entries = xirius_plugins::probe(&crate::plugin_fixture_shots::fixture_path()).unwrap();
+    let (mut s, g) = studio(entries.clone());
+    let t = track(&s, "Vocal");
+    assert!(s.run_command(
+        "plugin.add",
+        json!({"track": t.to_string(), "name": "Fixture", "format": "vst3", "uid": entries[0].uid}),
+    ));
+    let id = s.project().tracks[&t].inserts[0].id;
+    assert!(press(&mut s, &g, MixerHit::Open(t, id)));
+    let end = Instant::now() + Duration::from_secs(10);
+    while !s.host_said_editor_open(id) {
+        s.tick();
+        assert!(
+            Instant::now() < end,
+            "fixture editor did not open: {:?}",
+            s.error
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let hwnd = s.mixer.editor_hwnd(id).expect("fixture editor frame");
+    let click = |s: &Studio, button_id| {
+        let mut result = 0;
+        let hwnd = s
+            .mixer
+            .editor_hwnd(id)
+            .expect("current fixture editor frame");
+        // SAFETY: BM_CLICK follows the native child button path without desktop input.
+        let button = unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::GetDlgItem(hwnd as _, button_id)
+        };
+        assert!(!button.is_null(), "button {button_id} on frame {hwnd}");
+        assert_ne!(
+            unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::SendMessageTimeoutW(
+                    button,
+                    windows_sys::Win32::UI::WindowsAndMessaging::BM_CLICK,
+                    0,
+                    0,
+                    windows_sys::Win32::UI::WindowsAndMessaging::SMTO_ABORTIFHUNG,
+                    5_000,
+                    &mut result,
+                )
+            },
+            0
+        );
+    };
+    // A native editor remains clickable while the song dispatcher is held. Its first
+    // press must reach the song after the hold ends, rather than disappear in the host queue.
+    s.transport.finishing_take = true;
+    click(&s, 1);
+    let end = Instant::now() + Duration::from_secs(5);
+    while s.mixer.editor_pending.is_empty() {
+        s.poll_editor_bar();
+        assert!(Instant::now() < end, "blocked native action was lost");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(s.project().tracks[&t].inserts[0].runs());
+    assert_eq!(s.mixer.editor_pending.len(), 1);
+    s.transport.finishing_take = false;
+    for (i, expected) in [false, true, false, true].into_iter().enumerate() {
+        if i != 0 {
+            click(&s, 1);
+        }
+        let end = Instant::now() + Duration::from_secs(10);
+        while s.project().tracks[&t].inserts[0].runs() != expected {
+            s.tick();
+            assert!(
+                Instant::now() < end,
+                "power action did not reach the song: {:?}; runs={}; preparing={}; bypass={}",
+                s.error,
+                s.project().tracks[&t].inserts[0].runs(),
+                s.sound_preparing(),
+                s.project().tracks[&t].inserts[0].bypass
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(s.editor_shown(id), "power action closed the plugin editor");
+        assert_eq!(
+            s.mixer.editor_hwnd(id),
+            Some(hwnd),
+            "power action replaced the editor frame"
+        );
+    }
+    click(&s, 4);
+    let end = Instant::now() + Duration::from_secs(5);
+    while !s.mixer.editor_pins.contains(&id) {
+        s.tick();
+        assert!(
+            Instant::now() < end,
+            "pin action did not reach the window state"
+        );
+    }
+    for name in ["Header A", "Header B"] {
+        assert!(s.run_command(
+            "preset.save",
+            json!({"track":t,"of":id,"kind":"fx","name":name})
+        ));
+        let end = Instant::now() + Duration::from_secs(5);
+        while s.input_blocked() {
+            s.tick();
+            assert!(Instant::now() < end, "preset save did not settle");
+        }
+    }
+    let end = Instant::now() + Duration::from_secs(5);
+    while !s
+        .mixer
+        .editor_bars
+        .get(&id)
+        .is_some_and(|b| b.presets.len() >= 3)
+    {
+        s.tick();
+        assert!(
+            Instant::now() < end,
+            "saved presets did not reach the header"
+        );
+    }
+    assert_eq!(
+        s.mixer.editor_hwnd(id),
+        Some(hwnd),
+        "saving a preset replaced the editor frame"
+    );
+    click(&s, 2);
+    let end = Instant::now() + Duration::from_secs(5);
+    while s.mixer.preset_menu.is_none() {
+        s.tick();
+        assert!(Instant::now() < end, "preset list did not open");
+    }
+    assert_eq!(s.mixer.preset_menu.map(|r| r.1), Some(id));
+    s.mixer.preset_menu = None;
+    assert!(s.run_command(
+        "preset.load",
+        json!({"track":t,"of":id,"preset":"Header A"})
+    ));
+    let end = Instant::now() + Duration::from_secs(5);
+    while s.project().tracks[&t].inserts[0].preset.as_deref() != Some("Header A") {
+        s.tick();
+        assert!(Instant::now() < end, "preset load did not settle");
+    }
+    click(&s, 11);
+    let end = Instant::now() + Duration::from_secs(5);
+    while s.project().tracks[&t].inserts[0].preset.as_deref() == Some("Header A") {
+        s.tick();
+        assert!(Instant::now() < end, "next preset did not load");
+    }
+    click(&s, 8);
+    let end = Instant::now() + Duration::from_secs(5);
+    while s.project().tracks[&t].inserts[0].preset.as_deref() != Some("Header A") {
+        s.tick();
+        assert!(Instant::now() < end, "previous preset did not load");
+    }
+    click(&s, 6);
+    let end = Instant::now() + Duration::from_secs(5);
+    while s.channel.is_none() {
+        s.tick();
+        assert!(
+            Instant::now() < end,
+            "channel action did not open its panel"
+        );
+    }
+    click(&s, 5);
+    let end = Instant::now() + Duration::from_secs(5);
+    while s.editor_shown(id) {
+        s.tick();
+        assert!(
+            Instant::now() < end,
+            "close action did not close the editor"
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
 fn a_hosted_editor_failure_reaches_the_studio_with_its_reason() {
     struct Failure;
     impl Drop for Failure {

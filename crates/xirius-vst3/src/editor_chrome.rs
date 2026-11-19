@@ -118,7 +118,7 @@ impl Controls {
             // SAFETY: these controls are children of our frame on this thread.
             unsafe {
                 if matches!(id, PREVIOUS | NEXT) {
-                    EnableWindow(hwnd, i32::from(bar.presets.len() > 1));
+                    EnableWindow(hwnd, i32::from(can_step(id, bar)));
                 }
                 if let Some((x, w)) = r {
                     SetWindowPos(
@@ -367,7 +367,7 @@ pub(crate) fn paint(
             );
         } else if let Some(id) = control {
             let lit = id == POWER && bar.powered;
-            let ink = if (matches!(id, PREVIOUS | NEXT) && bar.presets.len() <= 1)
+            let ink = if (matches!(id, PREVIOUS | NEXT) && !can_step(id, bar))
                 || (id == POWER && !bar.powered)
             {
                 color(
@@ -421,7 +421,7 @@ pub(crate) fn paint(
 
 pub(crate) fn command(hwnd: HWND, id: usize, bar: &EditorBar) -> Option<EditorAction> {
     match id {
-        PREVIOUS | NEXT if bar.presets.len() > 1 => Some(if id == NEXT {
+        PREVIOUS | NEXT if can_step(id, bar) => Some(if id == NEXT {
             EditorAction::PresetNext
         } else {
             EditorAction::PresetPrevious
@@ -449,6 +449,15 @@ pub(crate) fn command(hwnd: HWND, id: usize, bar: &EditorBar) -> Option<EditorAc
             }
         }
         _ => None,
+    }
+}
+
+fn can_step(id: usize, bar: &EditorBar) -> bool {
+    let known = bar.presets.iter().any(|name| name == &bar.preset);
+    match id {
+        PREVIOUS => known && bar.presets.len() > 1,
+        NEXT => !bar.presets.is_empty() && (!known || bar.presets.len() > 1),
+        _ => false,
     }
 }
 
@@ -490,6 +499,23 @@ mod tests {
             Some(EditorAction::PresetNext)
         );
         bar.presets.clear();
+        assert_eq!(command(std::ptr::null_mut(), NEXT, &bar), None);
+    }
+
+    #[test]
+    fn an_unknown_preset_can_step_forward_to_default() {
+        let mut bar = EditorBar {
+            preset: String::new(),
+            presets: vec!["Default".into()],
+            ..Default::default()
+        };
+        assert_eq!(command(std::ptr::null_mut(), PREVIOUS, &bar), None);
+        assert_eq!(
+            command(std::ptr::null_mut(), NEXT, &bar),
+            Some(EditorAction::PresetNext)
+        );
+        bar.preset = "Default".into();
+        assert_eq!(command(std::ptr::null_mut(), PREVIOUS, &bar), None);
         assert_eq!(command(std::ptr::null_mut(), NEXT, &bar), None);
     }
 }

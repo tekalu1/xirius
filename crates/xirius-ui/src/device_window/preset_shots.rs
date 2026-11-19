@@ -2,7 +2,9 @@
 use super::*;
 use crate::shot::{Act, Play, Shot};
 use serde_json::json;
-use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_COMMAND};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    BM_CLICK, GetDlgItem, SMTO_ABORTIFHUNG, SendMessageTimeoutW,
+};
 
 pub const SHOTS: &[Shot] = &[
     Shot {
@@ -150,8 +152,7 @@ fn stage(n: u8, studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) {
         assert!(!hwnd.is_null());
         measure_bar(hwnd);
         capture(hwnd as isize, "native-preset-bar.bmp");
-        // SAFETY: the frame belongs to this fixture's plugin or isolated host PID.
-        assert_ne!(unsafe { PostMessageW(hwnd, WM_COMMAND, 2, 0) }, 0);
+        native_command(studio, 2);
         crate::shot::run_for(&mut studio.borrow_mut(), 10.0, |s| {
             s.mixer.preset_menu.is_some()
         });
@@ -467,8 +468,13 @@ fn native_command(studio: &Rc<RefCell<Studio>>, command: usize) {
         0,
         "native control {command} is enabled"
     );
-    // SAFETY: the frame is resolved from this fixture's plugin and host PID.
-    assert_ne!(unsafe { PostMessageW(hwnd, WM_COMMAND, command, 0) }, 0);
+    let child = unsafe { GetDlgItem(hwnd, command as i32) };
+    let mut result = 0;
+    // SAFETY: the child button belongs to the editor frame. This follows its click handler.
+    assert_ne!(
+        unsafe { SendMessageTimeoutW(child, BM_CLICK, 0, 0, SMTO_ABORTIFHUNG, 5_000, &mut result) },
+        0
+    );
 }
 
 fn wait_preset(studio: &Rc<RefCell<Studio>>, id: PluginId, name: &str) {

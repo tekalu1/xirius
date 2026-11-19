@@ -1056,6 +1056,30 @@ fn watch(window: &Window, cx: &mut Context<Screen>, attention: bool) {
     .detach();
 }
 
+/// Native editor buttons belong to another process. Ask for them at frame cadence while an
+/// editor is open, including when the main window is idle or preparation owns the usual tick.
+fn watch_editor_bar(window: &Window, cx: &mut Context<Screen>) {
+    cx.spawn_in(window, async move |this, cx| {
+        loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(16))
+                .await;
+            let alive = this.update_in(cx, |this, _, cx| {
+                let Ok(mut studio) = this.studio.try_borrow_mut() else {
+                    return;
+                };
+                if !studio.mixer.editors.is_empty() && studio.poll_editor_bar() {
+                    cx.notify();
+                }
+            });
+            if alive.is_err() {
+                break;
+            }
+        }
+    })
+    .detach();
+}
+
 fn top_bar(studio: Rc<RefCell<Studio>>, window: &Window, c: Rc<Colors>) -> gpui::Div {
     let layout = studio
         .borrow()
@@ -2382,6 +2406,7 @@ pub fn run(opts: Options) {
                         }
                         let _ai_server = None;
                         watch(window, cx, !scripted);
+                        watch_editor_bar(window, cx);
                         let _activation =
                             Some(cx.observe_window_activation(window, |this, window, cx| {
                                 this.studio

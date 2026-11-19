@@ -141,9 +141,10 @@ fn probe(bundle: &str) -> Option<Vec<Entry>> {
 /// This PC's test plugins, as the insert list and the player's list.
 fn use_test_plugins(s: &mut Studio, shot: &str) {
     let mut entries = Vec::new();
-    match probe(EFFECT) {
+    let wanted_effect = std::env::var("XIRIUS_TEST_VST3_EFFECT").unwrap_or_else(|_| EFFECT.into());
+    match probe(&wanted_effect) {
         Some(e) => entries.extend(e),
-        None => eprintln!("plugin-skip {shot} effect: {EFFECT} is not on this PC"),
+        None => eprintln!("plugin-skip {shot} effect: {wanted_effect} is not on this PC"),
     }
     let wanted = std::env::var("XIRIUS_TEST_VST3_INSTRUMENT").ok();
     let names: Vec<&str> = match &wanted {
@@ -200,9 +201,9 @@ fn capture_windows(s: &mut Studio, shot: &str, dir: &Path) {
         .mixer
         .editors
         .iter()
-        .map(|e| (e.title.clone(), e.heard()))
+        .map(|e| (e.id, e.title.clone(), e.heard()))
         .collect();
-    for (title, heard) in open {
+    for (id, title, heard) in open {
         let t = Instant::now();
         let mut hwnd = None;
         while hwnd.is_none() && t.elapsed() < HOST_WAIT {
@@ -238,7 +239,173 @@ fn capture_windows(s: &mut Studio, shot: &str, dir: &Path) {
             ),
             Err(err) => eprintln!("plugin-check {shot} editor=failed place=host error={err}"),
         }
+        #[cfg(windows)]
+        if std::env::var_os("XIRIUS_HEADER_PROBE").is_some()
+            && (shot.ends_with("p07-mixer-vst3-effect-window")
+                || shot.ends_with("p09-mixer-vst3-instrument-window"))
+        {
+            probe_header(s, id, shot, dir);
+        }
     }
+}
+
+/// Clicks the actual native child buttons while the editor is parked outside the desktop.
+/// Each result is checked in the song, not only in the host's command queue.
+#[cfg(windows)]
+fn probe_header(s: &mut Studio, id: xirius_core::id::PluginId, shot: &str, dir: &Path) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        BM_CLICK, GetDlgItem, SMTO_ABORTIFHUNG, SendMessageTimeoutW,
+    };
+    fn click(
+        s: &mut Studio,
+        id: xirius_core::id::PluginId,
+        shot: &str,
+        button: i32,
+        label: &str,
+        done: &dyn Fn(&Studio) -> bool,
+    ) -> bool {
+        let hwnd = s.mixer.editor_hwnd(id).unwrap_or_default();
+        let child = unsafe { GetDlgItem(hwnd as _, button) };
+        if child.is_null() {
+            eprintln!("header-probe {shot} {label} missing=true");
+            return false;
+        }
+        let mut result = 0;
+        let started = Instant::now();
+        let before = s
+            .project()
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .find(|p| p.id == id)
+            .map(|p| p.runs());
+        let sent = unsafe {
+            SendMessageTimeoutW(child, BM_CLICK, 0, 0, SMTO_ABORTIFHUNG, 5_000, &mut result)
+        };
+        let end = started + Duration::from_secs(10);
+        while sent != 0 && !done(s) && Instant::now() < end {
+            // The scripted shot holds Studio's mutable borrow, so its normal GPUI watcher
+            // cannot borrow it. Drive that same watcher path before the transport tick.
+            s.poll_editor_bar();
+            s.tick();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        eprintln!(
+            "header-probe {shot} {label} hwnd={hwnd} next_hwnd={:?} before={before:?} after={:?} sent={} effective={} elapsed_ms={} blocked={} preparing={} shown={} error={:?}",
+            s.mixer.editor_hwnd(id),
+            s.project()
+                .tracks
+                .values()
+                .flat_map(|t| &t.inserts)
+                .find(|p| p.id == id)
+                .map(|p| p.runs()),
+            sent != 0,
+            done(s),
+            started.elapsed().as_millis(),
+            s.input_blocked(),
+            s.sound_preparing(),
+            s.editor_shown(id),
+            s.error,
+        );
+        done(s)
+    }
+    let track = s.project().tracks.values().find_map(|t| {
+        t.inserts
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| (t.id, p.kind))
+    });
+    if let Some((track, kind)) = track {
+        for (i, runs) in [false, true, false, true].into_iter().enumerate() {
+            assert!(
+                click(s, id, shot, 1, &format!("power-{i}"), &|s| {
+                    s.project().tracks[&track]
+                        .inserts
+                        .iter()
+                        .any(|p| p.id == id && p.runs() == runs)
+                }),
+                "power did not reach the song"
+            );
+            if !runs {
+                crate::shot::run_for(s, 1.0, |s| {
+                    s.mixer.editor_bars.get(&id).is_some_and(|bar| !bar.powered)
+                });
+                std::thread::sleep(Duration::from_millis(100));
+                if let Some(hwnd) = s.mixer.editor_hwnd(id) {
+                    let _ = xirius_vst3::capture_window(
+                        hwnd,
+                        &dir.join(format!("{shot}-power-off.bmp")),
+                    );
+                }
+            }
+        }
+        let pinned = s.mixer.editor_pins.contains(&id);
+        assert!(
+            click(s, id, shot, 4, "pin", &|s| {
+                s.mixer.editor_pins.contains(&id) != pinned
+            }),
+            "pin did not reach the window state"
+        );
+        assert!(
+            click(s, id, shot, 6, "channel", &|s| s.channel.is_some()),
+            "channel did not open"
+        );
+        let kind = if kind == xirius_core::model::PluginKind::Instrument {
+            "instrument"
+        } else {
+            "fx"
+        };
+        for name in ["Header A", "Header B"] {
+            assert!(s.run_command(
+                "preset.save",
+                json!({"track":track,"of":id,"kind":kind,"name":name})
+            ));
+            crate::shot::run_for(s, 10.0, |s| !s.input_blocked());
+        }
+        crate::shot::run_for(s, 10.0, |s| {
+            s.mixer
+                .editor_bars
+                .get(&id)
+                .is_some_and(|b| b.presets.len() >= 3)
+        });
+        assert!(
+            click(s, id, shot, 2, "list", &|s| s.mixer.preset_menu.is_some()),
+            "preset list did not open"
+        );
+        s.mixer.preset_menu = None;
+        assert!(s.run_command(
+            "preset.load",
+            json!({"track":track,"of":id,"preset":"Header A"})
+        ));
+        crate::shot::run_for(s, 10.0, |s| {
+            s.project().tracks[&track]
+                .inserts
+                .iter()
+                .any(|p| p.id == id && p.preset.as_deref() == Some("Header A"))
+        });
+        assert!(
+            click(s, id, shot, 11, "next", &|s| {
+                s.project().tracks[&track]
+                    .inserts
+                    .iter()
+                    .any(|p| p.id == id && p.preset.as_deref() != Some("Header A"))
+            }),
+            "next preset did not load"
+        );
+        assert!(
+            click(s, id, shot, 8, "previous", &|s| {
+                s.project().tracks[&track]
+                    .inserts
+                    .iter()
+                    .any(|p| p.id == id && p.preset.as_deref() == Some("Header A"))
+            }),
+            "previous preset did not load"
+        );
+    }
+    assert!(
+        click(s, id, shot, 5, "close", &|s| !s.editor_shown(id)),
+        "editor did not close"
+    );
 }
 
 /// Says what is open, and where each built-in's panel is in the shot (physical pixels).
@@ -353,6 +520,14 @@ pub fn play(
         s.prepare_song();
     }
     crate::shot::run_for(&mut s, 15.0, |s| !s.input_blocked());
-    assert!(!s.input_blocked(), "plugin fixture did not settle");
+    assert!(
+        !s.input_blocked(),
+        "plugin fixture did not settle: opening={} saving={} sound={} inserts={} error={:?}",
+        s.opening.is_some(),
+        s.saving.is_some(),
+        s.sound_preparing(),
+        s.inserts_wait.is_some(),
+        s.error,
+    );
     window.refresh();
 }
