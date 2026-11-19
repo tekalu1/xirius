@@ -952,8 +952,7 @@ pub fn cursor(studio: &Studio) -> Option<Cursor> {
             Tool::Range => Cursor::Range,
             _ => match grip {
                 Grip::Left | Grip::Right | Grip::Corner => Cursor::ResizeH,
-                Grip::Body if started => Cursor::Move,
-                Grip::Body => Cursor::Arrow,
+                Grip::Body => Cursor::Move,
             },
         },
         Spot::Fx { part, .. } => match part {
@@ -966,7 +965,7 @@ pub fn cursor(studio: &Studio) -> Option<Cursor> {
         Spot::Loop(LoopGrip::Start | LoopGrip::End) => Cursor::ResizeH,
         Spot::Loop(LoopGrip::Body) => Cursor::Move,
         Spot::Section { resize: true, .. } => Cursor::ResizeH,
-        Spot::Section { .. } if started => Cursor::Move,
+        Spot::Section { .. } => Cursor::Move,
         // Split and mute have nothing to act on in the tempo row and the lanes.
         Spot::Tempo(_)
         | Spot::TempoGap
