@@ -223,7 +223,7 @@ impl crate::Layout {
     pub const DRAWER_H: f32 = 280.0;
     pub const DRAWER_BAR_H: f32 = 32.0;
     // ---- トラック列とアレンジ ----
-    pub const RULER_H: f32 = 28.0;
+    pub const RULER_H: f32 = 38.0;
     /// ルーラーの下の、セクション（イントロ・ヴァース…）の帯の高さ。
     pub const SECTION_BAND_H: f32 = 24.0;
     /// トラックの頭の幅（[`Layout::HEAD_ROOM_DEPTH`] 段までの入れ子が収まる）。

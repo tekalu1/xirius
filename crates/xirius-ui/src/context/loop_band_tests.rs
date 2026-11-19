@@ -396,33 +396,18 @@ fn auto_punch_shows_the_loop_on_and_off_on_both_bands() {
     assert_eq!(loop_now(&s), Some((4 * BAR, 8 * BAR)));
 }
 
-/// Review M5: the bar numbers, the times and the seconds all sit in the band's row and take
-/// the ink for a fill where they cross the band's fill; a bar's (and its seconds) blue.
+/// Time numbers sit below the loop band and keep their own ink.
 #[test]
-fn every_number_on_the_ruler_sits_in_the_band_row() {
-    use crate::ruler::{band_row, number_ink, row_parts};
+fn every_number_on_the_ruler_sits_below_the_loop_band() {
+    use crate::ruler::{band_row, number_ink};
     use crate::studio::Rect;
-    let ruler = Rect::new(100.0, 40.0, 600.0, 28.0);
+    let ruler = Rect::new(100.0, 40.0, 600.0, 38.0);
     let row = band_row(ruler);
-    assert_eq!((row.y, row.h), (ruler.y, LOOP_H));
-    assert_eq!(row_parts(ruler, None), vec![(row, false)]);
-    let parts = row_parts(ruler, Some((200.0, 300.0)));
-    assert_eq!(
-        parts,
-        vec![
-            (Rect::new(100.0, 40.0, 100.0, LOOP_H), false),
-            (Rect::new(300.0, 40.0, 400.0, LOOP_H), false),
-            (Rect::new(200.0, 40.0, 100.0, LOOP_H), true),
-        ]
-    );
-    // A band past the ruler's left edge leaves no stretch there.
-    assert_eq!(row_parts(ruler, Some((50.0, 150.0))).len(), 2);
+    assert_eq!((row.y, row.h), (ruler.y + LOOP_H, 24.0));
     for theme in xirius_design::Theme::ALL {
         let c = crate::paint::Colors::new(theme);
         assert_eq!(number_ink(&c, true, false), c.ink_blue);
         assert_eq!(number_ink(&c, false, false), c.ink);
-        assert_eq!(number_ink(&c, true, true), c.on_fill);
-        assert_eq!(number_ink(&c, false, true), c.on_fill);
     }
 }
 

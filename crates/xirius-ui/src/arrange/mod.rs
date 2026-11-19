@@ -1144,8 +1144,8 @@ impl Studio {
         }
         let used = match spot {
             Spot::None => return false,
-            // A click on the ruler still moves the playhead; one on the band does not.
-            Spot::Loop(LoopGrip::New) => false,
+            // The upper loop band never locates the playhead.
+            Spot::Loop(LoopGrip::New) => true,
             Spot::Section { .. } | Spot::Band => true,
             Spot::Loop(_) | Spot::Tempo(_) | Spot::TempoGap | Spot::Line { .. } => true,
             Spot::Space(_) => matches!(tool, Tool::Range | Tool::Draw),
