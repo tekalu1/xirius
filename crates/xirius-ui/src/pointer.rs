@@ -532,6 +532,11 @@ mod tests {
         let mut studio = Studio::sample();
         let g = studio.geometry(1440.0, 860.0);
         studio.open_settings(crate::settings::Section::Keys);
+        studio.settings_do(
+            &g,
+            crate::settings::Do::KeyMode(false),
+            crate::studio::Rect::default(),
+        );
         let scene = studio.settings_scene(&g);
         for (action, want) in [
             (
