@@ -1,5 +1,5 @@
 //! The pointer over the arrangement and the roll (UI-184): an OS shape for most places, and for
-//! the tools the tool's own picture, drawn here and handed to the OS as the cursor itself, so
+//! movable objects and tools a picture, drawn here and handed to the OS as the cursor itself, so
 //! there is one pointer and not a pointer with a picture beside it.
 //!
 //! The pictures are white with a black outline, so they show on any background and in either
@@ -13,9 +13,11 @@ use gpui::CursorStyle;
 use crate::roll::Cursor;
 use crate::studio::{Geometry, Studio};
 
-/// A tool's picture.
+/// A custom pointer picture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Shape {
+    OpenHand,
+    ClosedHand,
     Pencil,
     Scissors,
     Eraser,
@@ -25,7 +27,9 @@ pub enum Shape {
 }
 
 impl Shape {
-    pub const ALL: [Shape; 6] = [
+    pub const ALL: [Shape; 8] = [
+        Shape::OpenHand,
+        Shape::ClosedHand,
         Shape::Pencil,
         Shape::Scissors,
         Shape::Eraser,
@@ -37,6 +41,7 @@ impl Shape {
     /// The working point in the 32-unit square the picture is drawn in.
     pub fn hot(self) -> (f32, f32) {
         match self {
+            Shape::OpenHand | Shape::ClosedHand => (16.0, 15.0),
             Shape::Pencil => (4.0, 26.0),
             Shape::Scissors | Shape::Mute | Shape::Audition | Shape::Range => (16.0, 16.0),
             Shape::Eraser => (4.0, 28.0),
@@ -74,7 +79,7 @@ pub fn pointer(cursor: Cursor, crosshair: bool) -> Pointer {
     };
     match cursor {
         Cursor::Arrow => Pointer::style(CursorStyle::Arrow),
-        Cursor::Move => Pointer::style(CursorStyle::ClosedHand),
+        Cursor::Move => Pointer::style(CursorStyle::OpenHand),
         Cursor::ResizeH => Pointer::style(CursorStyle::ResizeLeftRight),
         Cursor::ResizeV => Pointer::style(CursorStyle::ResizeUpDown),
         Cursor::Cross => Pointer::style(CursorStyle::Crosshair),
@@ -91,8 +96,17 @@ pub fn pointer(cursor: Cursor, crosshair: bool) -> Pointer {
 /// The pointer over the window's body: the arrangement's shape where it has one, else the
 /// roll's. Panels that cover the body (a pop-up, the palette, the settings) take the arrow.
 pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
-    if studio.popup.is_some()
-        || studio.palette.is_some()
+    let (x, y) = studio.input_map.pointer;
+    let hit = studio.hit(g, x, y);
+    if studio.popup.is_some() {
+        return Pointer::style(match hit {
+            crate::studio::Hit::Item(_) | crate::studio::Hit::SearchClear => {
+                CursorStyle::PointingHand
+            }
+            _ => CursorStyle::Arrow,
+        });
+    }
+    if studio.palette.is_some()
         || studio.settings.is_some()
         || studio.recovery.is_some()
         || studio.sound_preparing()
@@ -109,16 +123,89 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
         return Pointer::style(CursorStyle::ResizeColumn);
     }
     if studio.pan.is_some() {
-        return Pointer::style(CursorStyle::ClosedHand);
+        return hand(true);
     }
     if studio.lock_hovered(g).is_some() || studio.insert_drag_refused(g) {
         return Pointer::style(CursorStyle::OperationNotAllowed);
+    }
+    if studio.text_index(g, x, y, false).is_some()
+        || matches!(
+            hit,
+            crate::studio::Hit::Home(crate::home::Spot::Search)
+                | crate::studio::Hit::Browser(crate::browser::BrowserHit::Search)
+        )
+    {
+        return Pointer::style(CursorStyle::IBeam);
+    }
+    if matches!(
+        hit,
+        crate::studio::Hit::Bar(_)
+            | crate::studio::Hit::Tab(_)
+            | crate::studio::Hit::Rail(_)
+            | crate::studio::Hit::RailSettings
+            | crate::studio::Hit::AddTrack
+            | crate::studio::Hit::ZoomIn
+            | crate::studio::Hit::ZoomOut
+            | crate::studio::Hit::ToggleArrange
+            | crate::studio::Hit::ToggleTempo
+            | crate::studio::Hit::Follow
+            | crate::studio::Hit::Fold
+            | crate::studio::Hit::Home(crate::home::Spot::Button(_))
+            | crate::studio::Hit::Home(crate::home::Spot::Row(..))
+            | crate::studio::Hit::Browser(_)
+            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::Open(..))
+            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::AddInsert(..))
+            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::AddInstrument(..))
+            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::AddLayer(..))
+            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::AddSend(..))
+            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::Editor(..))
+            | crate::studio::Hit::Keys(..)
+            | crate::studio::Hit::TrackIcon(..)
+            | crate::studio::Hit::Widen(..)
+            | crate::studio::Hit::Freeze(..)
+            | crate::studio::Hit::Output(..)
+            | crate::studio::Hit::FolderBus(..)
+    ) {
+        return Pointer::style(CursorStyle::PointingHand);
+    }
+    if matches!(
+        hit,
+        crate::studio::Hit::Mixer(crate::mixer::MixerHit::Fader(..))
+            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::SendLevel(..))
+            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::KeyLevel(..))
+            | crate::studio::Hit::Mixer(crate::mixer::MixerHit::Level(..))
+            | crate::studio::Hit::HeadFader(..)
+    ) {
+        return Pointer::style(CursorStyle::ResizeLeftRight);
     }
     let cursor = crate::arrange::paint::cursor(studio).unwrap_or_else(|| {
         let ctx = studio.roll_ctx(g);
         studio.roll.cursor(ctx.as_ref())
     });
+    if cursor == Cursor::Move {
+        return hand(
+            studio.arrange.drag.as_ref().is_some_and(|d| d.started) || studio.roll.drag.is_some(),
+        );
+    }
+    if cursor == Cursor::Arrow && matches!(hit, crate::studio::Hit::Ruler(_)) {
+        return Pointer::style(CursorStyle::Crosshair);
+    }
     pointer(cursor, studio.crosshair)
+}
+
+fn hand(grabbing: bool) -> Pointer {
+    Pointer {
+        style: if grabbing {
+            CursorStyle::ClosedHand
+        } else {
+            CursorStyle::OpenHand
+        },
+        shape: Some(if grabbing {
+            Shape::ClosedHand
+        } else {
+            Shape::OpenHand
+        }),
+    }
 }
 
 // ------------------------------------------------------------------ the pictures
@@ -190,6 +277,42 @@ const ERASER: &[(f32, f32)] = &[(4.0, 28.0), (14.0, 28.0), (26.0, 16.0), (16.0, 
 /// What the picture is made of: the white body, and the black marks on it.
 fn parts(shape: Shape) -> (Vec<Prim>, Vec<Prim>) {
     match shape {
+        Shape::OpenHand => (
+            vec![
+                Prim::Poly(&[
+                    (8.0, 16.0),
+                    (8.0, 27.0),
+                    (13.0, 30.0),
+                    (23.0, 28.0),
+                    (27.0, 21.0),
+                    (25.0, 15.0),
+                    (20.0, 14.0),
+                    (17.0, 17.0),
+                ]),
+                Prim::Line((10.0, 16.0), (10.0, 5.0), 3.5),
+                Prim::Line((15.0, 16.0), (15.0, 3.0), 3.5),
+                Prim::Line((20.0, 16.0), (20.0, 5.0), 3.5),
+                Prim::Line((25.0, 18.0), (25.0, 10.0), 3.5),
+            ],
+            vec![],
+        ),
+        Shape::ClosedHand => (
+            vec![
+                Prim::Poly(&[
+                    (6.0, 11.0),
+                    (24.0, 10.0),
+                    (28.0, 15.0),
+                    (26.0, 26.0),
+                    (20.0, 30.0),
+                    (10.0, 28.0),
+                    (5.0, 20.0),
+                ]),
+                Prim::Line((10.0, 9.0), (10.0, 16.0), 4.0),
+                Prim::Line((16.0, 8.0), (16.0, 16.0), 4.0),
+                Prim::Line((22.0, 9.0), (22.0, 16.0), 4.0),
+            ],
+            vec![Prim::Line((9.0, 17.0), (23.0, 17.0), 1.2)],
+        ),
         Shape::Pencil => (
             vec![
                 Prim::Line((11.0, 19.0), (25.0, 5.0), 7.0),
@@ -324,11 +447,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_cursor_has_one_pointer_and_only_the_tools_have_a_picture() {
+    fn every_cursor_has_one_pointer_and_only_custom_shapes_have_a_picture() {
         use Cursor::*;
         for (cursor, style, shape) in [
             (Arrow, CursorStyle::Arrow, None),
-            (Move, CursorStyle::ClosedHand, None),
+            (Move, CursorStyle::OpenHand, None),
             (ResizeH, CursorStyle::ResizeLeftRight, None),
             (ResizeV, CursorStyle::ResizeUpDown, None),
             (Cross, CursorStyle::Crosshair, None),
