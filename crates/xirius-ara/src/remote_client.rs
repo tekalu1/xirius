@@ -39,6 +39,7 @@ struct State {
     loaded: bool,
     dirty: bool,
     editing: bool,
+    opening_editor: bool,
     editor_error: Option<String>,
     analysis_archive: Option<CachedArchive>,
     requests: Vec<Request>,
@@ -118,12 +119,17 @@ impl RemoteService {
         let pending = Arc::new(Mutex::new(None::<Instant>));
         let watcher_pending = pending.clone();
         let watcher_child = child.clone();
-        let watcher_alive = alive.clone();
+        let watcher_state = state.clone();
         std::thread::spawn(move || {
-            while watcher_alive.load(Ordering::Acquire) {
+            while alive.load(Ordering::Acquire) {
                 std::thread::sleep(Duration::from_millis(100));
-                if lock(&watcher_pending)
-                    .is_some_and(|since| since.elapsed() > Duration::from_secs(30))
+                let active = {
+                    let state = lock(&watcher_state);
+                    state.loaded && !state.opening_editor
+                };
+                if active
+                    && lock(&watcher_pending)
+                        .is_some_and(|since| since.elapsed() > Duration::from_secs(30))
                 {
                     if let Some(process) = lock(&watcher_child).as_mut() {
                         let _ = process.kill();
@@ -237,7 +243,9 @@ impl RemoteService {
                         }
                     }
                     Ok(Reply::Error(e)) if editing => {
-                        lock(&state).editor_error = Some(e);
+                        let mut state = lock(&state);
+                        state.opening_editor = false;
+                        state.editor_error = Some(e);
                         notify();
                     }
                     Ok(Reply::Error(e)) => {
@@ -335,6 +343,7 @@ impl RemoteService {
         }
     }
     pub fn close_editor(&self) {
+        lock(&self.state).opening_editor = false;
         self.send(Job::Wire(WireCommand::CloseEditor));
     }
     pub fn set_editor_caption(&self, c: Caption) {
@@ -349,6 +358,7 @@ impl RemoteService {
         if let Some(e) = self.crashed().or_else(|| self.failed()) {
             return Err(e);
         }
+        lock(&self.state).opening_editor = true;
         self.send(Job::Wire(WireCommand::Edit {
             title: title.into(),
             place: place.into(),
@@ -455,6 +465,7 @@ fn crash(state: &Mutex<State>, why: String) {
     let mut state = lock(state);
     state.crashed = Some(format!("ARA host ended: {why}"));
     state.loaded = false;
+    state.opening_editor = false;
     for clip in state.clips.values_mut() {
         clip.phase = Phase::Crashed;
         clip.rendered = None;
@@ -568,6 +579,9 @@ fn publish(state: &Mutex<State>, snapshot: Snapshot) -> io::Result<()> {
     state.dirty |= snapshot.dirty;
     state.editing = snapshot.editing;
     state.editor_error = snapshot.editor_error.or(state.editor_error.take());
+    if state.editing || state.editor_error.is_some() {
+        state.opening_editor = false;
+    }
     if let Some(archive) = snapshot.analysis_archive
         && !state
             .analysis_archive

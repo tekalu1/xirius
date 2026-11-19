@@ -41,6 +41,14 @@ pub const OLD_ARCHIVE_ID: &str = "org.xirius.fake.document.1";
 /// How the plugin misbehaves.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct Config {
+    /// How long the test worker waits before acknowledging Open.
+    pub open_reply_ms: u64,
+    /// How long a test worker stops answering after its first loaded snapshot.
+    pub stalled_poll_ms: u64,
+    /// How long loading this document takes.
+    pub prepare_ms: u64,
+    /// How long opening an editor takes.
+    pub editor_ms: u64,
     /// How long the analysis of a source takes, about.
     pub analysis_ms: u64,
     /// Faults on the host's thread when asked to analyse.
@@ -59,7 +67,7 @@ pub struct Config {
 
 thread_local! {
     /// The configuration of the next document made on this thread.
-    static NEXT: Cell<Config> = const { Cell::new(Config { analysis_ms: 0, fault_on_analysis: false, fault_on_own_thread: false, hang_in_render: false, tail: 0.0, render_spin_us: 0 }) };
+    static NEXT: Cell<Config> = const { Cell::new(Config { open_reply_ms: 0, stalled_poll_ms: 0, prepare_ms: 0, editor_ms: 0, analysis_ms: 0, fault_on_analysis: false, fault_on_own_thread: false, hang_in_render: false, tail: 0.0, render_spin_us: 0 }) };
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -193,7 +201,10 @@ pub fn selection() -> u64 {
 
 /// The loader of a fake plugin binary for [`crate::Service`].
 pub fn loader(config: Config) -> Loader {
-    Box::new(move || Ok(Box::new(FakeBinary { config }) as Box<dyn Binary>))
+    Box::new(move || {
+        std::thread::sleep(Duration::from_millis(config.prepare_ms));
+        Ok(Box::new(FakeBinary { config }) as Box<dyn Binary>)
+    })
 }
 
 // The factory ---------------------------------------------------------------------------------
@@ -1544,6 +1555,7 @@ impl Instance for FakeInstance {
     }
 
     fn open_editor(&mut self, title: &str, _place: Placement) -> Result<Box<dyn Window>, Error> {
+        std::thread::sleep(Duration::from_millis(self.renderer.dc.config.editor_ms));
         if !self.views {
             violation("an editor opened on an instance without the editor view role");
             return Err(error("not an editor view"));

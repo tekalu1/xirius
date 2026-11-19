@@ -233,6 +233,7 @@ pub fn run_worker() -> io::Result<()> {
         send(&mut output, &Reply::Error("ARA protocol mismatch".into()))?;
         return Ok(());
     }
+    let stalled_poll_ms = fixture.map_or(0, |config| config.stalled_poll_ms);
     let service_id = id.clone();
     let loader: service::Loader = match format.as_str() {
         "vst3" => Box::new(move || {
@@ -243,7 +244,11 @@ pub fn run_worker() -> io::Result<()> {
             let b = crate::clap::ClapBinary::load(std::path::Path::new(&path), &id)?;
             Ok(Box::new(b) as Box<dyn service::Binary>)
         }),
-        "fake" => crate::fake::loader(fixture.unwrap_or_default()),
+        "fake" => {
+            let fixture = fixture.unwrap_or_default();
+            std::thread::sleep(std::time::Duration::from_millis(fixture.open_reply_ms));
+            crate::fake::loader(fixture)
+        }
         _ => {
             send(&mut output, &Reply::Error("unsupported ARA format".into()))?;
             return Ok(());
@@ -255,6 +260,7 @@ pub fn run_worker() -> io::Result<()> {
     let mut renders: HashMap<u64, (Arc<Rendered>, String, SharedAudio)> = HashMap::new();
     let mut last_analysis = None;
     let mut number = 0_u64;
+    let mut sent_loaded = false;
     while let Ok(command) = recv::<_, Command>(&mut input) {
         let reply = match command {
             Command::Open { .. } => Reply::Error("ARA worker already open".into()),
@@ -301,6 +307,10 @@ pub fn run_worker() -> io::Result<()> {
                 Reply::Ack
             }
             Command::Poll => {
+                if sent_loaded {
+                    std::thread::sleep(std::time::Duration::from_millis(stalled_poll_ms));
+                }
+                sent_loaded = service.loaded();
                 let states = service.states();
                 renders.retain(|key, _| states.get(key).is_some_and(|s| s.rendered.is_some()));
                 let mut wire = Vec::with_capacity(states.len());

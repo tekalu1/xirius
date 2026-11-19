@@ -285,7 +285,7 @@ impl Shared {
     }
 }
 
-/// A call into the plugin may take this long before its thread is ended.
+/// An analysis or render call may take this long before its thread is ended.
 pub const CALL_LIMIT: Duration = Duration::from_secs(30);
 /// Frames per render block.
 pub const BLOCK: usize = 512;
@@ -316,7 +316,7 @@ impl Service {
         Service::start_with(loader, archive, notify, CALL_LIMIT)
     }
 
-    /// As [`Service::start`], with calls into the plugin limited to `limit`.
+    /// As [`Service::start`], with analysis and render calls limited to `limit`.
     pub fn start_with(
         loader: Loader,
         archive: Option<(Vec<u8>, String)>,
@@ -839,7 +839,7 @@ impl Host {
                     thread_init();
                     let _ = ready_tx.send(());
                     let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        host_loop(&rx, &host)
+                        host_loop(&rx, &host, &watch, limit)
                     }));
                     if host.ended.swap(true, Ordering::AcqRel) {
                         return;
@@ -851,7 +851,9 @@ impl Host {
                 })
                 .map_err(|_| "could not start the ARA thread".to_string())?;
         }
-        let _ = ready_rx.recv_timeout(Duration::from_secs(5));
+        ready_rx
+            .recv()
+            .map_err(|_| "the ARA thread ended during startup".to_string())?;
         {
             let host = host.clone();
             let _ = std::thread::Builder::new()
@@ -964,7 +966,7 @@ impl Slot {
     }
 
     /// Handles one cycle's messages. Whether the document was stopped.
-    fn handle(&mut self, msgs: Vec<Msg>) -> bool {
+    fn handle(&mut self, msgs: Vec<Msg>, watch: &Watch, limit: Duration) -> bool {
         // Only the newest song matters.
         let newest = msgs.iter().rposition(|m| matches!(m, Msg::Sync(..)));
         let mut stop = false;
@@ -998,7 +1000,9 @@ impl Slot {
                         tx,
                     },
                 ) => {
+                    watch.set_limit(Duration::from_millis(u64::MAX));
                     let opened = ara.edit(&title, place, &clips);
+                    watch.set_limit(limit);
                     answer_edit(&ara.shared, tx, opened);
                 }
                 (Slot::Open(ara), Msg::Caption(c)) => {
@@ -1061,7 +1065,7 @@ fn open(loader: Loader, archive: Option<(Vec<u8>, String)>, shared: Arc<Shared>)
 
 /// The ARA thread: its documents, each edited, asked and rendered in turn, and the plugins'
 /// window messages answered between.
-fn host_loop(rx: &Receiver<Job>, host: &Host) {
+fn host_loop(rx: &Receiver<Job>, host: &Host, watch: &Watch, limit: Duration) {
     let mut slots: Vec<(u64, Slot)> = Vec::new();
     let mut busy = false;
     let mut windows = false;
@@ -1090,7 +1094,12 @@ fn host_loop(rx: &Receiver<Job>, host: &Host) {
                     loader,
                     archive,
                     shared,
-                } => slots.push((id, open(loader, archive, shared))),
+                } => {
+                    watch.set_limit(Duration::from_millis(u64::MAX));
+                    let slot = open(loader, archive, shared);
+                    watch.set_limit(limit);
+                    slots.push((id, slot));
+                }
                 Job::To(id, m) => msgs.entry(id).or_default().push(m),
             }
         }
@@ -1101,7 +1110,7 @@ fn host_loop(rx: &Receiver<Job>, host: &Host) {
         let mut i = 0;
         while i < slots.len() {
             let mine = msgs.remove(&slots[i].0).unwrap_or_default();
-            if slots[i].1.handle(mine) {
+            if slots[i].1.handle(mine, watch, limit) {
                 slots.remove(i).1.close();
                 continue;
             }

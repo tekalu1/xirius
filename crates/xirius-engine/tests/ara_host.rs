@@ -64,6 +64,110 @@ fn until(what: &str, mut ready: impl FnMut() -> bool) {
 }
 
 #[test]
+fn a_slow_ara_worker_open_reply_is_not_cut_off() {
+    let _crash_records = CrashRecords::new();
+    let remote = open_remote(
+        None,
+        fake::Config {
+            open_reply_ms: 31_000,
+            ..Default::default()
+        },
+    );
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while !remote.loaded() {
+        assert!(remote.crashed().is_none(), "{:?}", remote.crashed());
+        assert!(remote.failed().is_none(), "{:?}", remote.failed());
+        assert!(
+            Instant::now() < deadline,
+            "ARA worker did not acknowledge Open"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn slow_ara_document_preparation_survives_the_analysis_watch() {
+    let _crash_records = CrashRecords::new();
+    let remote = open_remote(
+        None,
+        fake::Config {
+            prepare_ms: 31_000,
+            ..Default::default()
+        },
+    );
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while !remote.loaded() {
+        assert!(remote.crashed().is_none(), "{:?}", remote.crashed());
+        assert!(remote.failed().is_none(), "{:?}", remote.failed());
+        assert!(
+            Instant::now() < deadline,
+            "ARA document did not finish loading"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn ending_the_ara_worker_during_preparation_is_reported() {
+    let _crash_records = CrashRecords::new();
+    let remote = open_remote(
+        None,
+        fake::Config {
+            open_reply_ms: 31_000,
+            ..Default::default()
+        },
+    );
+    remote.terminate_host_for_test();
+    until("worker exit during preparation", || {
+        remote.crashed().is_some()
+    });
+}
+
+#[test]
+fn an_unresponsive_ara_worker_after_preparation_is_stopped() {
+    let _crash_records = CrashRecords::new();
+    let remote = open_remote(
+        None,
+        fake::Config {
+            stalled_poll_ms: 31_000,
+            ..Default::default()
+        },
+    );
+    until("ARA preparation", || remote.loaded());
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while remote.crashed().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "unresponsive worker was not stopped"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_slow_ara_editor_is_not_cut_off() {
+    let _crash_records = CrashRecords::new();
+    let remote = open_remote(
+        None,
+        fake::Config {
+            editor_ms: 31_000,
+            ..Default::default()
+        },
+    );
+    until("ARA preparation", || remote.loaded());
+    remote
+        .request_editor("fixture", Default::default(), &[])
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while !remote.editing() {
+        assert!(remote.crashed().is_none(), "{:?}", remote.crashed());
+        assert!(remote.take_editor_error().is_none(), "ARA editor failed");
+        assert!(Instant::now() < deadline, "ARA editor did not open");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
 fn analysis_edit_archive_and_render_cross_the_host_boundary() {
     let _crash_records = CrashRecords::new();
     let song = make_song(audio());

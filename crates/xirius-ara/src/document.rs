@@ -14,7 +14,9 @@ use std::collections::HashSet;
 use std::ffi::{CString, c_char};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(test)]
+use std::time::Instant;
 
 use crate::host::{self, ArchiveReader, ArchiveWriter, HostSide};
 use crate::sys::{self, Bool, ContentType, FALSE, Ref, TRUE};
@@ -62,9 +64,9 @@ unsafe extern "C" fn on_assert(
 /// A factory's initialization in this process.
 #[derive(Clone, Copy)]
 enum Init {
-    /// Under way since then on the thread of the handle ([`contain::this_thread`]); the lock
+    /// Under way on the thread of the handle ([`contain::this_thread`]); the lock
     /// is not held through the plugin's call.
-    Running(Instant, usize),
+    Running(usize),
     Done(sys::ApiGeneration),
     /// Its thread was ended in the call (a contained fault): it is not called again.
     Ended,
@@ -75,27 +77,11 @@ enum Init {
 /// never uninitialized, because its module stays loaded to the end (ARC-043).
 static INITIALIZED: Mutex<Vec<(usize, Init)>> = Mutex::new(Vec::new());
 
-/// How long a factory's initialization on another thread is waited for. One that takes
-/// longer hangs: the factory is not used again. One whose thread was ended fails at once.
-pub const INIT_WAIT: Duration = Duration::from_secs(35);
-
 /// Initializes `factory` once and returns the API generation it runs at.
 ///
 /// # Safety
 /// `factory` points to a live factory whose struct stays valid for the process.
 pub unsafe fn initialize(factory: *const sys::Factory) -> Result<sys::ApiGeneration, Error> {
-    // SAFETY: per the contract.
-    unsafe { initialize_within(factory, INIT_WAIT) }
-}
-
-/// As [`initialize`], waiting at most `wait` for an initialization on another thread.
-///
-/// # Safety
-/// As [`initialize`].
-unsafe fn initialize_within(
-    factory: *const sys::Factory,
-    wait: Duration,
-) -> Result<sys::ApiGeneration, Error> {
     if factory.is_null() {
         return Err(error("the plugin has no ARA factory"));
     }
@@ -112,20 +98,15 @@ unsafe fn initialize_within(
             Some(Init::Ended) => return Err(ended()),
             // A fault in the call ended its thread: nothing will finish it, so its callers do
             // not wait (and the factory is not called again in this process).
-            Some(Init::Running(_, thread)) if contain::thread_ended(thread) => {
+            Some(Init::Running(thread)) if contain::thread_ended(thread) => {
                 if let Some(e) = done.iter_mut().find(|(f, _)| *f == factory as usize) {
                     e.1 = Init::Ended;
                 }
                 contain::close_thread(thread);
                 return Err(ended());
             }
-            Some(Init::Running(since, _)) => {
+            Some(Init::Running(_)) => {
                 drop(done);
-                if since.elapsed() >= wait {
-                    return Err(error(
-                        "the plugin's ARA factory did not finish its initialization",
-                    ));
-                }
                 std::thread::sleep(Duration::from_millis(10));
             }
             None => break done,
@@ -164,7 +145,7 @@ unsafe fn initialize_within(
     // The lock is let go through the call: a call that never comes back (its thread ended by
     // the watch) must not keep the other plugins' documents from being made.
     let thread = contain::this_thread();
-    done.push((factory as usize, Init::Running(Instant::now(), thread)));
+    done.push((factory as usize, Init::Running(thread)));
     drop(done);
     contain::call(|| {
         // SAFETY: a configuration that lives through the call; the assert function is static.
@@ -850,12 +831,13 @@ mod tests {
         // SAFETY: as above.
         assert!(unsafe { initialize(other as *const sys::Factory) }.is_ok());
         assert!(at.elapsed() < Duration::from_secs(2), "{:?}", at.elapsed());
-        // A second caller of the slow one waits for it, and gives up after its wait.
-        // SAFETY: as above.
-        let second = unsafe { initialize_within(slow as *const sys::Factory, Duration::ZERO) };
-        assert!(second.is_err());
+        // A second caller waits for the first initialization to finish.
+        let second = std::thread::spawn(move || unsafe { initialize(slow as *const sys::Factory) });
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!second.is_finished());
         RELEASE.store(true, Ordering::Release);
         let g = t.join().unwrap().unwrap();
+        assert_eq!(second.join().unwrap().unwrap(), g);
         // SAFETY: as above.
         assert_eq!(
             unsafe { initialize(slow as *const sys::Factory) }.unwrap(),
