@@ -52,6 +52,32 @@ const FADE: u32 = 256;
 /// Parameter edits kept for the caller before the oldest are dropped.
 const MAX_PARAM_EDITS: usize = 65_536;
 static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(1);
+type EditorWake = dyn Fn() + Send + Sync;
+static EDITOR_WAKES: OnceLock<std::sync::Mutex<Vec<Weak<EditorWake>>>> = OnceLock::new();
+
+/// Subscribe to host editor messages before opening a window. The callback runs on the
+/// control-pipe reader, after the message has been queued; it must only wake the UI.
+pub fn subscribe_editor_wake(callback: &Arc<EditorWake>) {
+    EDITOR_WAKES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(Arc::downgrade(callback));
+}
+
+fn wake_editors() {
+    if let Some(wakes) = EDITOR_WAKES.get() {
+        let mut wakes = wakes.lock().unwrap_or_else(|e| e.into_inner());
+        wakes.retain(|wake| {
+            if let Some(callback) = wake.upgrade() {
+                callback();
+                true
+            } else {
+                false
+            }
+        });
+    }
+}
 /// Windows answers each block before returning to the audio callback.
 #[cfg(windows)]
 pub const DEFAULT_LATENCY: u32 = 0;
@@ -975,6 +1001,58 @@ mod capture_tests {
             link.take_editor_actions(),
             vec![request, EditorAction::PresetSelect("Clean".into())]
         );
+        assert!(link.take_editor_actions().is_empty());
+    }
+
+    #[test]
+    fn editor_action_wakes_a_subscriber_after_it_is_queued() {
+        use xirius_vst3::EditorAction;
+        let (server, link, _, _) = fixture();
+        let (tx, rx) = mpsc::sync_channel(1);
+        let wake: Arc<EditorWake> = Arc::new(move || {
+            let _ = tx.try_send(());
+        });
+        subscribe_editor_wake(&wake);
+        server.inner.dispatch(
+            0,
+            FromHost::EditorAction {
+                slot: 2,
+                action: EditorAction::Pin,
+            },
+        );
+        rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(link.take_editor_actions(), vec![EditorAction::Pin]);
+        server.inner.dispatch(
+            1,
+            FromHost::EditorAction {
+                slot: 2,
+                action: EditorAction::Power,
+            },
+        );
+        assert!(link.take_editor_actions().is_empty());
+    }
+
+    #[test]
+    fn closing_an_editor_discards_actions_from_its_previous_opening() {
+        use xirius_vst3::EditorAction;
+        let (server, link, _, _) = fixture();
+        server.inner.dispatch(
+            0,
+            FromHost::EditorAction {
+                slot: 2,
+                action: EditorAction::Power,
+            },
+        );
+        server.close_editor(&link);
+        assert!(link.take_editor_actions().is_empty());
+        server.inner.dispatch(
+            0,
+            FromHost::EditorAction {
+                slot: 2,
+                action: EditorAction::Pin,
+            },
+        );
+        server.inner.dispatch(0, FromHost::EditorClosed { slot: 2 });
         assert!(link.take_editor_actions().is_empty());
     }
 
@@ -2158,6 +2236,8 @@ impl PluginServer {
         l.editor_open = false;
         l.editor = None;
         l.editor_later = false;
+        l.editor_actions.clear();
+        l.editor_open_events.clear();
     }
 
     /// Queued IPC; no foreign window is touched by the caller.
@@ -2473,6 +2553,7 @@ impl Inner {
         }
         drop(st);
         self.changed.notify_all();
+        wake_editors();
         if restart {
             let server = PluginServer {
                 inner: self.clone(),
@@ -2486,6 +2567,15 @@ impl Inner {
         if st.epoch != epoch || st.proc.is_none() {
             return;
         }
+        let editor_message = matches!(
+            &msg,
+            FromHost::EditorAction { .. }
+                | FromHost::EditorOpening { .. }
+                | FromHost::EditorOpened { .. }
+                | FromHost::EditorOpenFailed { .. }
+                | FromHost::EditorClosed { .. }
+                | FromHost::EditorPosition { .. }
+        );
         match msg {
             FromHost::Opened {
                 slot,
@@ -2495,6 +2585,7 @@ impl Inner {
                 st.replies.insert(slot, (epoch, result));
                 drop(st);
                 self.changed.notify_all();
+                return;
             }
             FromHost::Gesture {
                 slot,
@@ -2623,6 +2714,8 @@ impl Inner {
                     let mut l = link.lock();
                     l.editor_open = false;
                     l.editor_later = false;
+                    l.editor_actions.clear();
+                    l.editor_open_events.clear();
                     l.shut += 1;
                     l.editor.take().is_some()
                 };
@@ -2647,6 +2740,10 @@ impl Inner {
                 }
             }
             FromHost::Hello { .. } => {}
+        }
+        drop(st);
+        if editor_message {
+            wake_editors();
         }
     }
 

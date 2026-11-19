@@ -1056,19 +1056,80 @@ fn watch(window: &Window, cx: &mut Context<Screen>, attention: bool) {
     .detach();
 }
 
-/// Native editor buttons belong to another process. Ask for them at frame cadence while an
-/// editor is open, including when the main window is idle or preparation owns the usual tick.
+/// The control-pipe reader wakes the screen after it queues editor messages. Register before
+/// waiting, then drain once: a message arriving between those two steps still wakes this task.
 fn watch_editor_bar(window: &Window, cx: &mut Context<Screen>) {
+    let (sender, mut receiver) = std::sync::mpsc::sync_channel(1);
+    let callback: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(move || {
+        let _ = sender.try_send(());
+    });
+    xirius_engine::server::subscribe_editor_wake(&callback);
+    cx.spawn_in(window, async move |this, cx| {
+        let mut pending = true;
+        loop {
+            if pending {
+                let alive = this.update_in(cx, |this, _, cx| {
+                    let Ok(mut studio) = this.studio.try_borrow_mut() else {
+                        return false;
+                    };
+                    if !studio.mixer.editors.is_empty() && studio.poll_editors() {
+                        cx.notify();
+                    }
+                    true
+                });
+                match alive {
+                    Ok(true) => pending = false,
+                    Ok(false) => {
+                        // An input callback briefly owns Studio. Retry the queued message
+                        // without waiting for a second host notification.
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(1))
+                            .await;
+                        continue;
+                    }
+                    Err(_) => break,
+                }
+            }
+            let (next, received) = cx
+                .background_executor()
+                .spawn(async move {
+                    (
+                        // design-lint: allow(ui-blocking-io) UI-364: this runs on GPUI's background executor, never in render or the audio callback; the timeout releases a closed window's task.
+                        receiver.recv_timeout(std::time::Duration::from_secs(1)),
+                        receiver,
+                    )
+                })
+                .await;
+            receiver = received;
+            match next {
+                Ok(()) => pending = true,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if this.update_in(cx, |_, _, _| ()).is_err() {
+                        break;
+                    }
+                    continue;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        drop(callback);
+    })
+    .detach();
+}
+
+/// Scan status is sampled every 100 ms even when no frame is otherwise needed. Only a
+/// changed count, file, or finished catalog asks GPUI to redraw.
+fn watch_plugin_scan(window: &Window, cx: &mut Context<Screen>) {
     cx.spawn_in(window, async move |this, cx| {
         loop {
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(16))
+                .timer(std::time::Duration::from_millis(100))
                 .await;
             let alive = this.update_in(cx, |this, _, cx| {
                 let Ok(mut studio) = this.studio.try_borrow_mut() else {
                     return;
                 };
-                if !studio.mixer.editors.is_empty() && studio.poll_editor_bar() {
+                if studio.poll_plugin_scan() {
                     cx.notify();
                 }
             });
@@ -2407,6 +2468,7 @@ pub fn run(opts: Options) {
                         let _ai_server = None;
                         watch(window, cx, !scripted);
                         watch_editor_bar(window, cx);
+                        watch_plugin_scan(window, cx);
                         let _activation =
                             Some(cx.observe_window_activation(window, |this, window, cx| {
                                 this.studio

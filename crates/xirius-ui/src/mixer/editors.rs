@@ -295,6 +295,7 @@ impl Studio {
                 }
             }
         }
+        let opened = !opened_sizes.is_empty();
         if !opened_sizes.is_empty() {
             let project = self.project();
             let sizes: Vec<_> = opened_sizes
@@ -310,6 +311,7 @@ impl Studio {
                 .collect();
             self.mixer.editor_sizes.extend(sizes);
         }
+        let had_failed = !failed.is_empty();
         for (id, reason) in failed {
             self.close_editor(id);
             self.error = Some(reason);
@@ -321,14 +323,16 @@ impl Studio {
             .filter(|e| !self.shown(e))
             .map(|e| e.id)
             .collect();
+        let had_gone = !gone.is_empty();
         for id in gone {
             self.close_editor(id);
         }
+        let lifecycle = opened | had_failed | had_gone;
         // While the song is being left, answers to the close's own pulls go in at the cursor:
         // they are not the person's edits (UI-354).
         let leaving = self.leaving_song();
         let Some(host) = self.transport.host_mut() else {
-            return keys;
+            return keys | lifecycle;
         };
         let edits = match if leaving {
             self.song.collect_plugin_edits_in_place(host)
@@ -345,7 +349,7 @@ impl Studio {
                 true
             }
         };
-        keys | edits
+        keys | edits | lifecycle
     }
 
     pub(crate) fn poll_editor_bar(&mut self) -> bool {
