@@ -4,6 +4,7 @@ use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 use vst3::Steinberg::{
     FIDString, FUnknown, IPluginFactory, IPluginFactory2, IPluginFactory2Trait, IPluginFactory3,
@@ -15,7 +16,7 @@ use windows_sys::Win32::Foundation::HMODULE;
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
-use crate::serial::{SETUP_LIMIT, turn, turn_within};
+use crate::serial::turn;
 use crate::{Error, c_str, error};
 
 #[cfg(target_os = "windows")]
@@ -175,6 +176,7 @@ fn binary_path(bundle: &Path) -> Result<PathBuf, Error> {
 impl Library {
     /// Loads the DLL, calls `InitDll` if present and takes the plugin factory.
     fn open(binary: PathBuf) -> Result<Library, Error> {
+        let started = Instant::now();
         #[cfg(target_os = "macos")]
         let (handle, factory) = macos::open(&binary)?;
         #[cfg(target_os = "windows")]
@@ -189,6 +191,9 @@ impl Library {
             .factory
             .as_ref()
             .ok_or_else(|| error("GetPluginFactory returned null"))?;
+        if std::env::var_os("XIRIUS_PLUGIN_HOST_LOG").is_some() {
+            eprintln!("plugin setup: factory ready in {:?}", started.elapsed());
+        }
         // SAFETY: plain data filled by the factory.
         let mut info: PFactoryInfo = unsafe { std::mem::zeroed() };
         if unsafe { factory.getFactoryInfo(&mut info) } == kResultOk {
@@ -199,6 +204,7 @@ impl Library {
 
     #[cfg(target_os = "windows")]
     fn open_windows(binary: &Path) -> Result<(HMODULE, Option<ComPtr<IPluginFactory>>), Error> {
+        let started = Instant::now();
         let w = wide(binary);
         let trace = std::env::var_os("XIRIUS_PLUGIN_HOST_LOG").is_some();
         if trace {
@@ -208,7 +214,7 @@ impl Library {
         // which is what hosting a plugin means.
         let handle = unsafe { LoadLibraryW(w.as_ptr()) };
         if trace {
-            eprintln!("plugin setup: LoadLibrary end");
+            eprintln!("plugin setup: LoadLibrary end in {:?}", started.elapsed());
         }
         if handle.is_null() {
             return Err(error(format!(
@@ -229,7 +235,7 @@ impl Library {
                     return Err(error("InitDll returned false"));
                 }
                 if trace {
-                    eprintln!("plugin setup: InitDll end");
+                    eprintln!("plugin setup: InitDll end in {:?}", started.elapsed());
                 }
             }
             let get = GetProcAddress(handle, c"GetPluginFactory".as_ptr().cast())
@@ -241,7 +247,10 @@ impl Library {
             }
             let factory = ComPtr::from_raw(get());
             if trace {
-                eprintln!("plugin setup: GetPluginFactory end");
+                eprintln!(
+                    "plugin setup: GetPluginFactory end in {:?}",
+                    started.elapsed()
+                );
             }
             Ok((handle, factory))
         }
@@ -257,7 +266,7 @@ impl Module {
     pub fn load(bundle: &Path) -> Result<Module, Error> {
         let binary = binary_path(bundle)?;
         let key = std::fs::canonicalize(&binary).unwrap_or_else(|_| binary.clone());
-        let _turn = turn_within("load", bundle, SETUP_LIMIT)?;
+        let _turn = turn("load", bundle);
         let mut loaded = LOADED.lock().unwrap_or_else(PoisonError::into_inner);
         let library = match loaded.iter_mut().find(|l| l.key == key) {
             Some(resident) => {

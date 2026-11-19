@@ -9,9 +9,8 @@
 //! that sends to its own window on that thread while setting up elsewhere does not deadlock.
 //!
 //! The holder and every waiter are written down with what they are doing and since when, so
-//! a turn that is not handed on says where it stopped: a setup gives up after
-//! [`SETUP_LIMIT`] with that in its error, a teardown (which cannot give up) prints it every
-//! [`REPORT_EVERY`], and [`turn_report`] gives it to anyone who asks.
+//! a turn that is not handed on says where it stopped every [`REPORT_EVERY`], and
+//! [`turn_report`] gives it to anyone who asks.
 
 use std::fmt::Write as _;
 use std::marker::PhantomData;
@@ -32,8 +31,6 @@ use crate::{Error, error};
 const PUMP_EVERY: Duration = Duration::from_millis(2);
 /// How often a thread without windows looks again on its own, even when no one woke it.
 const LOOK_EVERY: Duration = Duration::from_millis(50);
-/// How long a setup (loading a module, creating an instance) waits for the turn.
-pub(crate) const SETUP_LIMIT: Duration = Duration::from_secs(60);
 /// How often a teardown that is still waiting says so on stderr.
 const REPORT_EVERY: Duration = Duration::from_secs(30);
 
@@ -88,7 +85,8 @@ pub(crate) fn turn(what: &'static str, bundle: &Path) -> Turn {
     }
 }
 
-/// As [`turn`], but gives up after `limit`, with an error that says who holds the turn.
+/// Test the report produced when a turn is deliberately held past a limit.
+#[cfg(test)]
 pub(crate) fn turn_within(
     what: &'static str,
     bundle: &Path,

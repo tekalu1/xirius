@@ -24,7 +24,7 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc;
 use std::sync::{Arc, Condvar, MutexGuard, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -39,12 +39,6 @@ use crate::wire::{self, Fault, FromHost, Gesture, OpenSlot, Opened, ToHost};
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CONTROL_QUEUE: usize = 256;
-/// How long the host may take to open one plugin.
-const OPEN_TIMEOUT: Duration = Duration::from_secs(20);
-/// How long a starting host may take to say which protocol it speaks (a freshly built
-/// executable is read slowly the first time while it is scanned, and a busy machine can hold
-/// a starting process back for seconds).
-const HELLO_TIMEOUT: Duration = Duration::from_secs(30);
 /// Offline rendering gives up on a host that has not answered for this long. A busy machine
 /// can hold a working host back for seconds; giving up on it would leave the rest of the
 /// render dry.
@@ -1419,6 +1413,9 @@ struct State {
     proc: Option<Proc>,
     epoch: u64,
     starting: bool,
+    /// The process can be stopped even before its greeting has completed.
+    starting_stop: Option<Arc<AtomicU8>>,
+    cancel_start: bool,
     crashed: bool,
     recovering: bool,
     exit_code: Option<u32>,
@@ -1784,6 +1781,9 @@ impl PluginServer {
                 }
             }
         }
+        if !st.slots.contains_key(&slot) {
+            return Err("plugin opening was cancelled".into());
+        }
         let epoch = st.epoch;
         open.epoch = epoch;
         if let Some(rec) = st.slots.get_mut(&slot) {
@@ -1805,6 +1805,9 @@ impl PluginServer {
             });
         }
         let (mut st, r) = inner.wait_opened(st, slot, epoch);
+        if !st.slots.contains_key(&slot) {
+            return Err("plugin opening was cancelled".into());
+        }
         if r.is_err() && st.epoch == epoch && st.proc.is_none() {
             // The host went down while opening this plugin: leave it out and bring the others
             // back at once.
@@ -1847,6 +1850,27 @@ impl PluginServer {
             st.seat_next(link, None);
         }
         Some(rec.open)
+    }
+
+    /// Abandons an unfinished opening. A host with no other plugins is stopped so a
+    /// plugin blocked in foreign setup code cannot keep its process alive.
+    fn cancel_opening(&self, slot: u32) {
+        if slot == 0 {
+            return;
+        }
+        let _ = self.close(slot);
+        let mut st = self.inner.lock();
+        if st.slots.is_empty() {
+            st.cancel_start = st.starting;
+            if let Some(stop) = &st.starting_stop {
+                stop.store(QUIT, Ordering::Release);
+            }
+            if let Some(proc) = &st.proc {
+                proc.stop.store(QUIT, Ordering::Release);
+            }
+        }
+        drop(st);
+        self.inner.changed.notify_all();
     }
 
     /// The new mix that opened the plugin again has been swapped in: the instance it opened
@@ -2272,6 +2296,8 @@ impl Inner {
     ) -> Result<MutexGuard<'a, State>, String> {
         let mut st = self.lock();
         st.starting = false;
+        st.starting_stop = None;
+        st.cancel_start = false;
         self.changed.notify_all();
         let early = st.ended_early.take();
         let proc = match result {
@@ -2328,6 +2354,15 @@ impl Inner {
         let stdin = child.stdin.take().ok_or("no stdin")?;
         let mut stdout = child.stdout.take().ok_or("no stdout")?;
         let stop = Arc::new(AtomicU8::new(KEEP));
+        {
+            let mut st = self.lock();
+            if st.epoch == epoch {
+                if st.cancel_start {
+                    stop.store(QUIT, Ordering::Release);
+                }
+                st.starting_stop = Some(stop.clone());
+            }
+        }
         let pid = child.id();
         let weak: Weak<Inner> = Arc::downgrade(self);
         // The first message is the host's greeting; it goes to the check below.
@@ -2387,7 +2422,7 @@ impl Inner {
             })
             .map_err(|e| e.to_string())?;
         let rebuild = "エンジンと同じビルドの xirius-plugin-host を配置してください";
-        let problem = match hello_rx.recv_timeout(HELLO_TIMEOUT) {
+        let problem = match hello_rx.recv() {
             Ok(Some((protocol, _))) if protocol == wire::PROTOCOL => None,
             Ok(Some((protocol, build))) => Some(format!(
                 "通信プロトコルのバージョンが一致しません（xirius-plugin-host {build} は {protocol}、エンジンは {}）。{rebuild}",
@@ -2396,12 +2431,8 @@ impl Inner {
             Ok(None) => Some(format!(
                 "起動時にバージョンが通知されませんでした（xirius-plugin-host ではないか、バージョン確認に対応していない古いビルドです）。{rebuild}"
             )),
-            Err(RecvTimeoutError::Disconnected) => Some(format!(
+            Err(_) => Some(format!(
                 "バージョンを通知せずに終了しました（バージョン確認に対応していない古い xirius-plugin-host です）。{rebuild}"
-            )),
-            Err(RecvTimeoutError::Timeout) => Some(format!(
-                "{} 秒待ってもバージョンが通知されません（バージョン確認に対応していない古い xirius-plugin-host か、別のプログラムです）。{rebuild}",
-                HELLO_TIMEOUT.as_secs()
             )),
         };
         if let Some(e) = problem {
@@ -2620,7 +2651,6 @@ impl Inner {
         slot: u32,
         epoch: u64,
     ) -> (MutexGuard<'a, State>, Result<Opened, String>) {
-        let end = Instant::now() + OPEN_TIMEOUT;
         loop {
             if let Some((e, r)) = st.replies.remove(&slot)
                 && e == epoch
@@ -2630,18 +2660,10 @@ impl Inner {
             if st.epoch != epoch || st.proc.is_none() {
                 return (st, Err("プラグインのプロセスが終了しました".into()));
             }
-            let now = Instant::now();
-            if now >= end {
-                return (
-                    st,
-                    Err("プラグインが 20 秒以内に読み込まれませんでした".into()),
-                );
+            if !st.slots.contains_key(&slot) {
+                return (st, Err("plugin opening was cancelled".into()));
             }
-            st = self
-                .changed
-                .wait_timeout(st, end - now)
-                .unwrap_or_else(|e| e.into_inner())
-                .0;
+            st = self.changed.wait(st).unwrap_or_else(|e| e.into_inner());
         }
     }
 
@@ -2656,17 +2678,8 @@ impl Inner {
             let old = p.epoch;
             p.stop.store(QUIT, Ordering::Release);
             drop(p);
-            let end = Instant::now() + Duration::from_secs(5);
             while self.down_epoch.load(Ordering::Acquire) < old {
-                let now = Instant::now();
-                if now >= end {
-                    return Err("前のプラグインのプロセスが終了しません".into());
-                }
-                st = self
-                    .changed
-                    .wait_timeout(st, end - now)
-                    .unwrap_or_else(|e| e.into_inner())
-                    .0;
+                st = self.changed.wait(st).unwrap_or_else(|e| e.into_inner());
             }
         }
         st.crashed = false;
@@ -3449,13 +3462,22 @@ impl RemotePlugin {
         if let Some(answer) = unfinished {
             if !wait && !answer.is_finished() {
                 let server = self.server.clone();
-                // Without a thread to spare the instance stays in the host until it goes away.
-                let _ = std::thread::Builder::new()
+                let slot = c.slot.clone();
+                // A dropped opening must not wait for foreign setup code on the caller.
+                // The slot may still be awaiting the host's greeting.
+                let spawned = std::thread::Builder::new()
                     .name("xirius-plugin-close".into())
                     .spawn(move || {
+                        while slot.load(Ordering::Acquire) == 0 && !answer.is_finished() {
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        server.cancel_opening(slot.load(Ordering::Acquire));
                         let _ = answer.join();
-                        server.close(c.slot.load(Ordering::Acquire));
+                        server.close(slot.load(Ordering::Acquire));
                     });
+                if spawned.is_err() {
+                    self.server.cancel_opening(c.slot.load(Ordering::Acquire));
+                }
                 return;
             }
             let _ = answer.join();

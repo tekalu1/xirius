@@ -8,6 +8,8 @@
 
 窓を開く処理はホストの制御スレッドを占める。同じホストのほかの命令もその間は順番を待つ。メーカーごとの分け方で影響する範囲を限る。
 
+プラグインの準備（ホスト起動、モジュールと実体の読み込み、状態の復元、窓を開く処理）には時間による上限を設けない。準備は画面のスレッドとは別に進め、取り消された開きかけの実体は閉じる。ほかに実体のないホストで準備が止まっていれば、そのホストを終了する。ホストが終了したときは、時間を待たずにパイプの切断から開く処理を終える。音声処理の停止判定は別の決まりである。
+
 The ordinary host reports `EditorOpening`, `EditorOpened { origin, size }`, or
 `EditorOpenFailed { reason }` to `PluginLink::take_editor_open_events` in that order.
 Opening an editor still occupies its host's control thread; other plugins in that process
@@ -71,7 +73,7 @@ wait for it to finish. Process grouping limits the affected plugins.
   - 画面（`mixer/editors.rs`）は、ホストに開かせた窓を、ホストが一度「開いている」と言うまでは最長 3 秒開いているものと取る。一度言った後は、ホストの言うことだけで決める（閉じたと言えば 3 秒を待たずに消す）。
   - 書き出し（`export::render_with`）では、組んだミックスがすぐ鳴るので、組むたびに `leaving` を空ける（`PluginLoader::built_offline`）。
   - 別のホストどうしでも、待つ間に古い窓を閉じたら（画面からでも、ホストでの人の操作でも）、新しいリンクの「窓が開いている」印を消し（`promote_opened`）、新しいホストで開かない。
-- `plugin.isolation.set` と、プラグインのプロセスが落ちた後の開き直し（`restart_plugin(s)_later`）も同じ道を通る。開き直しは、生きている古いホストが終わるのを待つ分（最長 5 秒）だけ待つ。
+- `plugin.isolation.set` と、プラグインのプロセスが落ちた後の開き直し（`restart_plugin(s)_later`）も同じ道を通る。開き直しは、生きている古いホストの終了を待ってから進める。
 - 別プロセスのプラグインを開いた時に出た警告は、返事が来てから `take_late_warnings` で届く（`プラグインを読み込めません` の警告は今までと同じ文言）。
 - 装置を失った後の 2 秒ごとの組み直し（`Transport::reopen` → `ensure`）も `start_late` で組むので、別プロセスのプラグインの返事は待たない。
 

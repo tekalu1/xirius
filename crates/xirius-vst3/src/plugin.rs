@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
 use std::sync::Arc;
+use std::time::Instant;
 
 use vst3::Steinberg::Vst::BusDirections_::{kInput, kOutput};
 use vst3::Steinberg::Vst::Event_::EventTypes_::{
@@ -31,7 +32,7 @@ use vst3::{ComPtr, ComWrapper};
 use crate::host::{ComponentHandler, HostApplication};
 use crate::module::{ClassInfo, Module};
 use crate::process::{EventList, ParameterChanges};
-use crate::serial::{SETUP_LIMIT, turn, turn_within};
+use crate::serial::turn;
 use crate::stream::MemoryStream;
 use crate::{Error, error, utf16_str};
 
@@ -182,17 +183,28 @@ impl Plugin {
     /// synchronised to the component's state. Any thread may call it; setups across the
     /// process take turns.
     pub fn new(module: Arc<Module>, class: &ClassInfo) -> Result<Plugin, Error> {
+        let started = Instant::now();
+        let trace = std::env::var_os("XIRIUS_PLUGIN_HOST_LOG").is_some();
         // Held to the end, so a failed setup is also released during the turn.
-        let _turn = turn_within("create an instance of", module.path(), SETUP_LIMIT)?;
+        let _turn = turn("create an instance of", module.path());
         let host = ComWrapper::new(HostApplication);
         let context = host.as_com_ref::<IHostApplication>().unwrap().as_ptr() as *mut FUnknown;
         module.set_host_context(context);
         let component = module
             .create::<IComponent>(&class.cid)
             .ok_or_else(|| error(format!("could not create {}", class.name)))?;
+        if trace {
+            eprintln!("plugin setup: component created in {:?}", started.elapsed());
+        }
         // SAFETY: `context` stays alive in `Shared`.
         if unsafe { component.initialize(context) } != kResultOk {
             return Err(error("IComponent::initialize failed"));
+        }
+        if trace {
+            eprintln!(
+                "plugin setup: component initialized in {:?}",
+                started.elapsed()
+            );
         }
         let Some(processor) = component.cast::<IAudioProcessor>() else {
             // SAFETY: undoes the initialize above.
@@ -746,6 +758,8 @@ impl AudioPart {
         max_block: usize,
         offline: bool,
     ) -> Result<u32, Error> {
+        let started = Instant::now();
+        let trace = std::env::var_os("XIRIUS_PLUGIN_HOST_LOG").is_some();
         self.deactivate();
         let comp = &self.shared.component;
         let proc = &self.shared.processor;
@@ -800,10 +814,16 @@ impl AudioPart {
             if proc.setupProcessing(&mut setup) != kResultOk {
                 return Err(error("IAudioProcessor::setupProcessing failed"));
             }
+            if trace {
+                eprintln!("plugin setup: setupProcessing in {:?}", started.elapsed());
+            }
             self.inputs = Buses::new(in_ch, max_block);
             self.outputs = Buses::new(out_ch, max_block);
             if comp.setActive(1) != kResultOk {
                 return Err(error("IComponent::setActive failed"));
+            }
+            if trace {
+                eprintln!("plugin setup: setActive in {:?}", started.elapsed());
             }
             // Some plugins answer kNotImplemented here; that is allowed.
             proc.setProcessing(1);
