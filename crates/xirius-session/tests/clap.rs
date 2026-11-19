@@ -168,6 +168,36 @@ fn settles_at(host: &mut SessionHost, audio: &mut AudioEngine, level: f32) {
 }
 
 #[test]
+fn a_hosted_effect_bypasses_and_resumes_without_reopening_its_instance() {
+    let _records = CrashRecords::new();
+    let (_dir, plugin, wav) = files("session_clap_bypass");
+    let entries = probe(&plugin).unwrap();
+    let uid = entries[0].uid.clone();
+    let catalog = Arc::new(Catalog {
+        entries,
+        failures: Vec::new(),
+    });
+    let Some(exe) = find_host() else {
+        eprintln!("the plugin host binary is not built; the separate process is not checked");
+        return;
+    };
+    let mut p = song(&wav, &uid, Some(state(0.25)));
+    let (mut host, mut audio) = start(&p, &catalog, Isolation::Separate(exe));
+    settles_at(&mut host, &mut audio, 0.25);
+    let link = host.plugins().link(PLUGIN).unwrap();
+    for bypass in [true, false, true, false] {
+        Arc::make_mut(p.tracks.get_mut(&TRACK).unwrap()).inserts[0].bypass = bypass;
+        let report = host.sync(&p);
+        assert!(
+            !report.swapped,
+            "bypass rebuilt the host instance: {report:?}"
+        );
+        assert!(Arc::ptr_eq(&link, &host.plugins().link(PLUGIN).unwrap()));
+        settles_at(&mut host, &mut audio, if bypass { 1.0 } else { 0.25 });
+    }
+}
+
+#[test]
 fn a_clap_plugin_plays_with_its_state_and_an_edit_comes_into_the_song() {
     let _records = CrashRecords::new();
     let (_dir, clap, wav) = files("session_clap");

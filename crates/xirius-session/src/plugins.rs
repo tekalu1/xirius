@@ -387,6 +387,8 @@ fn apply_remote(r: &mut Remote, x: &Plugin) -> bool {
         return false;
     }
     if r.applied.state == x.state && r.applied.params == x.params {
+        r.link.set_bypassed(x.bypass);
+        r.applied = x.clone();
         return true;
     }
     if r.applied.params.keys().any(|k| !x.params.contains_key(k)) {
@@ -408,6 +410,7 @@ fn apply_remote(r: &mut Remote, x: &Plugin) -> bool {
         }
     }
     r.applied = x.clone();
+    r.link.set_bypassed(x.bypass);
     true
 }
 
@@ -1146,6 +1149,7 @@ impl PluginLoader {
             Some(r) if stays => r.link.clone(),
             _ => PluginLink::new(),
         };
+        link.set_bypassed(x.bypass);
         let spec = RemoteSpec {
             name: x.name.clone(),
             bundle: entry.path.clone(),

@@ -927,7 +927,7 @@ impl Builder {
     ) -> Box<dyn Processor> {
         let source = self.instrument_for(t, inst, warnings);
         match inst {
-            Some(x) if x.runs() => {
+            Some(x) if x.runs() || (is_hosted(x) && !x.deactivated) => {
                 let instrument =
                     xirius_engine::performance::Instrument::new(x.id.0, self.timed(x.id.0, source));
                 let instrument = if x.builtin().is_none() {
@@ -1006,7 +1006,7 @@ impl Builder {
         warnings: &mut Vec<String>,
     ) -> Box<dyn Processor> {
         match inst {
-            Some(x) if !x.runs() => Box::new(Silence),
+            Some(x) if !x.runs() && (!is_hosted(x) || x.deactivated) => Box::new(Silence),
             Some(x) if is_hosted(x) => match self.plugins.instantiate(&t.name, x) {
                 Ok((p, w)) => {
                     warnings.extend(w.into_iter().map(|w| format!("{}: {w}", t.name)));
@@ -1069,10 +1069,9 @@ impl Builder {
             };
             out.push(p);
         };
-        for x in plugins
-            .iter()
-            .filter(|x| x.kind == PluginKind::Effect && x.runs())
-        {
+        for x in plugins.iter().filter(|x| {
+            x.kind == PluginKind::Effect && (x.runs() || (is_hosted(x) && !x.deactivated))
+        }) {
             if x.format == "builtin" && x.uid.eq_ignore_ascii_case("gain") {
                 let db = x.params.get("gain_db").copied().unwrap_or(0.0);
                 keyed(x, self.timed(x.id.0, Box::new(Gain::new(db_to_gain(db)))));

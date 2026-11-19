@@ -282,7 +282,7 @@ fn units(p: &Project) -> Vec<Unit> {
     let graph = Graph::of(p);
     let scope = Scope::new(p, Select::All);
     let structure = Structure::of(p, &graph, &scope);
-    let hosted = |x: &&Plugin| x.runs() && is_hosted(x);
+    let hosted = |x: &&Plugin| !x.deactivated && is_hosted(x);
     let effects = |inserts: &[Plugin]| -> Vec<Plugin> {
         inserts
             .iter()

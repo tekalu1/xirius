@@ -185,6 +185,8 @@ pub struct PluginLink {
     states_seen: AtomicU64,
     /// The last block came from the plugin itself, not the dry signal (ENG-064).
     live: AtomicBool,
+    /// A hosted bypass leaves its instance and editor alive while the client plays dry audio.
+    bypassed: AtomicBool,
     /// How many openings the host has answered for this plugin (ENG-065).
     answers: AtomicU64,
     inner: Mutex<LinkInner>,
@@ -283,6 +285,10 @@ impl LinkInner {
 }
 
 impl PluginLink {
+    pub fn set_bypassed(&self, bypassed: bool) {
+        self.bypassed.store(bypassed, Ordering::Release);
+    }
+
     pub fn copy_editor_context_from(&self, previous: &PluginLink) {
         let context = {
             let old = previous.lock();
@@ -3773,6 +3779,17 @@ impl Processor for RemotePlugin {
 
     fn process(&mut self, io: &mut AudioIo<'_>, events: &[NoteEvent]) {
         self.play(io, events);
+        if self.link.bypassed.load(Ordering::Acquire) {
+            let n = io.frames();
+            if self.spec.instrument {
+                io.left.fill(0.0);
+                io.right.fill(0.0);
+            } else {
+                io.left.copy_from_slice(&self.scratch_l[..n]);
+                io.right.copy_from_slice(&self.scratch_r[..n]);
+            }
+            self.link.dry_blocks.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn latency(&self) -> u32 {

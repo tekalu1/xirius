@@ -1679,7 +1679,10 @@ impl SessionHost {
                 let running = is_hosted(b) || loader.is_stock(b.id);
                 let mut values = b.clone();
                 values.params.clone_from(&effective.params);
-                if !b.runs() || a.deactivated != b.deactivated || !running || !loader.apply(&values)
+                if (!b.runs() && !is_hosted(b))
+                    || a.deactivated != b.deactivated
+                    || !running
+                    || !loader.apply(&values)
                 {
                     return false;
                 }
@@ -2100,6 +2103,11 @@ fn without_plugin_values(s: &Structure) -> Structure {
             if is_hosted(x) || x.builtin().is_some() {
                 x.params.clear();
                 x.state = None;
+                if is_hosted(x) {
+                    x.bypass = false;
+                    // A preset's display name does not change the running graph.
+                    x.preset = None;
+                }
             }
             strip_sidechain(x);
         }
