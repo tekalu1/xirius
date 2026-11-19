@@ -204,6 +204,8 @@ fn capture_windows(s: &mut Studio, shot: &str, dir: &Path) {
         .map(|e| (e.id, e.title.clone(), e.heard()))
         .collect();
     for (id, title, heard) in open {
+        #[cfg(not(windows))]
+        let _ = id;
         let t = Instant::now();
         let mut hwnd = None;
         while hwnd.is_none() && t.elapsed() < HOST_WAIT {
