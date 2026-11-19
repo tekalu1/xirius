@@ -86,7 +86,7 @@ impl Saving {
         self.target.is_none() && self.leaving.is_none() && !self.veil()
     }
     pub fn veil(&self) -> bool {
-        self.since.elapsed() >= crate::wait::OVERLAY_AFTER
+        crate::wait::now().saturating_duration_since(self.since) >= crate::wait::OVERLAY_AFTER
     }
     pub fn cancellable(&self) -> bool {
         self.target.is_some() && self.mcp.is_none() && self.command.is_none()
@@ -1344,6 +1344,16 @@ mod tests {
 
     #[test]
     fn a_rescan_done_before_the_veil_keeps_the_held_keys() {
+        // The veil is a matter of the waits' clock: held where the rescan began, a runner that
+        // is slow to finish it cannot carry it past the veil.
+        struct Still;
+        impl Drop for Still {
+            fn drop(&mut self) {
+                crate::wait::script_time(None);
+            }
+        }
+        crate::wait::script_time(Some(Instant::now()));
+        let _still = Still;
         let root = tempfile::tempdir().unwrap();
         let mut s = held_while_rescanning(root.path(), Duration::ZERO);
         finish(&mut s);
