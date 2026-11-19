@@ -638,6 +638,7 @@ impl AudioEngine {
         for (chunk_index, chunk) in out.chunks_mut(max_block * channels).enumerate() {
             let n = chunk.len() / channels;
             if let Some(midi) = &mut self.midi_in {
+                midi.recording(self.capture.is_some() && self.transport.playing);
                 let (capture, plan) = (&mut self.capture, &mut self.plan);
                 midi.read_ports(n, &mut |offset, port, msg| {
                     if let Some(c) = capture {
