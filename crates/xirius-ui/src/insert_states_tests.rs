@@ -155,12 +155,17 @@ impl Hold {
 
 /// Keep the answer-path test independent of CI scheduling when a loaded runner
 /// delays the host beyond the ordinary UI deadline.
-struct AnswerClock;
+struct AnswerClock(std::time::Instant);
 
 impl AnswerClock {
     fn new() -> Self {
-        crate::wait::script_time(Some(std::time::Instant::now()));
-        Self
+        let now = std::time::Instant::now();
+        crate::wait::script_time(Some(now));
+        Self(now)
+    }
+
+    fn advance(&self, by: std::time::Duration) {
+        crate::wait::script_time(Some(self.0 + by));
     }
 }
 
@@ -168,6 +173,29 @@ impl Drop for AnswerClock {
     fn drop(&mut self) {
         crate::wait::script_time(None);
     }
+}
+
+#[test]
+fn a_drag_with_no_answer_uses_the_song_state_at_the_deadline() {
+    let _records = crate::shot::CrashRecords::new();
+    let Song {
+        mut s,
+        g,
+        vocal,
+        guitar,
+        from,
+        ..
+    } = song("dedicated");
+    turn_silently(&mut s, from, 0.5);
+    let clock = AnswerClock::new();
+    let _hold = Hold::new();
+    drag(&mut s, &g, vocal, guitar);
+    assert!(s.inserts_wait.is_some());
+    clock.advance(xirius_session::host::PULL_WAIT + std::time::Duration::from_millis(1));
+    s.tick();
+    assert!(s.inserts_wait.is_none());
+    assert_eq!(held(&s, guitar), (0.75, None));
+    s.transport.pause();
 }
 
 #[test]
@@ -187,6 +215,9 @@ fn a_drag_carries_what_the_plugin_holds_now_and_an_undo_brings_back_what_it_repl
     assert_eq!(held(&s, guitar), (0.25, None));
     let before = s.song.steps();
 
+    // This test holds the answer to exercise the waiting path. Keep its UI deadline
+    // fixed so a busy runner cannot turn that hold into the timeout path instead.
+    let _answer_clock = AnswerClock::new();
     let hold = Hold::new();
     drag(&mut s, &g, vocal, guitar);
     // the window goes on while the plug-ins answer; the keys wait with the paste
