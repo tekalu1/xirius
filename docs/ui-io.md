@@ -92,6 +92,8 @@ cleanup・グルーヴ・通知・外部監視・クラッシュ記録・更新�
 
 `cargo run -p xirius-design-lint -- --audit-ui-io` は、許可済みのものも含む呼び出し位置を出す。
 `--ui-io-inventory` の安定した集計は [ui-io-audit.tsv](ui-io-audit.tsv) に記録する。
+
+UI-368: ルーラーの押下処理を `press_flow.rs` に分けたため、そこでの `arrange_run`、`lock`、`seek` と `ruler_drag.rs` の `seek` を一覧に追加した。これらは既存の画面入力から実行する操作で、描画の経路には置かない。
 `ui_io_inventory` の CI 試験はこの集計と実ソースを照合するため、許可済みの行に呼び出しを
 足した場合も黙って増えない。行の移動だけでは更新を求めない。更新時は呼び出しの所有者を
 再確認し、この表と注釈を直してから集計を取り直す。Rust 全体の型付き呼び出しグラフを

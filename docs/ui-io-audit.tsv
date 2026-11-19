@@ -194,6 +194,9 @@ crates/xirius-ui/src/palette_args.rs	run_parsed	1
 crates/xirius-ui/src/pan.rs	lock	1
 crates/xirius-ui/src/pick_list.rs	lock	1
 crates/xirius-ui/src/pointer_os.rs	lock	1
+crates/xirius-ui/src/press_flow.rs	arrange_run	1
+crates/xirius-ui/src/press_flow.rs	lock	1
+crates/xirius-ui/src/press_flow.rs	seek	1
 crates/xirius-ui/src/quantize_import.rs	run	1
 crates/xirius-ui/src/quantize_import.rs	std :: fs :: read	1
 crates/xirius-ui/src/rec_area.rs	arrange_run	2
@@ -213,6 +216,7 @@ crates/xirius-ui/src/roll/probe.rs	run	3
 crates/xirius-ui/src/roll/probe.rs	std :: fs :: create_dir_all	1
 crates/xirius-ui/src/roll/probe.rs	std :: fs :: write	1
 crates/xirius-ui/src/ruler_drag.rs	lock	1
+crates/xirius-ui/src/ruler_drag.rs	seek	1
 crates/xirius-ui/src/saving.rs	join	1
 crates/xirius-ui/src/saving.rs	save_version	2
 crates/xirius-ui/src/screen.rs	eprintln	10

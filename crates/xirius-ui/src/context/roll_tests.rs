@@ -294,7 +294,7 @@ fn the_empty_grid_pastes_selects_inverts_and_sets_the_grid() {
     assert_eq!(notes(&s, &g).len(), 4);
 
     // The pasted note sits where the press was; the grid rows are asked from empty grid.
-    let (x, y) = (x, y + 4.0 * s.roll.view(&s.roll_ctx(&g).unwrap()).row_h);
+    let (x, y) = (x, y + 2.0 * s.roll.view(&s.roll_ctx(&g).unwrap()).row_h);
     assert!(s.scene_context(&g, x, y));
     assert!(choose(&mut s, &g, "グリッド"));
     assert_eq!(labels(&s), ["戻る", "1/4", "1/8", "1/16", "1/32", "3 連"]);

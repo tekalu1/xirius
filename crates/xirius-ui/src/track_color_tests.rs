@@ -10,7 +10,7 @@ use xirius_design::{Layout, Space};
 
 fn studio() -> (Studio, Geometry) {
     let s = Studio::sample();
-    let g = s.geometry(1440.0, 860.0);
+    let g = s.geometry(1440.0, 960.0);
     (s, g)
 }
 
