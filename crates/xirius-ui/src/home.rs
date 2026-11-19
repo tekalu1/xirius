@@ -90,16 +90,23 @@ pub enum Button {
     New,
     Open,
     Dawproject,
+    Settings,
 }
 
 impl Button {
-    pub const ALL: [Button; 3] = [Button::New, Button::Open, Button::Dawproject];
+    pub const ALL: [Button; 4] = [
+        Button::New,
+        Button::Open,
+        Button::Dawproject,
+        Button::Settings,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Button::New => "新規",
             Button::Open => "開く…",
             Button::Dawproject => "DAWproject を開く…",
+            Button::Settings => "設定",
         }
     }
 
@@ -108,6 +115,7 @@ impl Button {
             Button::New => "Ctrl+N",
             Button::Open => "Ctrl+O",
             Button::Dawproject => "",
+            Button::Settings => "",
         }
     }
 
@@ -116,6 +124,7 @@ impl Button {
             Button::New => "plus",
             Button::Open => "folder-open",
             Button::Dawproject => "open",
+            Button::Settings => "gear",
         }
     }
 }
@@ -257,7 +266,7 @@ impl Home {
 /// Where the start screen's parts are.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HomeLayout {
-    pub buttons: [Rect; 3],
+    pub buttons: [Rect; 4],
     /// The buttons say their keys (not in a narrow window).
     pub keys: bool,
     pub no_device: Option<Rect>,
@@ -306,7 +315,7 @@ impl HomeLayout {
         };
 
         // The buttons, and the line under them.
-        let mut buttons = [Rect::default(); 3];
+        let mut buttons = [Rect::default(); 4];
         let (list_x, list_w, list_y0, device_y);
         if narrow {
             let (mut x, mut y) = (x0, z.y);
@@ -332,9 +341,14 @@ impl HomeLayout {
             for (i, r) in buttons.iter_mut().enumerate() {
                 *r = Rect::new(x0, y, LEFT_W, BUTTON_H);
                 // 新規 stands apart from the other two.
-                y += BUTTON_H + if i == 0 { gap + Space::X2.px() } else { gap };
+                y += BUTTON_H
+                    + if i == 0 || i == 2 {
+                        gap + Space::X2.px()
+                    } else {
+                        gap
+                    };
             }
-            device_y = buttons[2].bottom() + Space::X3.px();
+            device_y = buttons[3].bottom() + Space::X3.px();
             list_x = x0 + LEFT_W + Space::X6.px();
             list_w = (x0 + w - list_x).max(0.0);
             list_y0 = z.y;
@@ -638,6 +652,7 @@ impl Studio {
             Button::New => self.start_leaving(crate::saving::Leave::New),
             Button::Open => self.file_request = Some(FileRequest::Open),
             Button::Dawproject => self.file_request = Some(FileRequest::OpenDawproject),
+            Button::Settings => self.open_settings(crate::settings::Section::General),
         }
     }
 
@@ -727,7 +742,7 @@ impl Studio {
                 Focus::Button(b) => {
                     let i = Button::ALL.iter().position(|x| *x == b).unwrap_or(0);
                     let j = if key == "down" {
-                        (i + 1).min(2)
+                        (i + 1).min(Button::ALL.len() - 1)
                     } else {
                         i.saturating_sub(1)
                     };

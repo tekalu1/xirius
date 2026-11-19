@@ -164,6 +164,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
             Spot::Button(Button::New) => ("home.new", "song.new"),
             Spot::Button(Button::Open) => ("home.open", "song.open"),
             Spot::Button(Button::Dawproject) => ("home.dawproject", "song.open_dawproject"),
+            Spot::Button(Button::Settings) => ("home.settings", "settings.open"),
             Spot::Device => ("home.no_device", "audio.no_device.menu"),
             // Typing there only filters the list.
             Spot::Search | Spot::SearchClear => return None,
@@ -334,8 +335,8 @@ pub const APPROVED: &[Approved] = &[
     },
     Approved {
         op: "settings.open",
-        places: &["popup.nodevice", "rail.settings"],
-        ground: "「オーディオデバイスなし」のメニューの「オーディオの設定…」と左の帯の設定: 2026-11-03 の利用者の決定（UI-350）",
+        places: &["home.settings", "popup.nodevice", "rail.settings"],
+        ground: "設定の入口は左の帯とスタート画面にある: 2026-11-19 の持ち主の決定（UI-367）",
     },
 ];
 
