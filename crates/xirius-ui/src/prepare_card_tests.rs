@@ -139,6 +139,35 @@ fn opened(s: &Studio, ids: &[PluginId]) -> bool {
         .all(|id| host.plugin_timings().opened(id.0).is_some())
 }
 
+/// Whether each plugin's host has said how its opening went.
+fn answered(s: &Studio, ids: &[PluginId]) -> bool {
+    let host = s.transport.host().expect("the player");
+    ids.iter().all(|id| host.plugins().answered(*id))
+}
+
+/// How long each plugin takes to open in a host started while this is held. The plugins of a
+/// song share a host and open one after the other, so the card's count changes this far apart:
+/// a loop that looks at it must be held up longer than this to see two tracks done at once.
+struct SlowOpening;
+
+const OPEN: Duration = Duration::from_millis(300);
+
+impl SlowOpening {
+    fn new() -> SlowOpening {
+        // SAFETY: each test runs in a process of its own (nextest), and the host reads this when
+        // it opens a plugin, not before the song is prepared.
+        unsafe { std::env::set_var("XIRIUS_TEST_VST3_OPEN_MS", OPEN.as_millis().to_string()) };
+        SlowOpening
+    }
+}
+
+impl Drop for SlowOpening {
+    fn drop(&mut self) {
+        // SAFETY: as above.
+        unsafe { std::env::remove_var("XIRIUS_TEST_VST3_OPEN_MS") };
+    }
+}
+
 #[test]
 fn a_window_without_the_device_prepares_nothing_when_a_song_opens() {
     let _records = crate::shot::CrashRecords::new();
@@ -158,6 +187,7 @@ fn a_window_without_the_device_prepares_nothing_when_a_song_opens() {
 fn the_card_counts_the_tracks_as_their_plugins_open_and_closes_when_the_song_sounds() {
     let _records = crate::shot::CrashRecords::new();
     let (mut s, ids, names) = with_plugins();
+    let _slow = SlowOpening::new();
     s.prepare_song();
     let card = s.preparing.as_ref().expect("the card");
     let total = card.progress.units.len();
@@ -234,6 +264,13 @@ fn later_closes_the_card_and_what_is_left_opens_when_first_needed() {
     s.tick();
     assert!(!s.transport.preparing());
     assert!(opened(&s, &ids));
+    // The hosts were only asked to open them. Ending the test with a host still starting
+    // leaves its process holding the runner's output a while after the test is over.
+    let t = Instant::now();
+    while !answered(&s, &ids) {
+        assert!(t.elapsed() < Duration::from_secs(60), "the hosts answer");
+        s.tick();
+    }
 }
 
 #[test]
