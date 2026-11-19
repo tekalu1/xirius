@@ -91,9 +91,47 @@ fn the_first_time_lists_only_the_sample_with_no_search_and_new_has_the_keys() {
             Focus::Button(Button::New),
             Focus::Button(Button::Open),
             Focus::Button(Button::Dawproject),
+            Focus::Button(Button::Settings),
             Focus::List
         ]
     );
+}
+
+#[test]
+fn settings_at_the_end_of_the_start_actions_opens_general_and_escape_returns() {
+    let (_tmp, mut s, g) = kept(&[]);
+    let l = s.home_layout(&g).unwrap();
+    assert!(l.button(Button::Settings).y > l.button(Button::Dawproject).bottom());
+    assert_eq!(home(&s).focus, Focus::Button(Button::New));
+    assert!(s.home_press(&g, Spot::Button(Button::Settings)));
+    assert_eq!(
+        s.settings.as_ref().map(|ui| ui.section),
+        Some(crate::settings::Section::General)
+    );
+    assert!(s.settings_key("escape", Mods::NONE));
+    assert!(s.settings.is_none());
+    assert!(s.home_shown());
+    assert_eq!(home(&s).focus, Focus::Button(Button::Settings));
+    assert!(s.home_key(&g, "enter", Mods::NONE));
+    assert_eq!(
+        s.settings.as_ref().map(|ui| ui.section),
+        Some(crate::settings::Section::General)
+    );
+}
+
+#[test]
+fn the_start_actions_have_a_pointing_cursor() {
+    let (_tmp, mut s, g) = kept(&[]);
+    let layout = s.home_layout(&g).unwrap();
+    for button in Button::ALL {
+        let r = layout.button(button);
+        s.input_map.pointer = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+        assert_eq!(
+            crate::pointer::of_studio(&s, &g).style,
+            gpui::CursorStyle::PointingHand,
+            "{button:?}"
+        );
+    }
 }
 
 #[test]
@@ -112,6 +150,7 @@ fn songs_list_newest_first_with_the_sample_last_and_the_top_row_chosen() {
         Spot::Button(Button::New),
         Spot::Button(Button::Open),
         Spot::Button(Button::Dawproject),
+        Spot::Button(Button::Settings),
         Spot::Search,
         row_spot(&s, &g, 0),
         row_spot(&s, &g, 2),
@@ -125,7 +164,7 @@ fn songs_list_newest_first_with_the_sample_last_and_the_top_row_chosen() {
 }
 
 #[test]
-fn tab_walks_new_open_dawproject_search_and_the_list() {
+fn tab_walks_new_open_dawproject_settings_search_and_the_list() {
     let (_tmp, mut s, g) = kept(&["a"]);
     let tab = Mods::NONE;
     let back = Mods {
@@ -133,7 +172,7 @@ fn tab_walks_new_open_dawproject_search_and_the_list() {
         ..Mods::NONE
     };
     let mut seen = vec![home(&s).focus];
-    for _ in 0..5 {
+    for _ in 0..6 {
         assert!(s.home_key(&g, "tab", tab));
         seen.push(home(&s).focus);
     }
@@ -144,6 +183,7 @@ fn tab_walks_new_open_dawproject_search_and_the_list() {
             Focus::Button(Button::New),
             Focus::Button(Button::Open),
             Focus::Button(Button::Dawproject),
+            Focus::Button(Button::Settings),
             Focus::Search,
             Focus::List
         ]
@@ -523,7 +563,7 @@ fn with_no_device_the_line_under_the_buttons_opens_its_menu() {
     with_device(&mut s, false);
     let l = s.home_layout(&g).unwrap();
     let line = l.no_device.expect("the line");
-    assert!(line.y >= l.button(Button::Dawproject).bottom());
+    assert!(line.y >= l.button(Button::Settings).bottom());
     assert_eq!(line.x, l.button(Button::New).x);
     let (x, y) = s.center_of(&g, Hit::Home(Spot::Device)).unwrap();
     assert_eq!(s.hit(&g, x, y), Hit::Home(Spot::Device));
@@ -563,6 +603,7 @@ fn a_screen_reader_reads_the_buttons_the_search_and_the_list() {
             (Role::Button, "新規 Ctrl+N".to_string()),
             (Role::Button, "開く… Ctrl+O".to_string()),
             (Role::Button, "DAWproject を開く…".to_string()),
+            (Role::Button, "設定".to_string()),
             (Role::Button, "オーディオデバイスなし".to_string()),
             (Role::TextInput, SEARCH_NAME.to_string()),
             (Role::List, RECENT.to_string()),
