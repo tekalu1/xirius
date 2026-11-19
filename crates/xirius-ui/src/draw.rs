@@ -748,16 +748,20 @@ pub(crate) fn region(g: &Geometry, view: Rect) -> Rect {
     )
 }
 
-/// A switch's face and icon ink: the primary pair when it is on, the neutral
-/// face (lighter under the pointer) and body ink when it is off.
+/// A switch's face and icon ink: selected blue, hover highlighted, idle clear.
 pub(crate) fn toggle_colors(c: &Colors, on: bool, hover: bool) -> (Hsla, Hsla) {
     if on {
         c.primary
     } else if hover {
         (c.hover, c.ink)
     } else {
-        (c.surface_1, c.ink)
+        (clear_face(c.surface_1), c.ink)
     }
+}
+
+pub(crate) fn clear_face(mut color: Hsla) -> Hsla {
+    color.a = 0.0;
+    color
 }
 
 /// A switch in the head of the column or in the roll's strip: its face when
@@ -931,14 +935,13 @@ fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
         let over = crate::arrange::paint::loop_band(pen, studio, &project, g);
         let scale = studio.ruler_scale(g);
         if studio.song.session().state.view.ruler_seconds {
-            crate::context::marker::paint_seconds(pen, studio, g, over);
-        } else {
-            // The grid's ticks, then the numbers (bars thinned out until they
-            // fit, beats and 16ths as it zooms in), none under a marker's name.
-            crate::grid_lines::paint_ticks(pen, &grid.lines, g.ruler, |t| scale.x(t));
             if let Some(times) = &grid.times {
                 crate::grid_lines::paint_time_ticks(pen, times, g.ruler, |t| studio.tick_x_f(g, t));
             }
+            crate::context::marker::paint_seconds(pen, studio, g, over);
+        } else {
+            crate::grid_lines::paint_ticks(pen, &grid.lines, g.ruler, |t| scale.x(t));
+            // Numbers thin out until they fit; markers take precedence.
             let marks: Vec<_> = crate::ruler::labels(
                 &grid.meter.time,
                 project.ppq,
@@ -2457,6 +2460,9 @@ mod tests {
                 assert_eq!(face, c.fill, "{theme:?}");
                 assert_eq!(ink, c.on_fill, "{theme:?}");
                 assert_eq!(toggle_colors(&c, false, hover).1, c.ink, "{theme:?}");
+                if !hover {
+                    assert_eq!(toggle_colors(&c, false, hover).0.a, 0.0);
+                }
             }
             assert_eq!(c.primary, (c.fill, c.on_fill));
             assert_eq!(c.primary_hover, (c.fill_hover, c.on_fill));

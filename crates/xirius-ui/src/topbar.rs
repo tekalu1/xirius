@@ -875,7 +875,7 @@ pub fn paint(pen: &mut Pen, layout: &BarLayout, view: &BarView) {
             r,
             "transport-Ripple",
             view.ripple,
-            face(BarButton::Ripple).unwrap_or(c.surface_1),
+            face(BarButton::Ripple).unwrap_or(crate::draw::clear_face(c.surface_1)),
             c.fill,
         );
         pen.round(r, f, Radius::S);
@@ -895,7 +895,7 @@ pub fn paint(pen: &mut Pen, layout: &BarLayout, view: &BarView) {
         let off = if view.hover == Some(BarButton::Tool(*tool)) {
             c.hover
         } else {
-            c.surface_1
+            crate::draw::clear_face(c.surface_1)
         };
         let face = pen.transition(
             &view.motion,
@@ -904,7 +904,7 @@ pub fn paint(pen: &mut Pen, layout: &BarLayout, view: &BarView) {
             &format!("tool-{tool:?}"),
             picked,
             off,
-            c.sel,
+            c.fill,
         );
         pen.round(*r, face, Radius::S);
         let icon = if *tool == Tool::Select && view.arrow_extended {
@@ -915,11 +915,7 @@ pub fn paint(pen: &mut Pen, layout: &BarLayout, view: &BarView) {
         pen.icon(
             icon,
             icon_at(*r),
-            if picked {
-                c.ink_strong
-            } else {
-                c.ink_on_toggle
-            },
+            if picked { c.on_fill } else { c.ink_on_toggle },
         );
         // The alternative tool of the arrow: underlined, thicker while it is the one in effect.
         if *tool == view.alt && *tool != Tool::Select {
@@ -976,15 +972,15 @@ pub fn paint(pen: &mut Pen, layout: &BarLayout, view: &BarView) {
         r,
         "transport-Snap",
         view.snap,
-        face(BarButton::Snap).unwrap_or(c.surface_1),
-        c.sel,
+        face(BarButton::Snap).unwrap_or(crate::draw::clear_face(c.surface_1)),
+        c.fill,
     );
     pen.round(r, f, Radius::S);
     pen.icon(
         if view.snap { "magnet" } else { "magnet-off" },
         icon_at(r),
         if view.snap {
-            c.ink_strong
+            c.on_fill
         } else {
             c.ink_on_toggle
         },
@@ -1071,7 +1067,7 @@ pub fn paint(pen: &mut Pen, layout: &BarLayout, view: &BarView) {
         layout.rec_panel,
         "transport-RecPanel",
         view.rec_panel,
-        face(BarButton::RecPanel).unwrap_or(c.surface_1),
+        face(BarButton::RecPanel).unwrap_or(crate::draw::clear_face(c.surface_1)),
         c.fill,
     );
     pen.round(layout.rec_panel, panel_face, Radius::S);
@@ -1088,19 +1084,21 @@ pub fn paint(pen: &mut Pen, layout: &BarLayout, view: &BarView) {
     if let Some(f) = h_face {
         pen.round(layout.history, f, Radius::S);
     }
+    // design-lint: allow(fill-ink) This icon only has a neutral hover face.
     pen.icon("history", icon_at(layout.history), c.ink_strong);
     if let Some(f) = face(BarButton::Palette) {
         pen.round(layout.palette, f, Radius::S);
     }
+    // design-lint: allow(fill-ink) This icon only has a neutral hover face.
     pen.icon("prompt", icon_at(layout.palette), c.ink_strong);
     if let Some(f) = face(BarButton::Ai) {
         pen.round(layout.ai, f, Radius::S);
     }
     crate::ai::paint_bar_button(pen, icon_at(layout.ai), &view.ai);
     let e_face = if view.can_export {
-        face(BarButton::Export).unwrap_or(c.surface_2)
+        face(BarButton::Export).unwrap_or(crate::draw::clear_face(c.surface_2))
     } else {
-        c.surface_0
+        crate::draw::clear_face(c.surface_0)
     };
     pen.round(layout.export, e_face, Radius::S);
     if view.export_stale {
@@ -1213,7 +1211,7 @@ pub fn paint_bottom(pen: &mut Pen, layout: &BarLayout, view: &BarView) {
             r,
             &format!("transport-{b:?}"),
             on,
-            face(b).unwrap_or(c.surface_1),
+            face(b).unwrap_or(crate::draw::clear_face(c.surface_1)),
             lit,
         );
         pen.round(r, f, Radius::S);
@@ -1236,7 +1234,7 @@ pub fn paint_bottom(pen: &mut Pen, layout: &BarLayout, view: &BarView) {
     let play_off = if view.hover == Some(BarButton::Play) {
         c.primary_hover
     } else {
-        (c.surface_3, c.ink)
+        (crate::draw::clear_face(c.surface_3), c.ink)
     };
     let (play_face, play_ink) = pen.transition_pair(
         &view.motion,
