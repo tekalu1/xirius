@@ -356,26 +356,41 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn file_acl_is_protected_and_grants_only_its_owner() {
+    fn file_acl_is_protected_and_grants_only_the_current_user() {
         use std::{os::windows::io::AsRawHandle, ptr};
         use windows_sys::Win32::{
-            Foundation::LocalFree,
+            Foundation::{CloseHandle, LocalFree},
             Security::{Authorization::*, *},
+            System::Threading::{GetCurrentProcess, OpenProcessToken},
         };
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("endpoint.json");
         launch(&path, false).server.stop();
         let file = private_file(&path, false).unwrap();
         unsafe {
-            let mut owner = ptr::null_mut();
+            // Elevated processes can create files owned by the Administrators group.
+            // The access grant must still name the process user, not that group.
+            let mut token = ptr::null_mut();
+            assert_ne!(
+                OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token),
+                0
+            );
+            let mut bytes = 0;
+            GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut bytes);
+            let mut buf = vec![0usize; (bytes as usize).div_ceil(size_of::<usize>())];
+            let ok =
+                GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), bytes, &mut bytes);
+            CloseHandle(token);
+            assert_ne!(ok, 0);
+            let user = (*(buf.as_ptr().cast::<TOKEN_USER>())).User.Sid;
             let mut acl = ptr::null_mut();
             let mut sd = ptr::null_mut();
             assert_eq!(
                 GetSecurityInfo(
                     file.as_raw_handle(),
                     SE_FILE_OBJECT,
-                    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-                    &mut owner,
+                    DACL_SECURITY_INFORMATION,
+                    ptr::null_mut(),
                     ptr::null_mut(),
                     &mut acl,
                     ptr::null_mut(),
@@ -397,7 +412,7 @@ mod tests {
             let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
             assert_eq!(ace.Header.AceType, 0);
             assert_ne!(
-                EqualSid(owner, ptr::addr_of!(ace.SidStart).cast_mut().cast()),
+                EqualSid(user, ptr::addr_of!(ace.SidStart).cast_mut().cast()),
                 0
             );
             LocalFree(sd);
