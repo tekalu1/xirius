@@ -35,6 +35,14 @@ mod menu_io_tests {
     use std::sync::{Arc, mpsc};
 
     #[test]
+    fn unchanged_scan_progress_does_not_request_a_frame() {
+        let mut studio = Studio::sample();
+        studio.pose_scan(3, 20);
+        assert!(!studio.poll_plugin_scan());
+        assert!(!studio.poll_plugin_scan());
+    }
+
+    #[test]
     fn catalog_and_preset_menu_reads_are_worker_owned_and_keep_events_responding() {
         for operation in ["plugin_menu_catalog", "preset_menu_list"] {
             std::thread::spawn(move || {
@@ -223,6 +231,15 @@ mod menu_io_tests {
         owner_done(&mut s);
         let first = s.mixer.scan.job.clone().expect("the job runs");
         (s, first)
+    }
+
+    #[test]
+    fn running_scan_does_not_request_frames_between_status_samples() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut studio, _) = scanning(root.path());
+        studio.mixer.scan.polled = Some(Instant::now());
+        assert!(!studio.poll_plugin_scan());
+        assert!(!studio.poll_plugin_scan());
     }
 
     #[test]
@@ -608,7 +625,6 @@ pub struct PluginScan {
     catalog_read: Option<xirius_session::background::Job<(Catalog, bool)>>,
     cache_current: Option<bool>,
     announce_catalog: bool,
-    preset_rows: serde_json::Value,
     /// Scan by itself when there is no list yet (the real window; tests leave it off).
     pub auto: bool,
     checked: bool,
@@ -908,26 +924,16 @@ impl Studio {
         catalog
     }
 
-    /// Once a frame. True while a scan runs, so frames keep coming to show it.
+    /// Poll the scan without asking for another frame when its visible progress is unchanged.
     pub(crate) fn poll_plugin_scan(&mut self) -> bool {
-        let mut loaded = self.poll_catalog();
-        if self.transport.is_windowed()
-            && !self.input_blocked()
-            // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
-            && let Ok(rows) = self.song.run("track.preset.list", json!({}))
-            && rows != self.mixer.scan.preset_rows
-        {
-            self.mixer.scan.preset_rows = rows;
-            self.refresh_popup();
-            loaded = true;
-        }
+        let loaded = self.poll_catalog();
         let scan = &mut self.mixer.scan;
         if scan.auto && !scan.checked {
             if self.transport.is_windowed() && scan.cache_current.is_none() {
                 if scan.error.is_none() {
                     self.read_catalog_later();
                 }
-                return self.mixer.scan.catalog_read.is_some();
+                return loaded;
             }
             // The song's owner starts it once the window's input is free again.
             if self.transport.is_windowed() && self.input_blocked() {
@@ -950,7 +956,7 @@ impl Studio {
         }
         if self.mixer.scan.queued.is_some() {
             if self.transport.is_windowed() && self.input_blocked() {
-                return true;
+                return loaded;
             }
             let asked = self.mixer.scan.queued.take().unwrap();
             if let Err(error) = self.start_scan(asked) {
@@ -960,12 +966,13 @@ impl Studio {
         }
         let scan = &mut self.mixer.scan;
         let Some(job) = scan.job.clone() else {
-            return loaded || scan.catalog_read.is_some() || scan.sent.is_some();
+            return loaded;
         };
         if scan.polled.is_some_and(|t| t.elapsed() < POLL) {
-            return true;
+            return loaded;
         }
         scan.polled = Some(Instant::now());
+        let before = (scan.done, scan.total, scan.file.clone(), scan.stopping);
         // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         let status = self.song.run("export.status", json!({ "job": job }));
         if std::mem::take(&mut self.mixer.scan.replaced) && status.is_err() {
@@ -1017,9 +1024,21 @@ impl Studio {
                     Err(e) => e,
                 });
             }
+            self.refresh_insert_list();
+            return true;
         }
-        self.refresh_insert_list();
-        true
+        let changed = before
+            != (
+                self.mixer.scan.done,
+                self.mixer.scan.total,
+                self.mixer.scan.file.clone(),
+                self.mixer.scan.stopping,
+            );
+        if changed {
+            self.browser.spin = self.spin();
+            self.refresh_insert_list();
+        }
+        changed | loaded
     }
 
     pub(crate) fn reload_catalog_later(&mut self) {

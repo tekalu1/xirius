@@ -60,19 +60,15 @@ impl Studio {
         });
     }
 
-    /// Once a frame. True while a spinner is on screen, so frames keep coming.
+    /// A newly inserted plugin animates until its host answers. A catalog scan redraws only
+    /// when progress changes; its spinner advances with those updates, not every frame.
     pub(crate) fn poll_loading(&mut self) -> bool {
-        let busy = self.browser.loading.is_some()
-            || self.browser.scanning
-            || self.browser.retrying.is_some();
-        if !busy {
+        if self.browser.loading.is_none() {
             return false;
         }
         let now = now_ms();
         self.browser.spin = self.spin();
-        let Some(l) = self.browser.loading.clone() else {
-            return true;
-        };
+        let l = self.browser.loading.clone().expect("checked above");
         let reported = self.transport.host().is_some_and(|h| {
             h.plugins().reports().iter().any(|r| {
                 r.id == l.id
@@ -196,19 +192,22 @@ mod tests {
     }
 
     #[test]
-    fn a_scan_or_a_retry_turns_the_spinner_and_asks_for_frames() {
+    fn an_unchanged_scan_or_retry_does_not_ask_for_frames() {
         let mut s = Studio::sample();
         s.ai.motion.reduced = false;
         s.browser.scanning = true;
-        assert!(s.poll_loading());
-        assert!((0.0..1.0).contains(&s.browser.spin));
+        assert!(!s.poll_loading());
+        assert_eq!(s.browser.spin, 0.0);
         s.browser.scanning = false;
         s.browser.retrying = Some("C:/VST3/A.vst3".into());
+        assert!(!s.poll_loading());
+        s.browser.loading = Some(a_loading());
         assert!(s.poll_loading());
         // Reduced motion: it still shows, it does not turn.
         s.ai.motion.reduced = true;
         assert!(s.poll_loading());
         assert_eq!(s.browser.spin, 0.0);
+        s.browser.loading = None;
         s.browser.retrying = None;
         assert!(!s.poll_loading());
     }
