@@ -84,15 +84,25 @@ fn song(mode: &str) -> Song {
     }
 }
 
-/// The plug-in's "Latency" turned in its own window: the song hears nothing of it.
+/// The plug-in's "Latency" turned in its own window: the song hears nothing of it. A new delay
+/// has the mix built again with a new instance of the plug-in; what the host is asked after
+/// belongs to that instance, so this waits until it has taken the old one's place (a fixed
+/// wait is too short on a loaded runner, and an answer of the instance let go of is stale).
 fn turn_silently(s: &mut Studio, id: PluginId, v: f64) {
     let host = s.transport.host().unwrap();
     let link = host.plugins().link(id).unwrap();
+    let before = link.current_gate().stamp().instance;
     host.plugins()
         .server_of(id)
         .unwrap()
         .set_param(&link, "Latency", v);
-    crate::shot::run_for(s, 0.5, |_| false);
+    let rebuilt = |s: &Studio| {
+        s.transport.host().is_some_and(|host| {
+            !host.swap_pending() && link.current_gate().stamp().instance != before
+        })
+    };
+    crate::shot::run_for(s, 30.0, rebuilt);
+    assert!(rebuilt(s), "{:?}", s.error);
 }
 
 /// The insert's value of "Latency" and the delay its state says, in the song.
@@ -153,8 +163,10 @@ impl Hold {
     }
 }
 
-/// Keep the answer-path test independent of CI scheduling when a loaded runner
-/// delays the host beyond the ordinary UI deadline.
+/// Keeps the UI's clock where it is, so a loaded runner that delays the host cannot carry a
+/// waiting copy or paste past [`PULL_WAIT`](xirius_session::host::PULL_WAIT) and into the
+/// song's saved state. Every test here that waits for the plug-ins' answers takes one; the
+/// one that tests the deadline moves it with [`AnswerClock::advance`].
 struct AnswerClock(std::time::Instant);
 
 impl AnswerClock {
@@ -284,6 +296,7 @@ fn copy_leaves_the_song(mode: &str) {
         to,
         ..
     } = song(mode);
+    let _answer_clock = AnswerClock::new();
     // something to redo, which a copy must not take away
     assert!(s.run_command(
         "plugin.param.set",
@@ -324,6 +337,7 @@ fn a_paste_that_would_be_refused_asks_nothing_and_leaves_no_step() {
     let Song {
         mut s, vocal, from, ..
     } = song("dedicated");
+    let _answer_clock = AnswerClock::new();
     assert!(
         s.arrange_run("channel.inserts.copy", json!({ "id": vocal.to_string() }))
             .is_some()
@@ -356,6 +370,7 @@ fn closing_the_window_puts_a_waiting_paste_in_before_asking_to_save() {
         to,
         ..
     } = song("dedicated");
+    let _answer_clock = AnswerClock::new();
     let _hold = Hold::new();
     drag(&mut s, &g, vocal, guitar);
     assert!(s.inserts_wait.is_some());
@@ -380,6 +395,7 @@ fn a_paste_waiting_when_the_song_is_replaced_does_not_run_in_the_next_one() {
         guitar,
         ..
     } = song("dedicated");
+    let _answer_clock = AnswerClock::new();
     let _hold = Hold::new();
     drag(&mut s, &g, vocal, guitar);
     assert!(s.inserts_wait.is_some());
@@ -401,6 +417,7 @@ fn ctrl_c_on_the_heading_copies_what_the_plugin_holds_now() {
         from,
         ..
     } = song("dedicated");
+    let _answer_clock = AnswerClock::new();
     turn_silently(&mut s, from, 0.5);
     let r = s
         .mixer_rect(&g, MixerHit::Heading(vocal, Area::Insert))
@@ -435,6 +452,7 @@ fn a_plugin_whose_host_went_down_is_copied_as_the_song_last_had_it() {
         from,
         to,
     } = song("dedicated");
+    let _answer_clock = AnswerClock::new();
     turn_silently(&mut s, to, 0.625);
     let host = s.transport.host().unwrap();
     let server = host.plugins().server_of(from).unwrap().clone();
@@ -548,6 +566,7 @@ fn a_macro_pastes_what_the_plugin_holds_now_before_its_next_step() {
         from,
         to,
     } = song("dedicated");
+    let _answer_clock = AnswerClock::new();
     turn_silently(&mut s, from, 0.5);
     turn_silently(&mut s, to, 0.625);
     s.song.settings().lock().unwrap().macros.set(
@@ -596,6 +615,7 @@ fn a_macro_paste_that_cannot_run_after_its_wait_is_said_and_stops_the_macro() {
         guitar,
         ..
     } = song("dedicated");
+    let _answer_clock = AnswerClock::new();
     s.song.settings().lock().unwrap().macros.set(
         "Paste",
         vec![
@@ -631,6 +651,7 @@ fn input_held_for_a_paste_whose_song_is_replaced_is_dropped_with_it() {
         guitar,
         ..
     } = song("dedicated");
+    let _answer_clock = AnswerClock::new();
     let _hold = Hold::new();
     drag(&mut s, &g, vocal, guitar);
     assert!(s.inserts_wait.is_some());
@@ -657,6 +678,7 @@ fn leaving_for_a_new_song_puts_a_waiting_paste_in_this_one_first() {
         to,
         ..
     } = song("dedicated");
+    let _answer_clock = AnswerClock::new();
     let _hold = Hold::new();
     drag(&mut s, &g, vocal, guitar);
     assert!(s.inserts_wait.is_some());
@@ -691,6 +713,7 @@ fn a_macro_stays_one_undo_step_while_the_screen_reads_presets_during_its_wait() 
         from,
         to,
     } = song("dedicated");
+    let _answer_clock = AnswerClock::new();
     turn_silently(&mut s, from, 0.5);
     turn_silently(&mut s, to, 0.625);
     s.song.settings().lock().unwrap().macros.set(
