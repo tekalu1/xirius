@@ -93,7 +93,7 @@ pub const SHOTS: &[Shot] = &[
     },
 ];
 
-fn stage(n: u8, studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) {
+pub(super) fn stage(n: u8, studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) {
     let names = if std::env::var_os("XIRIUS_PRESET_PROBE_LONG").is_some() {
         [
             "Clean 日本語の長いプリセット名と末尾まで続く設定",
@@ -449,7 +449,7 @@ fn key(handle: gpui::AnyWindowHandle, key: &str, cx: &mut App) {
         .unwrap();
 }
 
-fn native_command(studio: &Rc<RefCell<Studio>>, command: usize) {
+pub(super) fn native_command(studio: &Rc<RefCell<Studio>>, command: usize) {
     let hwnd = crate::plugin_keys_shots::frame(&studio.borrow());
     assert!(!hwnd.is_null());
     // SAFETY: the fixture resolved this process's or host's editor frame.

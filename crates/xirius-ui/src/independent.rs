@@ -289,6 +289,55 @@ fn set_owner(title: &str) {
     }
 }
 
+/// A menu opened by another process must also cover that process's editor. Raising only
+/// the menu leaves the editor's owner and stacking band intact when the menu is removed.
+#[cfg(windows)]
+pub(crate) fn present_popup(window: &Window, bounds: Bounds<Pixels>, anchor: (i32, i32)) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::{
+        Foundation::{POINT, RECT},
+        Graphics::Gdi::ClientToScreen,
+        UI::WindowsAndMessaging::{
+            GetWindowRect, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+            SetWindowPos,
+        },
+    };
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return;
+    };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return;
+    };
+    let hwnd = handle.hwnd.get() as _;
+    let scale = window.scale_factor();
+    let (x, y) = if offscreen() {
+        anchor
+    } else {
+        (
+            (f32::from(bounds.origin.x) * scale).round() as i32,
+            (f32::from(bounds.origin.y) * scale).round() as i32,
+        )
+    };
+    let mut origin = POINT::default();
+    let mut frame = RECT::default();
+    // SAFETY: the newly opened menu on its GUI thread; never activates or changes its
+    // owner's order. Account for the invisible native frame around the client area.
+    unsafe {
+        if ClientToScreen(hwnd, &mut origin) == 0 || GetWindowRect(hwnd, &mut frame) == 0 {
+            return;
+        }
+        SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            frame.left + x - origin.x,
+            frame.top + y - origin.y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+        );
+    }
+}
+
 fn show(title: &str) {
     #[cfg(not(windows))]
     let _ = title;

@@ -21,6 +21,8 @@ use crate::independent::{Key, Kind, Over, Spec};
 pub(crate) mod drag_shots;
 pub(crate) mod input_shots;
 #[cfg(windows)]
+pub(crate) mod preset_front_shots;
+#[cfg(windows)]
 pub(crate) mod preset_shots;
 #[cfg(windows)]
 pub(crate) mod verify_shots;
@@ -389,7 +391,13 @@ impl Windows {
             })
         });
         match result {
-            Ok(handle) => self.preset = Some(handle),
+            Ok(handle) => {
+                #[cfg(windows)]
+                let _ = handle.update(cx, |_, window, _| {
+                    crate::independent::present_popup(window, initial, (x, y));
+                });
+                self.preset = Some(handle);
+            }
             Err(error) => studio.borrow_mut().error = Some(error.to_string()),
         }
     }

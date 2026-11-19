@@ -7844,6 +7844,8 @@ done_when = "受ける機器のタイトルバーに .scsel（高さ 28）を置
 [[item]]
 id = "UI-337"
 title = "外部プラグインの窓にも共通のタイトルバーとピン留めを付ける"
+status = "partial"
+remaining = "CLAP の共通タイトルバーとピン留めを検証する"
 area = "UI"
 phase = "later"
 source = "presets-v2/report.md § 1"

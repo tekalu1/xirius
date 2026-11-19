@@ -474,6 +474,11 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("plugin-keys", plugin_keys_shots::SHOTS),
     #[cfg(windows)]
     ("plugin-presets", device_window::preset_shots::SHOTS),
+    #[cfg(windows)]
+    (
+        "plugin-presets-front",
+        device_window::preset_front_shots::SHOTS,
+    ),
     ("plugin-recovery", plugin_recovery_shots::SHOTS),
     ("plugin-reload", plugin_reload_shots::SHOTS),
     ("plugin-swap", plugin_swap_shots::SHOTS),

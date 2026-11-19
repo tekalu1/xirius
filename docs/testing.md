@@ -39,6 +39,20 @@ and one still running after 5 minutes is killed with its child processes and fai
 by name. The `cargo test` runs (`--default-features`, `--doctest`, `--legacy`, `--plugins`)
 do not go through nextest and have no such limit.
 
+## Native preset popup (Windows desktop)
+
+After `python scripts/ci_tests.py --prepare`, run
+`cargo test -p xirius-ui --test plugin_preset_front_window -- --nocapture`.
+The `_window` suffix excludes this test from CI. It opens the fixture editor in a
+dedicated host, off every display with silent output, and sends `BM_CLICK` to its
+preset button. Both pin states must put the popup above the editor in native window
+order and at `WindowFromPoint` below the button. It also checks placement, selection,
+closure, and the editor's unchanged owner, pin state and order relative to the main
+window. Each run uses a temporary folder for data and removes it afterwards.
+An additional case gives the editor `WS_EX_TOPMOST`; this is independent of the
+pin button, which retains an editor rather than making it always on top.
+The scenario writes `front.json`, including request-to-popup observation time.
+
 ## What a test may leave
 
 A test writes nothing to the person's Xirius folders (`%LOCALAPPDATA%\Xirius` and
