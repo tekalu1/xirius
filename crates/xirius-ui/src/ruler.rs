@@ -411,6 +411,7 @@ pub fn paint_playhead(pen: &mut Pen, studio: &Studio, x: f32, view: Rect) {
     } else {
         c.ink_strong
     };
+    let view = Rect::new(view.x, view.y + LOOP_H, view.w, (view.h - LOOP_H).max(0.0));
     paint_head(pen, x, view, color);
 }
 

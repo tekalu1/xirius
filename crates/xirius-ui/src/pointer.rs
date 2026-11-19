@@ -106,11 +106,41 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
             _ => CursorStyle::Arrow,
         });
     }
-    if studio.palette.is_some()
-        || studio.settings.is_some()
-        || studio.recovery.is_some()
-        || studio.sound_preparing()
-    {
+    if let Some(settings) = &studio.settings {
+        if let Some(menu) = &settings.menu {
+            let cell = menu
+                .menu
+                .layout
+                .cells
+                .iter()
+                .rev()
+                .find(|c| c.rect.contains(x, y));
+            return Pointer::style(match cell {
+                Some(c) if c.clear_rect().is_some_and(|r| r.contains(x, y)) => {
+                    CursorStyle::PointingHand
+                }
+                Some(c)
+                    if c.enabled
+                        && matches!(
+                            c.look,
+                            crate::popup::Look::Input | crate::popup::Look::Field
+                        ) =>
+                {
+                    CursorStyle::IBeam
+                }
+                Some(c) if c.enabled && c.action.is_some() => CursorStyle::PointingHand,
+                _ => CursorStyle::Arrow,
+            });
+        }
+        return Pointer::style(
+            match studio.settings_scene(g).item_at(x, y).map(|i| &i.act) {
+                Some(crate::settings::Do::Field(_)) => CursorStyle::IBeam,
+                Some(crate::settings::Do::Nothing) | None => CursorStyle::Arrow,
+                Some(_) => CursorStyle::PointingHand,
+            },
+        );
+    }
+    if studio.palette.is_some() || studio.recovery.is_some() || studio.sound_preparing() {
         return Pointer::style(CursorStyle::Arrow);
     }
     if studio.instruments.sizing() {
@@ -124,6 +154,9 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
     }
     if studio.pan.is_some() {
         return hand(true);
+    }
+    if let Some(cursor) = studio.ruler_grab.as_ref().and_then(|grab| grab.cursor()) {
+        return pointer(cursor, studio.crosshair);
     }
     if studio.lock_hovered(g).is_some() || studio.insert_drag_refused(g) {
         return Pointer::style(CursorStyle::OperationNotAllowed);
@@ -187,7 +220,11 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
             studio.arrange.drag.as_ref().is_some_and(|d| d.started) || studio.roll.drag.is_some(),
         );
     }
-    if cursor == Cursor::Arrow && matches!(hit, crate::studio::Hit::Ruler(_)) {
+    let over_ruler = matches!(hit, crate::studio::Hit::Ruler(_))
+        || studio
+            .roll_ctx(g)
+            .is_some_and(|ctx| studio.roll.frame(ctx.body).ruler.contains(x, y));
+    if cursor == Cursor::Arrow && over_ruler {
         return Pointer::style(CursorStyle::Crosshair);
     }
     pointer(cursor, studio.crosshair)
@@ -445,6 +482,28 @@ pub use crate::pointer_os as os;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_buttons_and_text_fields_keep_their_cursor_over_the_modal() {
+        let mut studio = Studio::sample();
+        let g = studio.geometry(1440.0, 860.0);
+        studio.open_settings(crate::settings::Section::Keys);
+        let scene = studio.settings_scene(&g);
+        for (action, want) in [
+            (
+                crate::settings::Do::Nav(crate::settings::Section::General),
+                CursorStyle::PointingHand,
+            ),
+            (
+                crate::settings::Do::Field(crate::settings::FieldId::Search),
+                CursorStyle::IBeam,
+            ),
+        ] {
+            let item = scene.find(&action).expect("visible settings control");
+            studio.input_map.pointer = (item.r.x + item.r.w / 2.0, item.r.y + item.r.h / 2.0);
+            assert_eq!(of_studio(&studio, &g).style, want);
+        }
+    }
 
     #[test]
     fn every_cursor_has_one_pointer_and_only_custom_shapes_have_a_picture() {

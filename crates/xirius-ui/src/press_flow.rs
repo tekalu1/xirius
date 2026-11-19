@@ -340,6 +340,31 @@ mod ruler_tests {
     use super::*;
 
     #[test]
+    fn roll_double_click_uses_each_row_and_keeps_playing() {
+        let mut studio = Studio::sample();
+        studio.transport.mode = xirius_session::output::OutputMode::Silent { paced: false };
+        let g = studio.geometry(1440.0, 860.0);
+        studio.resized(&g);
+        let ctx = studio.roll_ctx(&g).expect("sample roll is open");
+        let ruler = studio.roll.frame(ctx.body).ruler;
+        let scale = studio.roll.ruler_scale(&ctx);
+        let x = ruler.x + 300.0;
+        let before = studio.playhead;
+        assert!(studio.ruler_double_click(&g, x, ruler.y + 2.0));
+        assert_eq!(studio.playhead, before);
+        assert!(studio.transport.looping);
+        let project = studio.project();
+        let span = project.loop_range.unwrap();
+        let map = project.time_map();
+        assert_eq!(span.end, map.bar_start(map.to_bbt(span.start).0 + 1));
+        assert!(studio.ruler_double_click(&g, x, ruler.bottom() - 3.0));
+        assert_eq!(studio.playhead, scale.tick(x).max(0));
+        assert!(studio.transport.playing);
+        assert!(studio.ruler_double_click(&g, x + 20.0, ruler.bottom() - 3.0));
+        assert!(studio.transport.playing);
+    }
+
+    #[test]
     fn double_click_on_the_upper_empty_row_makes_one_bar_loop() {
         let mut studio = Studio::sample();
         let g = studio.geometry(1440.0, 860.0);
