@@ -171,7 +171,7 @@ crates/xirius-ui/src/mixer/mod.rs	arrange_run	1
 crates/xirius-ui/src/mixer/mod.rs	lock	1
 crates/xirius-ui/src/mixer/mod.rs	run_command	13
 crates/xirius-ui/src/mixer/paint.rs	lock	1
-crates/xirius-ui/src/mixer/scan.rs	run	4
+crates/xirius-ui/src/mixer/scan.rs	run	3
 crates/xirius-ui/src/mouse_dispatch.rs	lock	2
 crates/xirius-ui/src/name_drag.rs	arrange_run	2
 crates/xirius-ui/src/note_edit_panel.rs	run_command	1
@@ -217,6 +217,7 @@ crates/xirius-ui/src/saving.rs	join	1
 crates/xirius-ui/src/saving.rs	save_version	2
 crates/xirius-ui/src/screen.rs	eprintln	10
 crates/xirius-ui/src/screen.rs	println	1
+crates/xirius-ui/src/screen.rs	recv_timeout	1
 crates/xirius-ui/src/screen.rs	run_command	1
 crates/xirius-ui/src/screen.rs	std :: fs :: create_dir_all	1
 crates/xirius-ui/src/settings/audio.rs	lock	1

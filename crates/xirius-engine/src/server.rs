@@ -2715,7 +2715,17 @@ impl Inner {
                     l.editor_open = false;
                     l.editor_later = false;
                     l.editor_actions.clear();
-                    l.editor_open_events.clear();
+                    // A failed open is followed by EditorClosed. Keep that opening and its
+                    // reason until the client reads them; otherwise discard stale reports.
+                    if l.editor_open_events
+                        .iter()
+                        .any(|event| matches!(event, EditorOpenEvent::Failed { .. }))
+                    {
+                        l.editor_open_events
+                            .retain(|event| !matches!(event, EditorOpenEvent::Opened { .. }));
+                    } else {
+                        l.editor_open_events.clear();
+                    }
                     l.shut += 1;
                     l.editor.take().is_some()
                 };

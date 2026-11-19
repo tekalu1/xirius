@@ -1,5 +1,6 @@
 //! The plugin scan from the screen (PLG-021): `plugin.rescan --background` through the song's
-//! session, polled by `Studio::tick`, with this crate's own program opening each bundle.
+//! session, polled by the window's 100 ms scan timer, with this crate's own program opening
+//! each bundle.
 //!
 //! The bundles are made here: one the child is told to crash on, one it is told to hang on,
 //! and a DLL that is not one. When kHs Gain is installed, a copy of it is opened as well.
@@ -106,18 +107,21 @@ struct Seen {
 /// Only a guard against waiting forever; how soon it happens is not what is tested.
 const GUARD: Duration = Duration::from_secs(60);
 
-/// Runs frames until the scan ends (or the guard runs out).
+/// Samples the same scan state that the window's timer observes until the scan ends.
 fn frames_until_done(s: &mut Studio) -> Seen {
     let mut seen = Seen::default();
     let start = Instant::now();
     loop {
         let t = Instant::now();
+        let before = (s.mixer.scan.done, s.mixer.scan.total);
         let more = s.tick();
         let list = s.insert_list();
         seen.slowest = seen.slowest.max(t.elapsed());
         seen.frames += 1;
         if s.mixer.scan.running() {
-            assert!(more, "a running scan keeps the frames coming");
+            if before != (s.mixer.scan.done, s.mixer.scan.total) {
+                assert!(more, "changed progress requests a frame");
+            }
             seen.counts.push((s.mixer.scan.done, s.mixer.scan.total));
             let row = list[0].label.clone();
             assert!(list[0].to.is_empty(), "the progress row is not a choice");
