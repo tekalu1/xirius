@@ -39,6 +39,32 @@ and one still running after 5 minutes is killed with its child processes and fai
 by name. The `cargo test` runs (`--default-features`, `--doctest`, `--legacy`, `--plugins`)
 do not go through nextest and have no such limit.
 
+## Build artifacts
+
+The `dev` and `test` profiles use `debug = "line-tables-only"` and keep Cargo's default
+incremental compilation. Backtraces retain file and line information. Inspecting local
+variables and types in a debugger requires full debug information. The first build
+after switching profiles rebuilds artifacts for the new settings. Artifacts from earlier
+builds stay on disk, and incremental compilation can add new generations as you edit.
+
+To preview older hashed artifacts in this checkout, run `python scripts/prune_deps.py`.
+After stopping this checkout's builds, tests and app, run `python scripts/prune_deps.py --apply`
+to remove them. This uses no extra tools or packages. It only visits `target/debug/deps`
+beside this script's checkout and refuses an external `CARGO_TARGET_DIR`, directory links
+or reparse points. It does not recurse into subdirectories or visit other checkouts.
+
+Files with a 16-digit hash are grouped by name and extension. Every file with the newest
+modification time is kept, including ties; only older files are removed. Unhashed files,
+directories and links are left alone. The script holds Cargo's build lock, refuses detected
+running artifacts, and checks each candidate again before removing it. Do not start builds,
+tests or the app while it runs: a process check cannot prevent a new program from starting.
+
+Different feature configurations can have different hashes, so an older artifact may still
+be useful and require rebuilding later. For that reason cleanup is explicit, rather than
+automatically appended to `ci_tests.py`. It leaves incremental directories and release
+artifacts untouched. The cleanup boundaries and retention rules run in CI with
+`python scripts/test_prune_deps.py`.
+
 ## Native preset popup (Windows desktop)
 
 After `python scripts/ci_tests.py --prepare`, run
