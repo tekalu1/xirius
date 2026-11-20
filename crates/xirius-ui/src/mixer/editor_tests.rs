@@ -356,30 +356,7 @@ fn a_slow_hosted_editor_stays_requested_until_its_open_report_arrives() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(s.error, None);
-    let hwnd = s.mixer.editor_hwnd(id).expect("fixture editor handle");
-    let mut result = 0;
-    // SAFETY: the fixture frame is live; this command contains no borrowed pointers.
-    let sent = unsafe {
-        windows_sys::Win32::UI::WindowsAndMessaging::SendMessageTimeoutW(
-            hwnd as _,
-            windows_sys::Win32::UI::WindowsAndMessaging::WM_COMMAND,
-            2,
-            0,
-            windows_sys::Win32::UI::WindowsAndMessaging::SMTO_ABORTIFHUNG,
-            5_000,
-            &mut result,
-        )
-    };
-    assert_ne!(sent, 0, "the editor bar stopped responding");
-    let end = Instant::now() + Duration::from_secs(5);
-    while s.mixer.preset_menu.is_none() {
-        s.tick();
-        assert!(
-            Instant::now() < end,
-            "the preset menu request did not reach the studio"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert!(s.mixer.editor_hwnd(id).is_some(), "fixture editor handle");
 }
 
 #[cfg(windows)]
@@ -508,14 +485,6 @@ fn the_hosted_editor_power_button_keeps_its_window_and_restores_audio() {
         Some(hwnd),
         "saving a preset replaced the editor frame"
     );
-    click(&s, 2);
-    let end = Instant::now() + Duration::from_secs(5);
-    while s.mixer.preset_menu.is_none() {
-        s.tick();
-        assert!(Instant::now() < end, "preset list did not open");
-    }
-    assert_eq!(s.mixer.preset_menu.map(|r| r.1), Some(id));
-    s.mixer.preset_menu = None;
     assert!(s.run_command(
         "preset.load",
         json!({"track":t,"of":id,"preset":"Header A"})

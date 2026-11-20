@@ -370,11 +370,6 @@ fn probe_header(s: &mut Studio, id: xirius_core::id::PluginId, shot: &str, dir: 
                 .get(&id)
                 .is_some_and(|b| b.presets.len() >= 3)
         });
-        assert!(
-            click(s, id, shot, 2, "list", &|s| s.mixer.preset_menu.is_some()),
-            "preset list did not open"
-        );
-        s.mixer.preset_menu = None;
         assert!(s.run_command(
             "preset.load",
             json!({"track":track,"of":id,"preset":"Header A"})

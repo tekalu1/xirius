@@ -163,7 +163,6 @@ fn surface(
         let handle = handle.downcast::<DeviceWindow>()?;
         let view = handle.read(cx).ok()?;
         let mine = Rc::ptr_eq(&view.studio, studio)
-            && !view.menu_only
             && if which == 0 {
                 view.id == Some(id)
             } else {

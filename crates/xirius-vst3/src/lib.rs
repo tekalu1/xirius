@@ -23,7 +23,9 @@ mod editor_bar;
 mod editor_chrome;
 #[cfg(target_os = "windows")]
 mod editor_icons;
-pub use editor_bar::{EditorAction, EditorBar};
+#[cfg(windows)]
+mod editor_presets;
+pub use editor_bar::{EditorAction, EditorBar, PresetRow};
 mod editor_position;
 pub use editor_position::EditorArea;
 #[cfg(target_os = "windows")]

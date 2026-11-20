@@ -124,6 +124,178 @@ fn wait_for_action(link: &PluginLink, wanted: impl Fn(&EditorAction) -> bool) {
     }
 }
 
+fn message(hwnd: windows_sys::Win32::Foundation::HWND, msg: u32, wp: usize, lp: isize) {
+    let mut result = 0;
+    // SAFETY: messages to this test's host; WM_SETTEXT marshals its terminated text across IPC.
+    assert_ne!(
+        unsafe { SendMessageTimeoutW(hwnd, msg, wp, lp, SMTO_ABORTIFHUNG, 5000, &mut result) },
+        0
+    );
+}
+
+#[test]
+fn host_owned_preset_messages_filter_clear_close_and_deliver_the_choice() {
+    use windows_sys::Win32::UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*};
+    use xirius_vst3::{EditorBar, PresetRow};
+    let _records = CrashRecords::new();
+    let (host, link, _remote) = open_fixture(false);
+    host.editor_bar(
+        &link,
+        EditorBar {
+            menu: vec![
+                PresetRow {
+                    key: "load:Clean".into(),
+                    label: "Clean".into(),
+                    enabled: true,
+                    selected: true,
+                    footer: false,
+                },
+                PresetRow {
+                    key: "load:Bright".into(),
+                    label: "Bright".into(),
+                    enabled: true,
+                    ..Default::default()
+                },
+                PresetRow {
+                    key: "off:@save".into(),
+                    label: "Save".into(),
+                    footer: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        },
+    );
+    host.open_editor(&link, "Preset message fixture", None);
+    wait_for(&link, |event| {
+        matches!(event, EditorOpenEvent::Opened { .. })
+    });
+    // These checks deliberately inspect messages and ownership only. Foreground/input behavior
+    // is exercised by the opt-in desktop test, with real input and normal activation rules.
+    unsafe {
+        let frame = FindWindowW(
+            wide("XiriusPluginEditor").as_ptr(),
+            wide("Preset message fixture").as_ptr(),
+        );
+        send_header_command("Preset message fixture", 2);
+        let mut popup = std::ptr::null_mut();
+        loop {
+            popup = FindWindowExW(
+                std::ptr::null_mut(),
+                popup,
+                wide("XiriusPresetList").as_ptr(),
+                std::ptr::null(),
+            );
+            assert!(!popup.is_null(), "host popup missing");
+            if GetWindow(popup, GW_OWNER) == frame {
+                break;
+            }
+        }
+        let mut frame_process = 0;
+        let mut popup_process = 0;
+        GetWindowThreadProcessId(frame, &mut frame_process);
+        GetWindowThreadProcessId(popup, &mut popup_process);
+        assert_eq!(frame_process, popup_process);
+        assert_ne!(popup_process, std::process::id());
+        assert_eq!(GetWindowLongW(popup, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST, 0);
+        let edit = GetDlgItem(popup, 1);
+        message(edit, WM_SETTEXT, 0, wide("bRiGhT").as_ptr() as isize);
+        message(edit, WM_KEYDOWN, VK_ESCAPE as usize, 0);
+        assert_eq!(GetWindowTextLengthW(edit), 0);
+        assert_ne!(IsWindowVisible(popup), 0, "first Escape only clears search");
+        message(edit, WM_KEYDOWN, VK_ESCAPE as usize, 0);
+        assert_eq!(IsWindowVisible(popup), 0);
+        send_header_command("Preset message fixture", 2);
+        send_header_command("Preset message fixture", 2);
+        // Reopen creates a fresh snapshot of the song's rows.
+        send_header_command("Preset message fixture", 2);
+        let mut popup = std::ptr::null_mut();
+        loop {
+            popup = FindWindowExW(
+                std::ptr::null_mut(),
+                popup,
+                wide("XiriusPresetList").as_ptr(),
+                std::ptr::null(),
+            );
+            assert!(!popup.is_null());
+            if GetWindow(popup, GW_OWNER) == frame {
+                break;
+            }
+        }
+        let edit = GetDlgItem(popup, 1);
+        message(edit, WM_SETTEXT, 0, wide("bRiGhT").as_ptr() as isize);
+        message(edit, WM_KEYDOWN, VK_RETURN as usize, 0);
+        assert_eq!(IsWindowVisible(popup), 0);
+        wait_for_action(&link, |a| {
+            *a == EditorAction::PresetPick("load:Bright".into())
+        });
+    }
+    host.close_editor(&link);
+}
+
+#[test]
+fn hosts_acknowledge_placement_and_preserve_the_requested_editor_order() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+    use xirius_vst3::EditorBar;
+    let _records = CrashRecords::new();
+    let (a, al, _ar) = open_fixture(false);
+    let (b, bl, _br) = open_fixture(false);
+    for (host, link, name) in [
+        (&a, &al, "Stack first fixture"),
+        (&b, &bl, "Stack second fixture"),
+    ] {
+        host.open_editor(link, name, None);
+        wait_for(link, |e| matches!(e, EditorOpenEvent::Opened { .. }));
+    }
+    // SAFETY: query the two parked fixture frames. They never take foreground focus.
+    unsafe {
+        let first = FindWindowW(
+            wide("XiriusPluginEditor").as_ptr(),
+            wide("Stack first fixture").as_ptr(),
+        );
+        let second = FindWindowW(
+            wide("XiriusPluginEditor").as_ptr(),
+            wide("Stack second fixture").as_ptr(),
+        );
+        assert!(!first.is_null() && !second.is_null());
+        for (ticket, stack) in [
+            (51, vec![first as u64, second as u64]),
+            (52, vec![second as u64, first as u64]),
+        ] {
+            for hwnd in &stack {
+                let (host, link) = if *hwnd == first as u64 {
+                    (&a, &al)
+                } else {
+                    (&b, &bl)
+                };
+                host.editor_bar(
+                    link,
+                    EditorBar {
+                        stack: stack.clone(),
+                        raise_ticket: ticket,
+                        ..Default::default()
+                    },
+                );
+                host.raise_editor(link);
+                wait_for_action(link, |action| *action == EditorAction::EditorRaised(ticket));
+            }
+            let mut order = Vec::new();
+            let mut at = GetTopWindow(std::ptr::null_mut());
+            while !at.is_null() {
+                if stack.contains(&(at as u64)) {
+                    order.push(at as u64);
+                }
+                at = GetWindow(at, GW_HWNDNEXT);
+            }
+            assert_eq!(order, stack);
+            assert!(GetWindow(first, GW_OWNER).is_null());
+            assert!(GetWindow(second, GW_OWNER).is_null());
+        }
+    }
+    a.close_editor(&al);
+    b.close_editor(&bl);
+}
+
 #[test]
 fn slow_editor_reports_start_then_dimensions_and_failure_reports_reason() {
     let _records = CrashRecords::new();
@@ -181,10 +353,8 @@ fn an_existing_editor_bar_answers_while_another_editor_opens_in_the_same_host() 
     assert_eq!(remote.error(), None);
     host.open_editor(&link, "Second fixture", None);
     wait_for(&link, |event| matches!(event, EditorOpenEvent::Opening));
-    send_header_command("First fixture", 2);
-    wait_for_action(&first, |action| {
-        matches!(action, EditorAction::PresetMenu { .. })
-    });
+    send_header_command("First fixture", 1);
+    wait_for_action(&first, |action| matches!(action, EditorAction::Power));
     wait_for(&link, |event| {
         matches!(event, EditorOpenEvent::Opened { .. })
     });
@@ -244,10 +414,8 @@ fn two_real_editors_in_one_host_open_and_answer() {
             events.last(),
             Some(EditorOpenEvent::Opened { .. })
         ));
-        send_header_command(&title, 2);
-        wait_for_action(link, |action| {
-            matches!(action, EditorAction::PresetMenu { .. })
-        });
+        send_header_command(&title, 1);
+        wait_for_action(link, |action| matches!(action, EditorAction::Power));
     }
     unsafe { std::env::remove_var("XIRIUS_EDITOR_OFFSCREEN") };
 }

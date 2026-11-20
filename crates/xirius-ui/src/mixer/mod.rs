@@ -641,7 +641,9 @@ pub struct Mixer {
     pub(crate) fake_load: Option<crate::loading::FakeLoad>,
     pub(crate) editors: Vec<OpenEditor>,
     pub(crate) editor_pins: std::collections::HashSet<PluginId>,
-    pub(crate) preset_menu: Option<(TrackId, PluginId, i32, i32, u32)>,
+    pub(crate) editor_raises: editors::RaiseQueue,
+    pub(crate) preset_save: Option<PluginId>,
+    pub(crate) editor_touches: HashMap<PluginId, (u64, u64)>,
     pub(crate) editor_bars: std::collections::HashMap<PluginId, xirius_vst3::EditorBar>,
     /// Native bar commands received while a song operation holds the command dispatcher.
     pub(crate) editor_pending: Vec<(PluginId, TrackId, xirius_vst3::EditorAction)>,
@@ -740,6 +742,9 @@ impl Mixer {
 
     /// The handle of a plugin host's window (for tests and screenshots).
     pub fn editor_hwnd(&self, id: PluginId) -> Option<isize> {
+        if let Some(&(hwnd, _)) = self.editor_touches.get(&id) {
+            return Some(hwnd as isize);
+        }
         self.editors
             .iter()
             .find(|e| e.id == id)

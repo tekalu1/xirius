@@ -120,6 +120,9 @@ impl Controls {
                 if matches!(id, PREVIOUS | NEXT) {
                     EnableWindow(hwnd, i32::from(can_step(id, bar)));
                 }
+                if id == PRESET {
+                    SetWindowTextW(hwnd, wide(&bar.preset).as_ptr());
+                }
                 if let Some((x, w)) = r {
                     SetWindowPos(
                         hwnd,
@@ -435,18 +438,6 @@ pub(crate) fn command(hwnd: HWND, id: usize, bar: &EditorBar) -> Option<EditorAc
                 PostMessageW(hwnd, WM_CLOSE, 0, 0);
             }
             None
-        }
-        PRESET => {
-            let mut at = RECT::default();
-            // SAFETY: the control belongs to this editor's GUI thread; no other process is called.
-            unsafe {
-                GetWindowRect(GetDlgItem(hwnd, PRESET as i32), &mut at);
-                Some(EditorAction::PresetMenu {
-                    x: at.left,
-                    y: at.bottom,
-                    dpi: windows_sys::Win32::UI::HiDpi::GetDpiForWindow(hwnd).max(96),
-                })
-            }
         }
         _ => None,
     }

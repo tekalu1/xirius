@@ -5,10 +5,25 @@ pub struct EditorBar {
     pub device: String,
     pub preset: String,
     pub presets: Vec<String>,
+    pub menu: Vec<PresetRow>,
+    /// Visible external editors, most recently touched first. These are not owners.
+    pub stack: Vec<u64>,
+    pub stack_base: u64,
+    pub raise_ticket: u64,
     pub instrument: bool,
     pub powered: bool,
     pub pinned: bool,
     pub sidechain: bool,
+}
+
+/// A song-owned choice; the GUI host never interprets its key.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PresetRow {
+    pub key: String,
+    pub label: String,
+    pub enabled: bool,
+    pub selected: bool,
+    pub footer: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,14 +36,11 @@ pub enum EditorAction {
     Channel = 4,
     Sidechain = 5,
     PresetSelect(String) = 6,
-    /// Physical screen position of the frame control; opening the host list never waits for IPC.
-    PresetMenu {
-        x: i32,
-        y: i32,
-        dpi: u32,
-    } = 7,
     PresetPrevious = 8,
     PresetNext = 9,
+    PresetPick(String) = 10,
+    EditorTouched { window: u64, time: u64 } = 11,
+    EditorRaised(u64) = 12,
 }
 
 impl EditorAction {
@@ -41,9 +53,11 @@ impl EditorAction {
             Self::Channel => 4,
             Self::Sidechain => 5,
             Self::PresetSelect(_) => 6,
-            Self::PresetMenu { .. } => 7,
             Self::PresetPrevious => 8,
             Self::PresetNext => 9,
+            Self::PresetPick(_) => 10,
+            Self::EditorTouched { .. } => 11,
+            Self::EditorRaised(_) => 12,
         }
     }
     pub fn from_byte(value: u8) -> Option<Self> {

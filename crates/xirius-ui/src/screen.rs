@@ -773,6 +773,44 @@ impl Screen {
         ) {
             return self.pick(request, cx);
         }
+        #[cfg(windows)]
+        if let FileRequest::PresetOpen(id) | FileRequest::PresetSave(id) = request {
+            let owner = self
+                .studio
+                .borrow()
+                .mixer
+                .editor_touches
+                .get(&id)
+                .map(|&(hwnd, _)| hwnd as isize)
+                .or_else(|| crate::park::own_handle(WINDOW_TITLE));
+            if let Some(owner) = owner.and_then(crate::file_owner::Owner::new) {
+                let intent = self.studio.borrow_mut().begin_picker();
+                let dialog = rfd::AsyncFileDialog::new()
+                    .set_parent(&owner)
+                    .add_filter("Preset", &["xirius-preset"]);
+                cx.spawn(async move |this, cx| {
+                    let result = if matches!(request, FileRequest::PresetOpen(_)) {
+                        dialog.pick_file().await
+                    } else {
+                        dialog
+                            .set_file_name("Preset.xirius-preset")
+                            .save_file()
+                            .await
+                    };
+                    let _ = this.update(cx, |this, cx| {
+                        let mut studio = this.studio.borrow_mut();
+                        if studio.accept_picker(intent)
+                            && let Some(file) = result
+                        {
+                            studio.start_file_request(request, file.path());
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+                return;
+            }
+        }
         let directory = self
             .studio
             .borrow()
@@ -2124,7 +2162,8 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
         && {
             #[cfg(windows)]
             {
-                crate::device_window::drag_shots::ready(&studio, window, cx)
+                crate::preset_input_shots::ready()
+                    && crate::device_window::drag_shots::ready(&studio, window, cx)
                     && crate::device_window::verify_shots::ready(&studio, window, cx)
             }
             #[cfg(not(windows))]
@@ -2496,7 +2535,7 @@ pub fn run(opts: Options) {
                         let _activation =
                             Some(cx.observe_window_activation(window, |this, window, cx| {
                                 this.studio
-                                    .borrow()
+                                    .borrow_mut()
                                     .main_window_editor_event(window.is_window_active(), false);
                                 if !window.is_window_active() {
                                     this.last_caps = None;
@@ -2509,7 +2548,9 @@ pub fn run(opts: Options) {
                         let _visibility =
                             cx.observe_window_visibility(window, |this, visibility, _, _| {
                                 if visibility == gpui::WindowVisibility::Visible {
-                                    this.studio.borrow().main_window_editor_event(false, true);
+                                    this.studio
+                                        .borrow_mut()
+                                        .main_window_editor_event(false, true);
                                 }
                             });
                         Screen {
