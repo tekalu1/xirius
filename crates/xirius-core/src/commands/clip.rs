@@ -781,7 +781,8 @@ fn row_below(p: &Project, id: ClipId, rows: i64) -> CmdResult<TrackId> {
     let order: Vec<TrackId> = column_nodes(p)
         .into_iter()
         .filter_map(|n| match n {
-            Node::Track(t) => Some(t),
+            Node::Track(t) if p.bus_folder(t).is_none() => Some(t),
+            Node::Track(_) => None,
             Node::Folder(_) => None,
         })
         .collect();

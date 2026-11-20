@@ -172,6 +172,7 @@ pub fn text(s: &Studio, hit: Hit) -> Option<String> {
         }
     }
     let label = match hit {
+        Hit::FolderBus(f) if s.project().row_bus(f).is_some() => Some("ミキサーのインサートを開く"),
         Hit::RollView(false) => Some("鍵盤の表示"),
         Hit::RollView(true) => Some("ドラムの表示"),
         Hit::RollMap => Some("ドラムのマップ"),

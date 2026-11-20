@@ -28,11 +28,11 @@ fn folder_selection_and_open_state_use_the_command_table_without_song_history() 
     let steps = s.steps().len();
     s.run_value("select.in_folder", json!({"ids":[f,nested]}), &opts)
         .unwrap();
-    // the nested folder's bus sits in f, so it is picked with what f holds
+    // The nested channel is inside f; f's own channel is the row being opened.
     let nested_bus = s.project().folders[&nested.parse().unwrap()].bus.unwrap();
     assert_eq!(
         s.state.selection,
-        vec![t.parse::<AnyId>().unwrap(), AnyId::Track(nested_bus)]
+        vec![AnyId::Track(nested_bus), t.parse::<AnyId>().unwrap()]
     );
     s.run_value("view.folders", json!({"state":"closed"}), &opts)
         .unwrap();

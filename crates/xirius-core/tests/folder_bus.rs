@@ -1,5 +1,4 @@
-//! A folder comes with a bus of its name: made right under it, connected, and gone with it
-//! unless something else plays to it. Songs made before keep their folders as they were.
+//! A folder owns its channel as its first child and displays it in the folder row.
 
 use serde_json::{Value, json};
 use xirius_core::id::{FolderId, Node, TrackId};
@@ -77,14 +76,16 @@ fn reopened(s: &Session) -> Session {
 }
 
 #[test]
-fn a_folder_comes_with_a_bus_of_its_name_right_under_it_and_connected() {
+fn a_folder_comes_with_a_bus_of_its_name_in_its_row_and_connected() {
     let mut s = Session::new("created");
     let (f, bus) = folder(&mut s, "Drums");
     let p = s.project();
     assert_eq!(p.folders[&f].bus, Some(bus));
     assert_eq!(p.tracks[&bus].kind, TrackKind::Bus);
     assert_eq!(p.tracks[&bus].name, "Drums");
-    assert_eq!(p.root, [Node::Folder(f), Node::Track(bus)]);
+    assert_eq!(p.root, [Node::Folder(f)]);
+    assert_eq!(p.folders[&f].children, [Node::Track(bus)]);
+    assert_eq!(p.effective_output(bus), Some(Output::Master));
     p.validate_deep().unwrap();
 }
 
@@ -105,7 +106,7 @@ fn creating_a_folder_is_one_step_and_undo_redo_take_both_away_and_bring_both_bac
 }
 
 #[test]
-fn packing_makes_the_bus_under_the_folder_in_one_step_and_undo_restores_the_rows() {
+fn packing_makes_the_bus_inside_the_folder_in_one_step_and_undo_restores_the_rows() {
     let mut s = Session::new("pack");
     let a = track(&mut s, "A");
     let b = track(&mut s, "B");
@@ -119,10 +120,7 @@ fn packing_makes_the_bus_under_the_folder_in_one_step_and_undo_restores_the_rows
     );
     assert_eq!(s.history().len(), n + 1);
     let (f, bus): (FolderId, TrackId) = (id(&r, "id"), id(&r, "bus"));
-    assert_eq!(
-        s.project().root,
-        [Node::Folder(f), Node::Track(bus), Node::Track(b)]
-    );
+    assert_eq!(s.project().root, [Node::Folder(f), Node::Track(b)]);
     assert_eq!(s.project().folders[&f].bus, Some(bus));
     s.project().validate_deep().unwrap();
     undo(&mut s);
@@ -330,7 +328,7 @@ fn a_folder_of_an_old_song_gets_no_bus_and_its_bus_menu_makes_one_named_as_it_un
     assert_eq!(p.folders[&f].bus, Some(bus));
     assert_eq!(
         p.root,
-        [Node::Folder(f), Node::Track(bus), Node::Track(t)],
+        [Node::Folder(f), Node::Track(t)],
         "directly under the folder, not at the bottom"
     );
     // it moves with the folder, and goes with it
@@ -339,10 +337,7 @@ fn a_folder_of_an_old_song_gets_no_bus_and_its_bus_menu_makes_one_named_as_it_un
         "track.move",
         json!({ "ids": [f.to_string()], "by": 1 }),
     );
-    assert_eq!(
-        s.project().root,
-        [Node::Track(t), Node::Folder(f), Node::Track(bus)]
-    );
+    assert_eq!(s.project().root, [Node::Track(t), Node::Folder(f)]);
     run(&mut s, "folder.delete", json!({ "ids": [f.to_string()] }));
     assert!(!s.project().tracks.contains_key(&bus));
 }
@@ -410,7 +405,7 @@ fn the_mark_survives_a_save_and_the_reopened_folder_still_takes_its_bus_with_it(
 }
 
 #[test]
-fn a_folder_in_a_folder_has_its_own_bus_under_it_and_goes_with_it() {
+fn a_folder_in_a_folder_has_its_own_bus_inside_it_and_goes_with_it() {
     let mut s = Session::new("nested");
     let (outer, outer_bus) = folder(&mut s, "Drums");
     let r = run(
@@ -421,12 +416,9 @@ fn a_folder_in_a_folder_has_its_own_bus_under_it_and_goes_with_it() {
     let (inner, inner_bus): (FolderId, TrackId) = (id(&r, "id"), id(&r, "bus"));
     assert_eq!(
         s.project().folders[&outer].children,
-        [Node::Folder(inner), Node::Track(inner_bus)]
+        [Node::Track(outer_bus), Node::Folder(inner)]
     );
-    assert_eq!(
-        s.project().root,
-        [Node::Folder(outer), Node::Track(outer_bus)]
-    );
+    assert_eq!(s.project().root, [Node::Folder(outer)]);
     s.project().validate_deep().unwrap();
     run(
         &mut s,
@@ -441,23 +433,18 @@ fn a_folder_in_a_folder_has_its_own_bus_under_it_and_goes_with_it() {
 fn packing_a_folder_into_another_takes_its_bus_in_and_makes_the_outer_one() {
     let mut s = Session::new("pack-folder");
     let (inner, inner_bus) = folder(&mut s, "Snares");
+    assert_eq!(s.project().row_bus(inner), Some(inner_bus));
     let r = run(&mut s, "folder.pack", json!({ "ids": [inner.to_string()] }));
     let (outer, outer_bus): (FolderId, TrackId) = (id(&r, "id"), id(&r, "bus"));
-    assert_eq!(
-        s.project().root,
-        [Node::Folder(outer), Node::Track(outer_bus)]
-    );
+    assert_eq!(s.project().root, [Node::Folder(outer)]);
     assert_eq!(
         s.project().folders[&outer].children,
-        [Node::Folder(inner), Node::Track(inner_bus)]
+        [Node::Track(outer_bus), Node::Folder(inner)]
     );
     s.project().validate_deep().unwrap();
     run(&mut s, "folder.unpack", json!({ "id": outer.to_string() }));
     assert!(!s.project().tracks.contains_key(&outer_bus));
-    assert_eq!(
-        s.project().root,
-        [Node::Folder(inner), Node::Track(inner_bus)]
-    );
+    assert_eq!(s.project().root, [Node::Folder(inner)]);
 }
 
 #[test]
@@ -471,15 +458,7 @@ fn duplicating_a_folder_duplicates_the_bus_and_links_the_copies_to_each_other() 
     assert_eq!(p.folders[&f].bus, Some(bus));
     assert_eq!(p.folders[&copy].bus, Some(copy_bus));
     assert_eq!(p.tracks[&copy_bus].name, p.folders[&copy].name);
-    assert_eq!(
-        p.root,
-        [
-            Node::Folder(f),
-            Node::Track(bus),
-            Node::Folder(copy),
-            Node::Track(copy_bus)
-        ]
-    );
+    assert_eq!(p.root, [Node::Folder(f), Node::Folder(copy),]);
     p.validate_deep().unwrap();
     // the copy's bus goes with the copy, the original's stays
     run(
@@ -492,9 +471,10 @@ fn duplicating_a_folder_duplicates_the_bus_and_links_the_copies_to_each_other() 
 }
 
 #[test]
-fn moving_a_folder_row_moves_its_bus_along_right_under_it() {
+fn moving_a_folder_row_moves_its_bus_along_as_its_child() {
     let mut s = Session::new("move");
     let (f, bus) = folder(&mut s, "Drums");
+    assert_eq!(s.project().row_bus(f), Some(bus));
     let a = track(&mut s, "A");
     let b = track(&mut s, "B");
     run(
@@ -504,12 +484,7 @@ fn moving_a_folder_row_moves_its_bus_along_right_under_it() {
     );
     assert_eq!(
         s.project().root,
-        [
-            Node::Track(a),
-            Node::Folder(f),
-            Node::Track(bus),
-            Node::Track(b)
-        ]
+        [Node::Track(a), Node::Folder(f), Node::Track(b)]
     );
     run(
         &mut s,
@@ -518,12 +493,7 @@ fn moving_a_folder_row_moves_its_bus_along_right_under_it() {
     );
     assert_eq!(
         s.project().root,
-        [
-            Node::Track(a),
-            Node::Track(b),
-            Node::Folder(f),
-            Node::Track(bus)
-        ]
+        [Node::Track(a), Node::Track(b), Node::Folder(f),]
     );
     run(
         &mut s,
@@ -532,21 +502,16 @@ fn moving_a_folder_row_moves_its_bus_along_right_under_it() {
     );
     assert_eq!(
         s.project().root,
-        [
-            Node::Folder(f),
-            Node::Track(bus),
-            Node::Track(a),
-            Node::Track(b)
-        ]
+        [Node::Folder(f), Node::Track(a), Node::Track(b)]
     );
     // moved into another folder, the bus comes too
     let (g, g_bus) = folder(&mut s, "Other");
     into(&mut s, f, g);
     assert_eq!(
         s.project().folders[&g].children,
-        [Node::Folder(f), Node::Track(bus)]
+        [Node::Track(g_bus), Node::Folder(f)]
     );
-    assert!(s.project().root.contains(&Node::Track(g_bus)));
+    assert_eq!(s.project().row_bus(g), Some(g_bus));
     s.project().validate_deep().unwrap();
 }
 
@@ -591,5 +556,327 @@ fn a_loop_through_a_folders_bus_is_still_refused() {
         "folder.bus.set",
         json!({ "id": f.to_string(), "bus": inside.to_string() })
     ));
+    s.project().validate_deep().unwrap();
+}
+
+#[test]
+fn nested_defaults_follow_the_parent_but_explicit_outputs_survive_moves() {
+    let mut s = Session::new("routing");
+    let (outer, a) = folder(&mut s, "Outer");
+    let (inner, b) = folder(&mut s, "Inner");
+    let t = track(&mut s, "Child");
+    into(&mut s, t, inner);
+    into(&mut s, inner, outer);
+    assert_eq!(s.project().effective_output(t), Some(Output::Bus(b)));
+    assert_eq!(s.project().effective_output(b), Some(Output::Bus(a)));
+    assert_eq!(s.project().effective_output(a), Some(Output::Master));
+    let before = s.project().content_hash();
+    assert!(!try_run(
+        &mut s,
+        "track.output.set",
+        json!({"ids":[a.to_string()], "to":b.to_string()})
+    ));
+    assert_eq!(s.project().content_hash(), before);
+    run(
+        &mut s,
+        "track.output.set",
+        json!({"ids":[b.to_string()], "to":"master"}),
+    );
+    run(
+        &mut s,
+        "track.output.set",
+        json!({"ids":[a.to_string()], "to":b.to_string()}),
+    );
+    let before = s.project().content_hash();
+    assert!(!try_run(
+        &mut s,
+        "track.output.set",
+        json!({"ids":[b.to_string()], "to":"default"})
+    ));
+    assert_eq!(s.project().content_hash(), before);
+    run(
+        &mut s,
+        "track.move",
+        json!({"ids":[inner.to_string()], "out":true}),
+    );
+    assert_eq!(s.project().effective_output(b), Some(Output::Master));
+    assert_eq!(s.project().effective_output(a), Some(Output::Bus(b)));
+}
+
+#[test]
+fn owned_channel_cannot_move_alone_and_insert_at_zero_stays_below_it() {
+    let mut s = Session::new("move");
+    let (f, b) = folder(&mut s, "Folder");
+    let t = track(&mut s, "Child");
+    let before = s.project().content_hash();
+    assert!(!try_run(
+        &mut s,
+        "track.move",
+        json!({"ids":[b.to_string()], "out":true})
+    ));
+    assert_eq!(s.project().content_hash(), before);
+    run(
+        &mut s,
+        "track.move",
+        json!({"ids":[t.to_string()], "into":f.to_string(), "index":0}),
+    );
+    assert_eq!(
+        s.project().folders[&f].children,
+        [Node::Track(b), Node::Track(t)]
+    );
+    run(
+        &mut s,
+        "track.move",
+        json!({"ids":[t.to_string()], "by":-1}),
+    );
+    assert_eq!(
+        s.project().folders[&f].children,
+        [Node::Track(b), Node::Track(t)]
+    );
+}
+
+#[test]
+fn a_cyclic_folder_move_is_atomic_including_sends() {
+    let mut s = Session::new("cycle");
+    let (outer, a) = folder(&mut s, "Outer");
+    let (inner, b) = folder(&mut s, "Inner");
+    run(
+        &mut s,
+        "send.add",
+        json!({"ids":[a.to_string()], "to":b.to_string()}),
+    );
+    let before = s.project().content_hash();
+    assert!(!try_run(
+        &mut s,
+        "track.move",
+        json!({"ids":[inner.to_string()], "into":outer.to_string()})
+    ));
+    assert_eq!(s.project().content_hash(), before);
+    s.project().validate_deep().unwrap();
+}
+
+#[test]
+fn duplicated_nested_channels_retarget_internal_outputs_and_sends() {
+    let mut s = Session::new("duplicate routes");
+    let (outer, a) = folder(&mut s, "Outer");
+    let (inner, b) = folder(&mut s, "Inner");
+    into(&mut s, inner, outer);
+    let t = track(&mut s, "Child");
+    into(&mut s, t, inner);
+    run(
+        &mut s,
+        "track.output.set",
+        json!({"ids":[t.to_string()], "to":b.to_string()}),
+    );
+    run(
+        &mut s,
+        "send.add",
+        json!({"ids":[t.to_string()], "to":a.to_string()}),
+    );
+    let r = run(&mut s, "folder.duplicate", json!({"id":outer.to_string()}));
+    let copy: FolderId = id(&r, "id");
+    let ca = s.project().row_bus(copy).unwrap();
+    let nested = s.project().folders[&copy]
+        .children
+        .iter()
+        .find_map(|n| match n {
+            Node::Folder(f) => Some(*f),
+            _ => None,
+        })
+        .unwrap();
+    let cb = s.project().row_bus(nested).unwrap();
+    let ct = s
+        .project()
+        .tracks_in(nested)
+        .into_iter()
+        .find(|t| s.project().tracks[t].kind == TrackKind::Audio)
+        .unwrap();
+    assert_ne!(ca, a);
+    assert_ne!(cb, b);
+    assert_eq!(s.project().tracks[&ct].output, Some(Output::Bus(cb)));
+    assert_eq!(s.project().tracks[&ct].sends[0].to, ca);
+    assert_eq!(s.project().effective_output(cb), Some(Output::Bus(ca)));
+    s.project().validate_deep().unwrap();
+}
+
+fn legacy_sibling(p: &mut Project, f: FolderId, b: TrackId) {
+    p.detach(Node::Track(b));
+    let (parent, i) = p.find_node(Node::Folder(f)).unwrap();
+    p.children_mut(parent).insert(i + 1, Node::Track(b));
+}
+
+#[test]
+fn legacy_migration_keeps_ids_and_routes_without_writing_the_opened_file() {
+    let mut s = Session::new("migration");
+    let (f, b) = folder(&mut s, "Drums");
+    let (outer, outer_bus) = folder(&mut s, "Outer");
+    into(&mut s, f, outer);
+    let t = track(&mut s, "Child");
+    into(&mut s, t, f);
+    let outside = track(&mut s, "Key source");
+    let aux = bus_named(&mut s, "Aux");
+    run(
+        &mut s,
+        "send.add",
+        json!({"ids":[b.to_string()], "to":aux.to_string(), "level":-9.0}),
+    );
+    let plugin = run(
+        &mut s,
+        "plugin.add",
+        json!({"track":b.to_string(), "name":"Compressor"}),
+    );
+    run(
+        &mut s,
+        "plugin.sidechain.add",
+        json!({"id":plugin["id"], "from":outside.to_string(), "pre":true, "level":-6.0}),
+    );
+    let mut old = s.project().clone();
+    let mut lane = xirius_core::auto::AutoLane::new(xirius_core::auto::AutoTarget::Volume);
+    lane.points = std::sync::Arc::new(vec![
+        xirius_core::auto::AutoPoint::new(0, -3.0),
+        xirius_core::auto::AutoPoint::new(3840, -9.0),
+    ]);
+    old.track_mut(b).unwrap().automation.push(lane);
+    legacy_sibling(&mut old, f, b);
+    legacy_sibling(&mut old, outer, outer_bus);
+    // The old bus need not be adjacent, or even under the same parent.
+    old.detach(Node::Track(b));
+    old.root.push(Node::Track(b));
+    let outputs: Vec<_> = old
+        .tracks
+        .keys()
+        .map(|t| (*t, old.effective_output(*t)))
+        .collect();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("project.json");
+    let bytes = serde_json::to_vec(&json!({"format_version":1,"project":old})).unwrap();
+    // Compare migration with the saved values, after the same JSON decoding as Store.
+    #[derive(serde::Deserialize)]
+    struct Saved {
+        project: Project,
+    }
+    let saved: Saved = serde_json::from_slice(&bytes).unwrap();
+    std::fs::write(&file, &bytes).unwrap();
+    let store = xirius_core::store::Store::new(dir.path());
+    let migrated = store.read_project().unwrap();
+    assert_eq!(std::fs::read(&file).unwrap(), bytes);
+    assert_eq!(migrated.row_bus(f), Some(b));
+    assert_eq!(migrated.row_bus(outer), Some(outer_bus));
+    for (t, output) in outputs {
+        assert_eq!(migrated.effective_output(t), output);
+    }
+    assert_eq!(migrated.tracks[&b].output, Some(Output::Master));
+    assert_eq!(migrated.tracks[&b].name, old.tracks[&b].name);
+    for (id, before) in &saved.project.tracks {
+        let mut after = migrated.tracks[id].as_ref().clone();
+        after.output = before.output;
+        assert_eq!(
+            &after,
+            before.as_ref(),
+            "all channel settings survive for {id}"
+        );
+    }
+    store.write_project(&migrated).unwrap();
+    assert_eq!(store.read_project().unwrap(), migrated);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&std::fs::read(file).unwrap()).unwrap()["format_version"],
+        3
+    );
+}
+
+#[test]
+fn copying_a_folders_channels_keeps_the_nested_signal_chain_and_one_undo() {
+    let mut s = Session::new("copy folder channels");
+    let (outer, a) = folder(&mut s, "Outer");
+    let (inner, b) = folder(&mut s, "Inner");
+    into(&mut s, inner, outer);
+    let child = track(&mut s, "Child");
+    into(&mut s, child, inner);
+    let source = s.project().tracks_in(outer);
+    run(
+        &mut s,
+        "edit.copy",
+        json!({"ids":source.iter().map(ToString::to_string).collect::<Vec<_>>()}),
+    );
+    let before = s.project().content_hash();
+    let pasted = run(&mut s, "edit.paste", json!({}));
+    let made: Vec<TrackId> = pasted["ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().parse().unwrap())
+        .collect();
+    let copy = |id| made[source.iter().position(|t| *t == id).unwrap()];
+    assert_eq!(
+        s.project().effective_output(copy(child)),
+        Some(Output::Bus(copy(b)))
+    );
+    assert_eq!(
+        s.project().effective_output(copy(b)),
+        Some(Output::Bus(copy(a)))
+    );
+    assert_eq!(s.project().effective_output(copy(a)), Some(Output::Master));
+    s.project().validate_deep().unwrap();
+    undo(&mut s);
+    assert_eq!(s.project().content_hash(), before);
+    redo(&mut s);
+    s.project().validate_deep().unwrap();
+}
+
+#[test]
+fn legacy_organization_shared_and_renamed_buses_keep_the_saved_shape() {
+    for case in ["organization", "shared", "renamed"] {
+        let mut s = Session::new(case);
+        let (f, b) = folder(&mut s, "Folder");
+        let other = old_folder(&mut s, "Other");
+        let mut p = s.project().clone();
+        legacy_sibling(&mut p, f, b);
+        match case {
+            "organization" => {
+                p.folders.get_mut(&f).unwrap().bus = None;
+            }
+            "shared" => {
+                p.folders.get_mut(&other).unwrap().bus = Some(b);
+            }
+            _ => {
+                std::sync::Arc::make_mut(p.tracks.get_mut(&b).unwrap()).name = "Manual name".into();
+            }
+        }
+        let before = p.clone();
+        p.migrate_folder_rows();
+        assert_eq!(p, before, "{case}");
+    }
+}
+
+#[test]
+fn deleting_nested_folders_keeps_externally_used_channels_and_their_chain() {
+    let mut s = Session::new("retained channels");
+    let (outer, a) = folder(&mut s, "Outer");
+    let (inner, b) = folder(&mut s, "Inner");
+    into(&mut s, inner, outer);
+    let child = track(&mut s, "Child");
+    into(&mut s, child, inner);
+    let outside = track(&mut s, "Outside");
+    run(
+        &mut s,
+        "send.add",
+        json!({"ids":[outside.to_string()], "to":b.to_string()}),
+    );
+    let before = s.project().content_hash();
+    run(
+        &mut s,
+        "folder.delete",
+        json!({"id":outer.to_string(), "with-tracks":true}),
+    );
+    assert!(!s.project().folders.contains_key(&outer));
+    assert!(!s.project().tracks.contains_key(&child));
+    assert!(s.project().root.contains(&Node::Track(a)));
+    assert!(s.project().root.contains(&Node::Track(b)));
+    assert_eq!(s.project().effective_output(b), Some(Output::Bus(a)));
+    assert_eq!(s.project().effective_output(a), Some(Output::Master));
+    s.project().validate_deep().unwrap();
+    undo(&mut s);
+    assert_eq!(s.project().content_hash(), before);
+    redo(&mut s);
     s.project().validate_deep().unwrap();
 }

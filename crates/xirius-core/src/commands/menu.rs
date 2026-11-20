@@ -68,7 +68,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "folder.pack",
-            "選んだトラックとフォルダーを、新しいフォルダーにまとめます（先頭のものがあった場所に作ります）。同じ名前のバスがフォルダーのすぐ下にでき、接続されます（1 回の取り消しで両方とも元に戻ります）",
+            "選んだトラックとフォルダーを、新しいフォルダーにまとめます（先頭のものがあった場所に作ります）。同じ名前の専用バスをフォルダーの行に作ります（1 回の取り消しで両方とも元に戻ります）",
             vec![
                 ArgDef::ids(IdKind::Node, "まとめるトラックやフォルダー"),
                 ArgDef::text("name", "フォルダー名（省略時は Folder 1 のような名前）"),
@@ -98,6 +98,16 @@ fn inside_picked(p: &Project, node: Node, picked: &[Node]) -> bool {
 
 fn pack(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     let nodes = track::node_ids(p, a)?;
+    for node in &nodes {
+        if let Node::Track(t) = node
+            && let Some(f) = p.bus_folder(*t)
+            && !nodes.contains(&Node::Folder(f))
+        {
+            return Err(CmdError::invalid(
+                "専用バスはフォルダーと一緒にまとめてください",
+            ));
+        }
+    }
     // what sits inside a picked folder goes along with it
     let mut picked: Vec<Node> = Vec::new();
     for n in nodes
@@ -171,11 +181,10 @@ fn pack(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
 /// A copy of the folder, its tracks and its folders under new ids. The copies keep their
 /// names and their routing: a send or an output still goes where the original goes. A folder
 /// whose own bus is among the copied tracks plays to the copy of that bus.
-fn copy_folder(p: &mut Project, id: FolderId) -> FolderId {
+fn copy_folder(p: &mut Project, id: FolderId, made: &mut HashMap<TrackId, TrackId>) -> FolderId {
     let src = p.folders[&id].clone();
     let new = FolderId(p.alloc());
     let mut children = Vec::new();
-    let mut made: HashMap<TrackId, TrackId> = HashMap::new();
     for n in &src.children {
         children.push(match n {
             Node::Track(t) => {
@@ -187,7 +196,7 @@ fn copy_folder(p: &mut Project, id: FolderId) -> FolderId {
                 p.tracks.insert(tid, Arc::new(copy));
                 Node::Track(tid)
             }
-            Node::Folder(f) => Node::Folder(copy_folder(p, *f)),
+            Node::Folder(f) => Node::Folder(copy_folder(p, *f, made)),
         });
     }
     // the nested folders were copied first: each one's own bus, if it came along, replaces
@@ -202,7 +211,14 @@ fn copy_folder(p: &mut Project, id: FolderId) -> FolderId {
                     f.made_bus = Some(made[&m]);
                 }
                 // a bus the copy shares with the original is not the copy's to remove
-                _ => f.made_bus = None,
+                _ if !f
+                    .children
+                    .iter()
+                    .any(|n| matches!(n, Node::Track(t) if Some(*t) == f.made_bus)) =>
+                {
+                    f.made_bus = None
+                }
+                _ => {}
             }
         }
     }
@@ -212,8 +228,8 @@ fn copy_folder(p: &mut Project, id: FolderId) -> FolderId {
             id: new,
             name: src.name.clone(),
             color: src.color.clone(),
-            bus: src.bus,
-            made_bus: src.made_bus,
+            bus: src.bus.map(|b| made.get(&b).copied().unwrap_or(b)),
+            made_bus: src.made_bus.map(|b| made.get(&b).copied().unwrap_or(b)),
             children,
         },
     );
@@ -225,13 +241,48 @@ fn duplicate_folder(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Out
     p.folder(id)?;
     let own = p.own_bus(id);
     let attached = p.attached_bus(id);
-    let new = copy_folder(p, id);
+    let mut made = HashMap::new();
+    let new = copy_folder(p, id, &mut made);
+    for copy in made.values() {
+        let t = p.track_mut(*copy)?;
+        if let Some(crate::model::Output::Bus(b)) = &mut t.output
+            && let Some(to) = made.get(b)
+        {
+            *b = *to;
+        }
+        for send in &mut t.sends {
+            if let Some(to) = made.get(&send.to) {
+                send.to = *to;
+            }
+        }
+        for insert in &mut t.inserts {
+            for bus in insert.pad_outputs.values_mut() {
+                if let Some(to) = made.get(bus) {
+                    *bus = *to;
+                }
+            }
+            if let Some(sc) = &mut insert.sidechain {
+                for source in &mut sc.sources {
+                    if let Some(to) = made.get(&source.track) {
+                        source.track = *to;
+                    }
+                }
+            }
+        }
+    }
     let name = format!("{} コピー", p.folders[&id].name);
     p.folder_mut(new)?.name = name.clone();
     let (parent, i) = p.find_node(Node::Folder(id)).expect("in the column");
     // after the original and the bus that goes with it
     let at = i + 1 + usize::from(attached.is_some());
     p.children_mut(parent).insert(at, Node::Folder(new));
+    if let Some(bus) = p.row_bus(new) {
+        p.track_mut(bus)?.name = name.clone();
+        return Ok(Output::with(
+            format!("フォルダー「{name}」 {new} とバス {bus} を作成しました"),
+            json!({ "id": new.to_string(), "bus": bus.to_string() }),
+        ));
+    }
     let Some(bus) = own else {
         // not connected to a bus of its own: the copy plays where the original plays
         p.folder_mut(new)?.made_bus = None;

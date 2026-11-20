@@ -803,13 +803,13 @@ impl Studio {
             return self.lane_spot(g, row, x, y, in_column);
         }
         if in_column {
-            if let RowKind::Track(t) = row.kind
+            if let Some(t) = row.channel()
                 && let Some(auto) = g.parts(row).auto
                 && crate::automation_track_mode::rect(auto).contains(x - g.column.x, y - top)
             {
                 return crate::automation_track_mode::spot(t, p.tracks[&t].auto_mode);
             }
-            if let RowKind::Track(t) = row.kind
+            if let Some(t) = row.channel()
                 && g.parts(row)
                     .auto
                     .is_some_and(|r| r.contains(x - g.column.x, y - top))
@@ -929,7 +929,7 @@ impl Studio {
     }
 
     fn lane_spot(&self, g: &Geometry, row: &Row, x: f32, y: f32, in_column: bool) -> Spot {
-        let RowKind::Track(t) = row.kind else {
+        let Some(t) = row.channel() else {
             return Spot::None;
         };
         let p = self.project();
@@ -2482,7 +2482,7 @@ impl Studio {
                     if !self.is_collapsed(f) && children > 0 {
                         Some((
                             Parent::Folder(f),
-                            0,
+                            usize::from(p.row_bus(f).is_some()),
                             DropMark::Line {
                                 y: row.bottom(),
                                 depth: row.depth + 1,

@@ -33,6 +33,8 @@ pub enum RowKind {
 #[derive(Clone, Copy, Debug)]
 pub struct Row {
     pub kind: RowKind,
+    /// The owned channel displayed by a folder row.
+    pub bus: Option<TrackId>,
     /// 0 at the root; the contents of a root folder are 1.
     pub depth: usize,
     /// The folder this row sits directly in (None at the root).
@@ -61,6 +63,13 @@ pub struct Row {
 pub const LANE_H: f32 = 56.0;
 
 impl Row {
+    pub fn channel(&self) -> Option<TrackId> {
+        match self.kind {
+            RowKind::Track(t) => Some(t),
+            RowKind::Folder(_) => self.bus,
+        }
+    }
+
     pub fn bottom(&self) -> f32 {
         self.y + self.full_h()
     }
@@ -261,7 +270,9 @@ impl Tree {
     }
 
     pub fn row_of(&self, kind: RowKind) -> Option<&Row> {
-        self.rows.iter().find(|r| r.kind == kind)
+        self.rows
+            .iter()
+            .find(|r| r.kind == kind || matches!(kind, RowKind::Track(t) if r.bus == Some(t)))
     }
 
     pub fn block_of(&self, row: &Row) -> &Block {
@@ -274,6 +285,7 @@ fn deepest(project: &Project) -> usize {
     fn walk(project: &Project, nodes: &[Node], depth: usize) -> usize {
         nodes
             .iter()
+            .filter(|n| !matches!(n, Node::Track(t) if project.bus_folder(*t).is_some()))
             .map(|n| match n {
                 Node::Track(_) => depth,
                 Node::Folder(f) => project
@@ -329,7 +341,11 @@ impl Builder<'_> {
         let block = self.blocks.len() - 1;
         let lanes = match kind {
             RowKind::Track(t) => self.lanes.get(&t).copied().unwrap_or(0),
-            RowKind::Folder(_) => 0,
+            RowKind::Folder(f) => self
+                .project
+                .row_bus(f)
+                .and_then(|b| self.lanes.get(&b).copied())
+                .unwrap_or(0),
         };
         let rec_h = match kind {
             RowKind::Track(t) => self.rec.get(&t).copied().unwrap_or(0.0),
@@ -341,6 +357,10 @@ impl Builder<'_> {
         };
         self.rows.push(Row {
             kind,
+            bus: match kind {
+                RowKind::Folder(f) => self.project.row_bus(f),
+                RowKind::Track(_) => None,
+            },
             depth,
             parent,
             block,
@@ -371,12 +391,17 @@ impl Builder<'_> {
     }
 
     fn push_folder(&mut self, id: FolderId, depth: usize, parent: Option<FolderId>) {
+        let bus = self.project.row_bus(id);
         self.push_row(
             RowKind::Folder(id),
             depth,
             parent,
-            Layout::FOLDER_ROW_H,
-            false,
+            if bus.is_some() {
+                Layout::TRACK_ROW_TALL_H
+            } else {
+                Layout::FOLDER_ROW_H
+            },
+            bus.is_some(),
         );
         if self.collapsed.contains(&id) {
             return;
@@ -386,6 +411,9 @@ impl Builder<'_> {
         };
         let first = self.rows.len();
         for child in &folder.children {
+            if matches!(child, Node::Track(t) if Some(*t) == bus) {
+                continue;
+            }
             match *child {
                 Node::Track(t) => self.push_track(t, depth + 1, Some(id)),
                 Node::Folder(f) => self.push_folder(f, depth + 1, Some(id)),

@@ -9,11 +9,22 @@ impl Studio {
     pub fn track_targets(&self, clicked: TrackId) -> Vec<TrackId> {
         let p = self.project();
         let mut ids = vec![clicked];
-        if !clicked.is_master() && self.arrange.tracks.contains(&RowKind::Track(clicked)) {
+        if !clicked.is_master()
+            && self
+                .arrange
+                .tracks
+                .contains(&self.channel_row(RowKind::Track(clicked)))
+        {
             for row in &self.arrange.tracks {
                 match row {
                     RowKind::Track(t) if !t.is_master() => ids.push(*t),
-                    RowKind::Folder(f) => ids.extend(p.tracks_in(*f)),
+                    RowKind::Folder(f) => {
+                        if let Some(b) = p.row_bus(*f) {
+                            ids.push(b);
+                        } else {
+                            ids.extend(p.tracks_in(*f));
+                        }
+                    }
                     _ => {}
                 }
             }

@@ -20,13 +20,20 @@ fn unpack(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         .find_node(Node::Folder(id))
         .ok_or_else(|| CmdError::not_found("フォルダーが見つかりません"))?;
     let made: Vec<TrackId> = p.own_bus(id).into_iter().collect();
+    track::pin_bus_outputs(p, &made);
     p.detach(Node::Folder(id));
     p.folders.remove(&id);
     // before the tracks go back to their places, which count the rows as they were before
     track::remove_unused_buses(p, &made)?;
     let mut places = p.packed.remove(&id).unwrap_or_default();
     places.sort_by_key(|x| (x.parent, x.index));
-    let mut remaining = children;
+    let mut remaining: Vec<_> = children
+        .into_iter()
+        .filter(|n| match n {
+            Node::Track(t) => p.tracks.contains_key(t),
+            Node::Folder(_) => true,
+        })
+        .collect();
     for place in places {
         let node = Node::Track(place.track);
         if let Some(i) = remaining.iter().position(|n| *n == node) {

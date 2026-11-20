@@ -434,7 +434,7 @@ fn a_duplicated_track_keeps_lanes_pointing_at_its_own_sends_and_plugins() {
     let c = p.track(copy.parse().unwrap()).unwrap();
     assert_eq!(
         p.folder(f.parse().unwrap()).unwrap().children.len(),
-        1,
+        2,
         "the copy went into the folder"
     );
     for lane in &c.automation {

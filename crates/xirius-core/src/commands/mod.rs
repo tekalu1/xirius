@@ -354,6 +354,11 @@ pub(crate) fn insert_at(
         Some(i) if i < 0 => return Err(CmdError::range("--index には 0 以上を指定してください")),
         Some(i) => (i as usize).min(len),
     };
+    let i = if matches!(parent, Parent::Folder(f) if p.row_bus(f).is_some()) {
+        i.max(1)
+    } else {
+        i
+    };
     p.children_mut(parent).insert(i, node);
     Ok(())
 }

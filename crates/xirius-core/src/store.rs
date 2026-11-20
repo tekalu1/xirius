@@ -50,9 +50,9 @@ use crate::model::Project;
 use crate::session::{AiPermission, Step};
 
 pub const FORMAT: &str = "xirius-project";
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 3;
 /// Format version for `history/<n>.json` with content-addressed `history/blobs/<sha256>` (PRJ-021).
-pub const HISTORY_FORMAT_VERSION: u32 = 2;
+pub const HISTORY_FORMAT_VERSION: u32 = 4;
 /// Strings at least this long in `history/<n>.json` are stored in `history/blobs/<sha256>`.
 pub const BLOB_MIN_BYTES: usize = 4096;
 /// What [`Store::read_state_unresolved`] leaves in place of a blob's text: no path or name can
@@ -480,6 +480,9 @@ impl Store {
         f.project.fix_param_keys();
         f.project.settle_controls();
         f.project.snap_lanes();
+        if f.format_version < 3 {
+            f.project.migrate_folder_rows();
+        }
         f.project
             .validate()
             .map_err(|e| Self::corrupt(rel, e.message))?;
@@ -671,8 +674,8 @@ impl Store {
         let mut f: RawProjectFile =
             serde_json::from_slice(&bytes).map_err(|e| Self::corrupt(&rel, e))?;
         match f.format_version {
-            FORMAT_VERSION => {}
-            HISTORY_FORMAT_VERSION => self.resolve_blobs(&mut f.project, &rel)?,
+            1 | FORMAT_VERSION => {}
+            2 | HISTORY_FORMAT_VERSION => self.resolve_blobs(&mut f.project, &rel)?,
             _ => return Err(Self::corrupt(&rel, "新しい形式")),
         }
         let mut p: Project =
@@ -681,6 +684,9 @@ impl Store {
         p.fix_param_keys();
         p.settle_controls();
         p.snap_lanes();
+        if f.format_version < 3 {
+            p.migrate_folder_rows();
+        }
         p.validate().map_err(|e| Self::corrupt(&rel, e.message))?;
         Ok((p, rows))
     }
@@ -699,8 +705,8 @@ impl Store {
         let mut f: RawProjectFile =
             serde_json::from_slice(&bytes).map_err(|e| Self::corrupt(&rel, e))?;
         match f.format_version {
-            FORMAT_VERSION => {}
-            HISTORY_FORMAT_VERSION => leave_blobs(&mut f.project, &rel)?,
+            1 | FORMAT_VERSION => {}
+            2 | HISTORY_FORMAT_VERSION => leave_blobs(&mut f.project, &rel)?,
             _ => return Err(Self::corrupt(&rel, "新しい形式")),
         }
         serde_json::from_value(f.project).map_err(|e| Self::corrupt(&rel, e))
@@ -801,7 +807,7 @@ impl Store {
 
     fn collect_state_refs(rel: &str, bytes: &[u8], used: &mut HashSet<String>) -> CmdResult<()> {
         let f: RawProjectFile = serde_json::from_slice(bytes).map_err(|e| Self::corrupt(rel, e))?;
-        if f.format_version == HISTORY_FORMAT_VERSION {
+        if matches!(f.format_version, 2 | HISTORY_FORMAT_VERSION) {
             collect_blob_refs(&f.project, used);
         }
         Ok(())

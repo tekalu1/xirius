@@ -208,9 +208,7 @@ impl Studio {
             return None;
         }
         let row = *self.tree().row_at(y - g.column.y + self.scroll.1)?;
-        let RowKind::Track(t) = row.kind else {
-            return None;
-        };
+        let t = row.channel()?;
         let below = y - self.row_y(g, &row) - row.h;
         if below < 0.0 {
             return None;

@@ -40,6 +40,7 @@ impl Studio {
     /// Selects `row`: the row the next command acts on. An instrument track so
     /// chosen takes the instrument input over (see the module's note).
     pub fn select_row(&mut self, row: Option<RowKind>) {
+        let row = row.map(|r| self.channel_row(r));
         // Another track's values are not where the half-typed one belongs (UI-312).
         self.field_blur();
         // A row outside the selection is chosen alone; one inside it moves the focus only (UI-340).

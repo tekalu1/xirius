@@ -199,7 +199,7 @@ fn long_strings_in_history_states_are_kept_once_in_blobs_and_stay_small() {
 }
 
 #[test]
-fn v1_history_states_are_read_without_rewriting_and_new_steps_write_v2() {
+fn v1_history_states_are_read_without_rewriting_and_new_steps_use_the_current_format() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("song");
     let (mut s, track) = song(&dir);
@@ -225,7 +225,7 @@ fn v1_history_states_are_read_without_rewriting_and_new_steps_write_v2() {
         serde_json::from_slice(&std::fs::read(&step3_path).unwrap()).unwrap();
     assert_eq!(step3_after_open["format_version"], 1);
 
-    // A new step writes format_version 2 with blobs, leaving step 3 untouched as v1.
+    // A new step uses the current blob format, leaving step 3 untouched as v1.
     s.run_value(
         "track.rename",
         json!({"id": track.to_string(), "name": "Step 4"}),
@@ -255,7 +255,7 @@ fn v1_history_states_are_read_without_rewriting_and_new_steps_write_v2() {
 }
 
 #[test]
-fn missing_or_corrupt_blob_falls_back_to_saved_project_and_old_reader_keeps_project_v1() {
+fn missing_or_corrupt_blob_falls_back_to_the_inline_saved_project() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("song");
     let (mut s, track) = song(&dir);
@@ -268,11 +268,13 @@ fn missing_or_corrupt_blob_falls_back_to_saved_project_and_old_reader_keeps_proj
     .unwrap();
     drop(s);
 
-    // project.json and manifest.toml remain format_version 1 with full inline state,
-    // so an older Xirius binary can always read the saved song.
+    // The project keeps full inline state independently of the history blobs.
     let proj_json: Value =
         serde_json::from_slice(&std::fs::read(dir.join("project.json")).unwrap()).unwrap();
-    assert_eq!(proj_json["format_version"], 1);
+    assert_eq!(
+        proj_json["format_version"],
+        xirius_core::store::FORMAT_VERSION
+    );
     assert_eq!(
         proj_json["project"]["tracks"][track.to_string()]["inserts"][0]["state"]
             .as_str()
@@ -522,4 +524,23 @@ fn an_older_xirius_gone_back_to_its_start_opens_the_saved_song() {
             .iter()
             .any(|n| n.contains("履歴を読み込めなかったため"))
     );
+}
+
+#[test]
+fn pre_folder_row_history_keeps_the_old_reader_recovery_guard() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("song");
+    let (mut s, track) = song(&dir);
+    s.save().unwrap();
+    drop(s);
+    written_over_by_an_older_xirius(&dir, 1);
+    for (name, version) in [("0.json", 2), ("1.json", 1)] {
+        let path = dir.join("history").join(name);
+        let mut state: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        state["format_version"] = json!(version);
+        std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+    }
+    let s = Session::open(&dir).unwrap();
+    assert_eq!(s.project().tracks[&track].name, "Renamed by the older one");
+    assert!(!s.can_undo());
 }

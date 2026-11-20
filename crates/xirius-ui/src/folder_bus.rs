@@ -33,6 +33,14 @@ pub fn bus_of(p: &Project, f: FolderId) -> Option<(TrackId, &str)> {
 
 /// Where the button sits in the row (row coordinates): at the right of the head.
 pub fn rect(row: &Row, column_w: f32, name: Option<&str>) -> Rect {
+    if row.bus.is_some() {
+        return Rect::new(
+            column_w.max(row.head_w) - Space::X2.px() - crate::studio::RowParts::METER_W - 24.0,
+            6.0,
+            20.0,
+            24.0,
+        );
+    }
     let w = match name {
         Some(n) => {
             (PAD_X * 2.0 + ICON + GAP + crate::browser::text_width(n, FontSize::Caption)).min(MAX_W)
@@ -108,6 +116,17 @@ pub fn paint(
     let bus = bus_of(p, f);
     let r = rect(row, g.column.w, bus.map(|(_, n)| n));
     let r = Rect::new(g.column.x + r.x, top + r.y, r.w, r.h);
+    if row.bus.is_some() {
+        if studio.hover == Hit::FolderBus(f) {
+            pen.round(r, c.hover, Radius::Clip);
+        }
+        pen.icon(
+            "effects",
+            Rect::new(r.x + 2.0, r.y + 4.0, 16.0, 16.0),
+            c.ink,
+        );
+        return;
+    }
     let open = studio
         .popup
         .as_ref()
@@ -150,6 +169,17 @@ impl Studio {
 
     /// The press on the button: its menu under it.
     pub(crate) fn open_folder_bus(&mut self, g: &Geometry, f: FolderId) -> bool {
+        if let Some(bus) = self.project().row_bus(f) {
+            self.drawer_open = true;
+            self.tab = crate::studio::DrawerTab::Mixer;
+            self.select_row(Some(crate::tree::RowKind::Folder(f)));
+            self.mixer.heading = Some(bus);
+            self.mixer.scroll = self
+                .strip_offset(g, bus)
+                .unwrap_or(0.0)
+                .min(self.mixer_max_scroll(g));
+            return true;
+        }
         let Some(row) = self.tree().row_of(crate::tree::RowKind::Folder(f)) else {
             return false;
         };
@@ -297,19 +327,185 @@ mod tests {
             assert_eq!(p.tracks.len(), tracks + 1);
             let bus = p.folders[&f].bus.expect("connected");
             assert_eq!(p.tracks[&bus].kind, TrackKind::Bus);
-            // named as the folder, and right under it
+            // The channel belongs to the folder row.
             assert_eq!(p.tracks[&bus].name, "Rhythm");
             assert_eq!(
-                p.find_node(Node::Track(bus)).unwrap().1,
-                p.find_node(Node::Folder(f)).unwrap().1 + 1
+                p.find_node(Node::Track(bus)),
+                Some((xirius_core::model::Parent::Folder(f), 0))
             );
         }
-        // The button names the new bus.
+        // The row offers its insert entry instead of the old bus-link menu.
         let row = *s.tree().row_of(RowKind::Folder(f)).unwrap();
-        assert!(s.folder_bus_rect(&row, row.head_w, f).w > PAD_X * 2.0 + ICON);
+        assert_eq!(row.h, 96.0);
+        assert!(row.bus.is_some());
         // One undo takes the bus and the connection away together.
         s.undo(&g);
         assert_eq!(s.project().content_hash(), before);
         assert_eq!(s.project().folders[&f].bus, None);
+    }
+
+    fn owned(s: &mut Studio, name: &str) -> (FolderId, TrackId) {
+        let out = s.song.run("folder.add", json!({"name":name})).unwrap();
+        s.after_edit();
+        (
+            out["id"].as_str().unwrap().parse().unwrap(),
+            out["bus"].as_str().unwrap().parse().unwrap(),
+        )
+    }
+
+    #[test]
+    fn folded_folder_keeps_channel_controls_and_opens_its_mixer_inserts() {
+        let (mut s, _) = studio();
+        let (f, bus) = owned(&mut s, "Group");
+        let g = s.geometry(1440.0, 1000.0);
+        s.select_row(Some(RowKind::Folder(f)));
+        let children: Vec<_> = s
+            .project()
+            .tracks
+            .iter()
+            .filter(|(id, _)| **id != bus)
+            .map(|(id, t)| (*id, t.mute))
+            .collect();
+        for collapsed in [false, true] {
+            if collapsed {
+                s.press(&g, Hit::Chevron(f));
+            }
+            let row = *s.tree().row_of(RowKind::Folder(f)).unwrap();
+            assert_eq!(row.h, 96.0);
+            assert_eq!(row.channel(), Some(bus));
+            assert_eq!(
+                s.tree()
+                    .rows
+                    .iter()
+                    .filter(|r| r.channel() == Some(bus))
+                    .count(),
+                1
+            );
+            s.scroll.1 = row.y;
+            for hit in [
+                Hit::Mute(bus),
+                Hit::Solo(bus),
+                Hit::HeadFader(bus),
+                Hit::Output(bus),
+                Hit::FolderBus(f),
+            ] {
+                let (x, y) = s.center_of(&g, hit).unwrap();
+                assert_eq!(s.hit(&g, x, y), hit);
+            }
+            assert!(g.parts(&row).arm.is_none());
+            assert!(g.parts(&row).ear.is_none());
+            assert!(g.parts(&row).meter.is_some());
+        }
+        s.press(&g, Hit::Mute(bus));
+        assert!(s.project().tracks[&bus].mute);
+        s.press(&g, Hit::Solo(bus));
+        assert!(s.project().tracks[&bus].solo);
+        s.head_fader.focus = Some(bus);
+        assert!(s.head_fader_key("left", crate::tools::Mods::default()));
+        let db = s.project().tracks[&bus].volume_db;
+        assert!(db < 0.0);
+        assert_eq!(s.head_fader_value(bus), Some(db));
+        assert_eq!(s.mixer_value(crate::mixer::MixerHit::Fader(bus)), Some(db));
+        for (id, mute) in children {
+            assert_eq!(s.project().tracks[&id].mute, mute);
+        }
+        s.press(&g, Hit::FolderBus(f));
+        assert!(s.mixer_shown());
+        assert_eq!(s.mixer.heading, Some(bus));
+        assert_eq!(s.selected_row, Some(RowKind::Folder(f)));
+        assert!(s.is_picked(RowKind::Track(bus)));
+    }
+
+    #[test]
+    fn dropping_below_a_folder_head_keeps_its_channel_first() {
+        let (mut s, g) = studio();
+        let (f, b) = owned(&mut s, "Group");
+        let t = add_bus(&mut s, "Outside");
+        let row = *s.tree().row_of(RowKind::Folder(f)).unwrap();
+        s.scroll.1 = row.y;
+        let (parent, index, mark) = s
+            .drop_at(&g, g.column.y + row.h * 0.85, &[RowKind::Track(t)])
+            .unwrap();
+        assert_eq!(parent, xirius_core::model::Parent::Folder(f));
+        assert_eq!(index, 1);
+        assert!(matches!(mark, crate::arrange::DropMark::Line { .. }));
+        s.song
+            .run("track.move", json!({"ids":[t], "into":f, "index":index}))
+            .unwrap();
+        s.after_edit();
+        assert_eq!(
+            s.project().folders[&f].children,
+            [Node::Track(b), Node::Track(t)]
+        );
+        let tree = s.tree();
+        let visible = tree
+            .rows
+            .iter()
+            .position(|r| r.kind == RowKind::Folder(f))
+            .unwrap();
+        assert_eq!(tree.rows[visible + 1].kind, RowKind::Track(t));
+    }
+
+    #[test]
+    fn nested_folder_output_choices_exclude_cycles_and_bus_order_ignores_folding() {
+        let (mut s, g) = studio();
+        let (outer, a) = owned(&mut s, "Outer");
+        let (inner, b) = owned(&mut s, "Inner");
+        s.song
+            .run(
+                "track.move",
+                json!({"ids":[inner.to_string()], "into":outer.to_string()}),
+            )
+            .unwrap();
+        s.after_edit();
+        let choices = crate::mixer::output_choices(&s.project(), a);
+        assert!(
+            !choices
+                .iter()
+                .any(|c| c.to == b.to_string() || c.to == a.to_string())
+        );
+        assert_eq!(
+            crate::draw::output_label(&s.project(), &s.project().tracks[&b]),
+            "Outer"
+        );
+        let before = crate::mixer::strip_order(&s.project());
+        assert!(before.iter().position(|t| *t == a) < before.iter().position(|t| *t == b));
+        s.press(&g, Hit::Chevron(outer));
+        assert_eq!(crate::mixer::strip_order(&s.project()), before);
+        s.song
+            .run(
+                "track.output.set",
+                json!({"ids":[b.to_string()], "to":"master"}),
+            )
+            .unwrap();
+        let choices = crate::mixer::output_choices(&s.project(), a);
+        assert!(choices.iter().any(|c| c.to == b.to_string()));
+    }
+
+    #[test]
+    fn bus_automation_lanes_are_independent_of_child_folding() {
+        let (mut s, _) = studio();
+        let (f, b) = owned(&mut s, "Group");
+        let lanes = std::collections::HashMap::from([(b, 2)]);
+        let p = s.project();
+        for collapsed in [
+            std::collections::HashSet::new(),
+            std::collections::HashSet::from([f]),
+        ] {
+            let tree = crate::tree::Tree::build_shaped(
+                &p,
+                &collapsed,
+                &std::collections::HashSet::new(),
+                64.0,
+                &lanes,
+            );
+            let row = tree.row_of(RowKind::Folder(f)).unwrap();
+            assert_eq!(row.lanes, 2);
+            assert_eq!(row.full_h(), 208.0);
+            assert_eq!(
+                tree.row_of(RowKind::Track(b)).unwrap().kind,
+                RowKind::Folder(f)
+            );
+        }
     }
 }

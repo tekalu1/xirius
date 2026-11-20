@@ -437,17 +437,77 @@ fn a_song_comes_back_from_its_dawproject() {
     assert_eq!(folder.name, "Band");
     assert_eq!(folder.color, Some(palette(5)));
     let gtr = track(q, "Gtr");
-    assert_eq!(folder.children, vec![Node::Track(gtr.id)]);
     let bus = &q.tracks[&folder.bus.unwrap()];
+    assert_eq!(
+        folder.children,
+        vec![Node::Track(bus.id), Node::Track(gtr.id)]
+    );
     assert_eq!(bus.kind, TrackKind::Bus);
     assert!((bus.volume_db + 2.0).abs() < 1e-6);
     assert_eq!(q.effective_output(gtr.id), Some(Output::Bus(bus.id)));
-    let at = q
-        .root
-        .iter()
-        .position(|n| *n == Node::Folder(*fid))
-        .unwrap();
-    assert_eq!(q.root[at + 1], Node::Track(bus.id));
+    assert_eq!(q.row_bus(*fid), Some(bus.id));
+    assert!(!q.root.contains(&Node::Track(bus.id)));
+    assert_eq!(q.effective_output(bus.id), Some(Output::Master));
+}
+
+#[test]
+fn nested_folder_channels_keep_parentage_and_routes_on_round_trip() {
+    use crate::session::{RunOptions, Session};
+    use serde_json::json;
+    let mut s = Session::new("Nested");
+    let mut run = |name, args| s.run_value(name, args, &RunOptions::human()).unwrap().data;
+    let outer = run("folder.add", json!({"name":"Outer"}));
+    let inner = run("folder.add", json!({"name":"Inner"}));
+    let child = run("track.add.audio", json!({"name":"Child"}));
+    run(
+        "track.move",
+        json!({"ids":[inner["id"]], "into":outer["id"]}),
+    );
+    run(
+        "track.move",
+        json!({"ids":[child["id"]], "into":inner["id"]}),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("Nested.dawproject");
+    for direct in [false, true] {
+        if direct {
+            s.run_value(
+                "track.output.set",
+                json!({"ids":[inner["bus"]], "to":"master"}),
+                &RunOptions::human(),
+            )
+            .unwrap();
+        }
+        export(s.project(), &out, &opts(dir.path(), &wav_info)).unwrap();
+        let got = import(&out, &dir.path().join("media")).unwrap();
+        let p = &got.project;
+        let outer = p.folders.values().find(|f| f.name == "Outer").unwrap();
+        let inner = p.folders.values().find(|f| f.name == "Inner").unwrap();
+        let a = p.row_bus(outer.id).unwrap();
+        let b = p.row_bus(inner.id).unwrap();
+        assert!(outer.children.contains(&Node::Folder(inner.id)));
+        assert_eq!(
+            p.effective_output(track(p, "Child").id),
+            Some(Output::Bus(b))
+        );
+        assert_eq!(
+            p.effective_output(b),
+            Some(if direct {
+                Output::Master
+            } else {
+                Output::Bus(a)
+            })
+        );
+        assert_eq!(p.effective_output(a), Some(Output::Master));
+        assert_eq!(
+            p.tracks
+                .values()
+                .filter(|t| t.kind == TrackKind::Bus)
+                .count(),
+            2
+        );
+        p.validate_deep().unwrap();
+    }
 }
 
 #[test]
