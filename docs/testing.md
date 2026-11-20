@@ -83,18 +83,22 @@ python scripts/test_plugin_presets.py --work <temporary-folder> --out <results-f
 The script checks running Xirius processes with `Get-CimInstance Win32_Process` before
 opening anything and refuses to overlap another run. It launches the checkout's debug
 UI with isolated data and silent output, loads the repository's fixture in two dedicated
-hosts, and uses `SendInput` for mouse clicks and keyboard input. It leaves Windows'
+hosts, and uses `SendInput` for mouse clicks, drags, and keyboard input. It leaves Windows'
 foreground rules intact: no `AttachThreadInput`, `BM_CLICK`, or topmost windows.
 `result.json` records each assertion and the corresponding desktop BMP; `app.log` records
 fixture setup and shutdown. A failure is an error, not a skipped check. Temporary user data
 is removed on exit; the result folder is retained for review.
 
-Use a desktop that can fit the 1200 × 850 logical-pixel main window and both fixture editors
+Use a desktop that can fit the 1040 × 640 logical-pixel main window and both fixture editors
 without covering their controls. The checks cover foreground activation, search and two-stage
 Escape, repeat-button, editor-body and outside-click dismissal, two editors with a list open,
-pinned editors with built-in/channel windows, most-recently-touched stacking, preset selection,
-and the owners of the save form and native file dialog. Check installed-plugin compatibility in
-a separate manual pass.
+pinned editors with built-in/channel windows, and most-recently-touched stacking. They check
+that clicking the exposed part of either studio palette keeps its foreground focus and restores
+the external stack. A browser drop creates and selects an instrument track. Shift+F11 opens its
+editor and brings a newly opened external editor to the foreground. The suite also checks preset
+selection and the owners of the save form and native file dialog. Run again with `--case A`
+and a different results folder to check routing with a single unpinned editor dragged aside.
+Check installed-plugin compatibility in a separate manual pass.
 macOS has no external plugin editor (NSView host) yet and is outside this desktop test's scope.
 
 ## What a test may leave

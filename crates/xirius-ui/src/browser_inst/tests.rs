@@ -184,4 +184,9 @@ fn an_empty_song_takes_a_dropped_instrument_as_its_first_track() {
     assert_eq!(s.lib_drop_at(&g, middle.0, middle.1), Drop::New);
     drag(&mut s, &g, "Drum Kit", middle);
     assert_eq!(s.project().root.len(), 2);
+    let new = *s.project().tracks.keys().max().unwrap();
+    assert_eq!(s.selected_row, Some(RowKind::Track(new)));
+    assert!(s.mixer.open_later.is_none());
+    assert!(s.mixer.editors.is_empty());
+    assert!(s.instruments.open.is_empty());
 }

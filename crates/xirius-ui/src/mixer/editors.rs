@@ -3,7 +3,7 @@
 //! The window shows the instance that plays, so what is turned in it is heard at once and,
 //! once let go, becomes one step of the history ([`Studio::poll_editors`]):
 //!
-//! A plugin host process opens the window of its instance. Main-window activation queues
+//! A plugin host process opens the window of its instance. Studio-window activation queues
 //! a raise without assigning a cross-process HWND owner or taking focus.
 //!
 //! The player starts when a window needs it. Under tests, and while
@@ -29,6 +29,8 @@ pub(crate) struct OpenEditor {
     pub id: PluginId,
     pub title: String,
     pub at: Where,
+    pub foreground_from: u64,
+    pub retired_loading: Option<u64>,
 }
 
 impl OpenEditor {
@@ -48,6 +50,26 @@ fn cannot(name: &str, why: &str) -> String {
 }
 
 impl Studio {
+    pub(crate) fn editor_foreground() -> u64 {
+        #[cfg(windows)]
+        if !cfg!(test) && std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_none() {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                GetForegroundWindow, GetWindowThreadProcessId,
+            };
+            let mut process = 0;
+            // SAFETY: these queries do not send messages to another GUI thread.
+            let foreground = unsafe {
+                let hwnd = GetForegroundWindow();
+                GetWindowThreadProcessId(hwnd, &mut process);
+                hwnd
+            };
+            if process == std::process::id() {
+                return foreground as u64;
+            }
+        }
+        0
+    }
+
     fn editor_stack(&self) -> Vec<u64> {
         let mut windows: Vec<_> = self
             .mixer
@@ -111,15 +133,19 @@ impl Studio {
             self.close_editor(id);
         }
     }
-    /// Activation queues a raise on each plugin's GUI owner. It neither opens a view
-    /// nor establishes an HWND owner across threads/processes.
-    pub(crate) fn main_window_editor_event(&mut self, active: bool, restored: bool) {
-        if active || restored {
-            self.raise_editors_over(0);
-        }
+    /// The main window and its palettes use the same stack when activated.
+    #[cfg(windows)]
+    pub(crate) fn studio_window_activated(&mut self, window: u64) {
+        self.queue_editor_raises(window);
+        self.mixer.editor_raises.activation = Some(window);
     }
 
     pub(crate) fn raise_editors_over(&mut self, window: u64) {
+        self.queue_editor_raises(window);
+        self.pump_editor_raises();
+    }
+
+    fn queue_editor_raises(&mut self, window: u64) {
         let stack = self.editor_stack();
         let mut ids: Vec<_> = self.mixer.editors.iter().map(|e| e.id).collect();
         ids.sort_by_key(|id| {
@@ -131,10 +157,60 @@ impl Studio {
         });
         self.mixer.editor_raises.base = window;
         self.mixer.editor_raises.request(ids);
-        self.pump_editor_raises();
     }
 
-    fn pump_editor_raises(&mut self) {
+    pub(crate) fn finish_editor_open(&mut self) -> bool {
+        let mut foreground = None;
+        let touches = &self.mixer.editor_touches;
+        let mut request = None;
+        for editor in &mut self.mixer.editors {
+            if let Some(loading) = editor.retired_loading
+                && editor.foreground_from != 0
+                && touches.contains_key(&editor.id)
+            {
+                let foreground = *foreground.get_or_insert_with(Self::editor_foreground);
+                // GPUI closes native windows asynchronously. Let Windows return focus
+                // from the loading window to the studio window that opened it.
+                if loading != 0 && loading == foreground {
+                    continue;
+                }
+                let source = std::mem::take(&mut editor.foreground_from);
+                if source == foreground {
+                    request = Some((editor.id, source));
+                }
+            }
+        }
+        if let Some(request) = request {
+            self.mixer.editor_raises.foreground = Some(request);
+            self.raise_editors_over(0);
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn pump_editor_raises(&mut self) {
+        #[cfg(windows)]
+        if self.mixer.editor_raises.activation.is_some()
+            && !self.mixer.editor_raises.pending.is_empty()
+        {
+            use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+                GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON, VK_XBUTTON1, VK_XBUTTON2,
+            };
+            // The click's remaining input can revoke a host's foreground grant.
+            // Let Windows finish the click and place the palette group first.
+            let pressed = !cfg!(test)
+                && [VK_LBUTTON, VK_MBUTTON, VK_RBUTTON, VK_XBUTTON1, VK_XBUTTON2]
+                    .into_iter()
+                    // SAFETY: only reads the current button state.
+                    .any(|key| unsafe { GetAsyncKeyState(key.into()) < 0 });
+            if !self
+                .mixer
+                .editor_raises
+                .activation_ready(Self::editor_foreground(), pressed)
+            {
+                return;
+            }
+        }
         let Some((id, ticket)) = self.mixer.editor_raises.next(std::time::Instant::now()) else {
             return;
         };
@@ -144,6 +220,15 @@ impl Studio {
         };
         bar.stack = self.editor_stack();
         bar.raise_ticket = ticket;
+        let mut foreground_from = 0;
+        if let Some((editor, source)) = self.mixer.editor_raises.foreground
+            && editor == id
+        {
+            self.mixer.editor_raises.foreground = None;
+            if Self::editor_foreground() == source {
+                foreground_from = source;
+            }
+        }
         let base = self.mixer.editor_raises.base;
         if base != 0 {
             bar.stack_base = base;
@@ -188,7 +273,7 @@ impl Studio {
         }
         if let Some(host) = self.transport.host() {
             host.plugin_editor_bar(id, bar);
-            host.raise_plugin_editor(id);
+            host.raise_plugin_editor(id, foreground_from);
         }
     }
 
@@ -241,7 +326,7 @@ impl Studio {
         &mut self,
         plugin: &Plugin,
         title: String,
-        at: Option<(i32, i32)>,
+        foreground_from: u64,
     ) -> Result<OpenEditor, String> {
         self.mixer.editor_bars.remove(&plugin.id);
         let _filter = xirius_engine::crash::guard_exception_filter();
@@ -257,10 +342,6 @@ impl Studio {
         if let Some(area) = &mut base.area {
             area.restore = self.mixer.editor_positions.get(&plugin.id).copied();
         }
-        let place = Placement {
-            at: at.or(base.at),
-            ..base
-        };
         let project = self.auto_heard(&self.project());
         let bar = self.vst_bar(plugin);
         let dir = self.song.dir();
@@ -280,7 +361,7 @@ impl Studio {
         if status.error.is_some() {
             return Err(cannot(name, "を読み込めなかった"));
         }
-        if let Some(area) = place.area {
+        if let Some(area) = base.area {
             host.plugin_editor_area(plugin.id, area);
         }
         host.plugin_editor_bar(plugin.id, bar);
@@ -294,11 +375,21 @@ impl Studio {
             id: plugin.id,
             title,
             at: Where::Host { opened: false },
+            foreground_from,
+            retired_loading: None,
         })
     }
 
     /// Shuts a plugin's window.
     pub(crate) fn close_editor(&mut self, id: PluginId) {
+        if self
+            .mixer
+            .editor_raises
+            .foreground
+            .is_some_and(|(editor, _)| editor == id)
+        {
+            self.mixer.editor_raises.foreground = None;
+        }
         self.mixer.editor_bars.remove(&id);
         self.mixer.editor_touches.remove(&id);
         self.mixer
@@ -335,7 +426,7 @@ impl Studio {
         if self.mixer.editors.iter().any(|e| e.id == id)
             && let Some(host) = self.transport.host_mut()
         {
-            host.raise_plugin_editor(id);
+            host.raise_plugin_editor(id, 0);
         }
     }
 
@@ -589,13 +680,33 @@ impl Studio {
 #[derive(Default)]
 pub(crate) struct RaiseQueue {
     base: u64,
+    #[cfg(windows)]
+    activation: Option<u64>,
+    foreground: Option<(PluginId, u64)>,
     pending: std::collections::VecDeque<PluginId>,
     flight: Option<(PluginId, u64, std::time::Instant)>,
     serial: u64,
 }
 impl RaiseQueue {
     fn request(&mut self, ids: Vec<PluginId>) {
+        #[cfg(windows)]
+        {
+            self.activation = None;
+        }
         self.pending = ids.into();
+    }
+
+    #[cfg(windows)]
+    fn activation_ready(&mut self, foreground: u64, mouse_down: bool) -> bool {
+        if mouse_down {
+            return false;
+        }
+        if self.activation != Some(foreground) {
+            self.pending.clear();
+            self.activation = None;
+            return false;
+        }
+        true
     }
     fn ack(&mut self, id: PluginId, ticket: u64) {
         if self
@@ -656,5 +767,22 @@ mod activation_tests {
         assert_eq!(id, PluginId(2));
         q.ack(id, ticket);
         assert_eq!(q.next(now).unwrap().0, PluginId(1));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_palette_activation_waits_for_mouse_up_and_only_raises_for_the_active_palette() {
+        let mut q = RaiseQueue::default();
+        q.request(vec![PluginId(1)]);
+        q.activation = Some(21);
+        assert!(!q.activation_ready(21, true));
+        assert!(!q.pending.is_empty());
+        assert!(q.activation_ready(21, false));
+        assert!(q.next(std::time::Instant::now()).is_some());
+
+        q.request(vec![PluginId(2)]);
+        q.activation = Some(21);
+        assert!(!q.activation_ready(22, false));
+        assert!(q.pending.is_empty());
     }
 }

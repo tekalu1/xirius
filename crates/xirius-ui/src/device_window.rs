@@ -63,6 +63,15 @@ impl Windows {
         out
     }
 
+    #[cfg(windows)]
+    pub(crate) fn contains_hwnd(&self, hwnd: u64, cx: &mut App) -> bool {
+        self.all().into_iter().any(|(_, handle)| {
+            handle
+                .update(cx, |_, window, _| hwnd_of(window) as u64)
+                .is_ok_and(|window| window == hwnd)
+        })
+    }
+
     /// What is under the pointer, frontmost first (UI-353): the window that would see the
     /// cursor there, not the one that holds the mouse's events while a drag's button is
     /// down. `pos` is where the event said it is (main-local); the answer for an
@@ -673,7 +682,7 @@ pub(crate) fn with_surface<R>(
 
 /// The OS's own handle of a GPUI window, as `WindowFromPoint` reports it.
 #[cfg(windows)]
-fn hwnd_of(window: &Window) -> isize {
+pub(crate) fn hwnd_of(window: &Window) -> isize {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let Ok(h) = HasWindowHandle::window_handle(window) else {
         return 0;
@@ -696,12 +705,6 @@ impl DeviceWindow {
         let activation = cx.observe_window_activation(window, |view, window, cx| {
             if view.preset_save {
                 return;
-            }
-            #[cfg(windows)]
-            if window.is_window_active() {
-                view.studio
-                    .borrow_mut()
-                    .raise_editors_over(hwnd_of(window) as u64);
             }
             if !window.is_window_active() {
                 let changed = view.with(window, |s, _| {

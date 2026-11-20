@@ -103,8 +103,7 @@ impl Windows {
                 })
                 .collect::<Vec<_>>()
         };
-        #[cfg(windows)]
-        let open_before = self.open.len();
+        let mut retired = Vec::new();
         self.open.retain(|id, handle| {
             if wanted.iter().any(|p| p.id == *id) {
                 let handle = *handle;
@@ -113,15 +112,45 @@ impl Windows {
                 });
                 return true;
             }
-            let _ = handle.update(cx, |_, window, _| window.remove_window());
+            let hwnd = handle
+                .update(cx, |_, window, _| {
+                    #[cfg(windows)]
+                    let hwnd = crate::device_window::hwnd_of(window) as u64;
+                    #[cfg(not(windows))]
+                    let hwnd = 0;
+                    window.remove_window();
+                    hwnd
+                })
+                .unwrap_or(0);
+            retired.push((*id, hwnd));
             false
         });
-        #[cfg(windows)]
-        if self.open.len() < open_before {
+        let mut focus_ready = false;
+        for editor in &mut studio.borrow_mut().mixer.editors {
+            if editor.foreground_from != 0
+                && editor.retired_loading.is_none()
+                && matches!(editor.at, Where::Host { opened: true })
+            {
+                editor.retired_loading = Some(
+                    retired
+                        .iter()
+                        .find(|(id, _)| *id == editor.id)
+                        .map_or(0, |(_, hwnd)| *hwnd),
+                );
+                focus_ready = true;
+            }
+        }
+        if !retired.is_empty() || focus_ready {
             // Retiring an owned loading window can move the studio's window group above
             // the newly opened editor. Place the editors after the removal is processed.
             let studio = studio.clone();
-            cx.defer(move |_| studio.borrow_mut().raise_editors_over(0));
+            let retired = !retired.is_empty();
+            cx.defer(move |_| {
+                let mut s = studio.borrow_mut();
+                if !s.finish_editor_open() && retired {
+                    s.raise_editors_over(0);
+                }
+            });
         }
         for pending in wanted {
             if self.open.contains_key(&pending.id) {
@@ -319,6 +348,7 @@ mod tests {
         studio.borrow_mut().mixer.open_later = Some(crate::loading::OpenLater {
             track: xirius_core::id::TrackId(1),
             id: PluginId(2),
+            foreground_from: 0,
         });
         cancel(&studio, PluginId(2));
         assert!(studio.borrow().mixer.open_later.is_none());

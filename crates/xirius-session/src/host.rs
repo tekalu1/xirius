@@ -1011,8 +1011,8 @@ impl SessionHost {
     }
 
     /// Raise asynchronously on the GUI owner without opening another view.
-    pub fn raise_plugin_editor(&self, id: PluginId) {
-        self.builder.plugins().raise_editor(id);
+    pub fn raise_plugin_editor(&self, id: PluginId, foreground_from: u64) {
+        self.builder.plugins().raise_editor(id, foreground_from);
     }
 
     /// Gives the editor of `id` that is open in its host process new caption colours.

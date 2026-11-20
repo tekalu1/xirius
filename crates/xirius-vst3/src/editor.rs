@@ -1314,6 +1314,12 @@ impl Editor {
 
     /// Brings a hidden or buried window back above the others, without activating it.
     pub fn raise(&self) {
+        self.raise_from(0);
+    }
+
+    /// Restores the stack and, for an explicit open, takes the foreground from the
+    /// window that requested it if that window is still active.
+    pub fn raise_from(&self, foreground_from: u64) {
         let bar = self
             ._shared
             .editor_bar
@@ -1323,7 +1329,8 @@ impl Editor {
         // SAFETY: queries do not send messages to another GUI thread. Only our own frame moves.
         unsafe {
             use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GW_HWNDNEXT, GW_HWNDPREV, GWL_EXSTYLE, GetWindow, WS_EX_TOPMOST,
+                GW_HWNDNEXT, GW_HWNDPREV, GWL_EXSTYLE, GetWindow, SetForegroundWindow,
+                WS_EX_TOPMOST,
             };
             let mut above = Vec::new();
             let has_base = IsWindow(bar.stack_base as HWND) != 0;
@@ -1369,6 +1376,12 @@ impl Editor {
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
             );
+            if foreground_from != 0
+                && GetForegroundWindow() as u64 == foreground_from
+                && GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE as isize == 0
+            {
+                SetForegroundWindow(self.hwnd);
+            }
         };
         self._shared
             .editor_actions

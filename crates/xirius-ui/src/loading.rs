@@ -27,6 +27,7 @@ pub struct Loading {
 pub struct OpenLater {
     pub track: TrackId,
     pub id: PluginId,
+    pub foreground_from: u64,
 }
 
 /// The plugin host of a test: which plugins it has, and the windows asked for of it.
@@ -88,6 +89,7 @@ impl Studio {
     /// asked for once the host has it ([`Studio::poll_open_later`]); the screen does not wait.
     pub(crate) fn open_when_loaded(&mut self, t: TrackId, id: PluginId) {
         self.mixer.open_later = None;
+        let foreground_from = Self::editor_foreground();
         let built_in = self
             .project()
             .tracks
@@ -95,10 +97,14 @@ impl Studio {
             .and_then(|x| x.inserts.iter().find(|p| p.id == id))
             .is_some_and(crate::instrument::window::is_built_in);
         if !built_in && self.loads_apart() && !self.has_loaded(id) {
-            self.mixer.open_later = Some(OpenLater { track: t, id });
+            self.mixer.open_later = Some(OpenLater {
+                track: t,
+                id,
+                foreground_from,
+            });
             return;
         }
-        self.open_plugin(t, id);
+        self.open_plugin_from(t, id, foreground_from);
     }
 
     /// Whether plugins put in are opened by the window's plugin host a while after the song
@@ -155,7 +161,7 @@ impl Studio {
             }
         } {
             self.mixer.open_later = None;
-            self.open_plugin(w.track, w.id);
+            self.open_plugin_from(w.track, w.id, w.foreground_from);
             return true;
         }
         if self.loads_apart() && !self.has_loaded(w.id) {
@@ -167,7 +173,7 @@ impl Studio {
             fake.asked.push((w.track, w.id));
             return true;
         }
-        self.open_plugin(w.track, w.id);
+        self.open_plugin_from(w.track, w.id, w.foreground_from);
         true
     }
 }
