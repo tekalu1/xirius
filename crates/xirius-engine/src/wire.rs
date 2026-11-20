@@ -12,7 +12,7 @@ use xirius_vst3::{Caption, PluginState};
 
 /// The version of these messages and of the shared memory's layout together. Bump it with
 /// any change to either.
-pub const PROTOCOL: u32 = 17;
+pub const PROTOCOL: u32 = 18;
 /// Starts the encoded [`FromHost::Hello`], so a stray first message is not taken for one.
 const HELLO_MAGIC: u32 = u32::from_le_bytes(*b"XPHH");
 
@@ -49,9 +49,10 @@ pub enum ToHost {
     CloseEditor {
         slot: u32,
     },
-    /// Restore the order after the main window activates; never opens a closed view.
+    /// Restore the editor's place. A nonzero HWND permits focus from that window after open.
     RaiseEditor {
         slot: u32,
+        foreground_from: u64,
     },
     SetEditorArea {
         slot: u32,
@@ -409,8 +410,11 @@ impl ToHost {
             ToHost::CloseEditor { slot } => {
                 o.u8(6).u32(*slot);
             }
-            ToHost::RaiseEditor { slot } => {
-                o.u8(11).u32(*slot);
+            ToHost::RaiseEditor {
+                slot,
+                foreground_from,
+            } => {
+                o.u8(11).u32(*slot).u64(*foreground_from);
             }
             ToHost::SetEditorBar { slot, bar } => {
                 o.u8(13)
@@ -534,7 +538,10 @@ impl ToHost {
                 caption: i.caption()?,
             },
             6 => ToHost::CloseEditor { slot: i.u32()? },
-            11 => ToHost::RaiseEditor { slot: i.u32()? },
+            11 => ToHost::RaiseEditor {
+                slot: i.u32()?,
+                foreground_from: i.u64()?,
+            },
             13 => ToHost::SetEditorBar {
                 slot: i.u32()?,
                 bar: xirius_vst3::EditorBar {
@@ -954,7 +961,10 @@ mod tests {
                 caption: caption(),
             },
             ToHost::CloseEditor { slot: 4 },
-            ToHost::RaiseEditor { slot: 4 },
+            ToHost::RaiseEditor {
+                slot: 4,
+                foreground_from: 0x1234_5678_9abc_def0,
+            },
             ToHost::SetEditorBar {
                 slot: 4,
                 bar: xirius_vst3::EditorBar {

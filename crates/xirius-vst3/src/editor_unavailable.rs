@@ -158,6 +158,9 @@ impl Editor {
     pub fn raise(&self) {
         match *self {}
     }
+    pub fn raise_from(&self, _foreground_from: u64) {
+        match *self {}
+    }
     pub fn origin(&self) -> (i32, i32) {
         match *self {}
     }

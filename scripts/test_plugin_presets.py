@@ -31,6 +31,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True, help="temporary data parent")
     parser.add_argument("--out", type=Path, required=True, help="screenshots and result.json")
+    parser.add_argument("--case", choices=["A", "E", "F"], help="run one follow-up scenario")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("this test requires Windows")
@@ -88,27 +89,50 @@ def main():
             time.sleep(0.04)
         raise AssertionError(f"{label}: {detail()}" if detail else label)
 
-    def send(events):
+    def send(events, pause=0.12):
         batch = (Input * len(events))(*events)
         assert u.SendInput(len(events), batch, c.sizeof(Input)) == len(events), "SendInput failed"
-        time.sleep(0.12)
+        time.sleep(pause)
 
-    def click(x, y):
+    def mouse(x, y, flags):
         left, top, width, height = [u.GetSystemMetrics(n) for n in (76, 77, 78, 79)]
         dx, dy = round((x-left)*65535/(width-1)), round((y-top)*65535/(height-1))
-        send([Input(0, Payload(mouse=Mouse(dx, dy, 0, flags, 0, 0)))
-              for flags in (0xC001, 0x0002, 0x0004)])
+        return Input(0, Payload(mouse=Mouse(dx, dy, 0, flags, 0, 0)))
+
+    def click(x, y):
+        send([mouse(x, y, flags) for flags in (0xC001, 0x0002, 0x0004)])
+
+    def hit_root(x, y):
+        return u.GetAncestor(u.WindowFromPoint(w.POINT(x, y)), 2)
+
+    def click_window(hwnd, x, y):
+        assert hit_root(x, y) == hwnd, f"window {hwnd} is covered at {(x, y)}"
+        click(x, y)
+
+    def drag(hwnd, start, end):
+        for x, y in (start, end):
+            assert hit_root(x, y) == hwnd, f"drag point is covered at {(x, y)}"
+        send([mouse(*start, 0xC001), mouse(*start, 0x0002)])
+        send([mouse(*end, 0xC001)])
+        send([mouse(*end, 0x0004)])
 
     def rect(hwnd):
         r = w.RECT()
         assert u.GetWindowRect(hwnd, c.byref(r))
         return r
 
+    def move_frame(hwnd, x, y):
+        # Test layout only: SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE.
+        assert u.SetWindowPos(hwnd, 0, x, y, 0, 0, 0x15)
+
+    def move_right(hwnd):
+        r = rect(hwnd)
+        move_frame(hwnd, u.GetSystemMetrics(0) - (r.right - r.left) - 40, 180)
+
     def click_main(hwnd):
         r = rect(hwnd)
         x, y = r.right - 120, (r.top + r.bottom) // 2
-        assert u.GetAncestor(u.WindowFromPoint(w.POINT(x, y)), 2) == hwnd, "fixture main window is covered"
-        click(x, y)
+        click_window(hwnd, x, y)
 
     def button(hwnd, control=2):
         child = u.GetDlgItem(hwnd, control)
@@ -159,6 +183,15 @@ def main():
             h = u.GetWindow(h, 2)
         return result
 
+    def new_frame(known):
+        h = 0
+        while True:
+            h = u.FindWindowExW(0, h, "XiriusPluginEditor", None)
+            if not h:
+                return None
+            if h not in known and u.IsWindowVisible(h):
+                return h
+
     def screenshot(name):
         width, height = u.GetSystemMetrics(0), u.GetSystemMetrics(1)
         for fn, result, params in [
@@ -191,6 +224,10 @@ def main():
         checks.append({"step":name,"result":"passed","screen":name+".bmp"})
 
     root = Path(__file__).resolve().parents[1]
+    debug = root / "target" / "debug"
+    executable = debug / "xirius-ui.exe"
+    fixture = next(path for path in (debug/"xirius_test_vst3.dll",
+                                     debug/"deps"/"xirius_test_vst3.dll") if path.is_file())
     with isolated_data(args.work) as temp:
         env = os.environ.copy()
         env.update({"LOCALAPPDATA":temp, "APPDATA":temp, "TEMP":temp, "TMP":temp,
@@ -199,24 +236,67 @@ def main():
                     "XIRIUS_CRASH_DIR":temp+"/crashes", "XIRIUS_PEAK_CACHE":temp+"/peaks",
                     "XIRIUS_VIEW_FILE":temp+"/view.json", "XIRIUS_DESKTOP_INPUT":"1"})
         env.pop("XIRIUS_EDITOR_OFFSCREEN", None)
+        # The fixture accepts both roles, but scans as an effect. Seed the isolated
+        # cache before the app starts so the song owner's index lists it as an instrument.
+        probe = Path(temp) / "fixture.json"
+        subprocess.run([str(executable), "__scan-plugin", "--bundle", str(fixture),
+                        "--out", str(probe)], env=env, check=True, timeout=20)
+        entries = json.loads(probe.read_text(encoding="utf-8"))["entries"]
+        entries[0]["kind"] = "instrument"
+        Path(env["XIRIUS_PLUGIN_CACHE"]).write_text(json.dumps({"version": 2, "bundles": [
+            {"path": str(fixture), "fingerprint": "", "entries": entries}]
+        }), encoding="utf-8")
         for name in ("input-ready.json", "input-done"):
             (out/name).unlink(missing_ok=True)
         with (out/"app.log").open("w", encoding="utf-8") as log:
-            app = subprocess.Popen([str(root/"target/debug/xirius-ui.exe"), "--silent", "--at", "10,10",
-                                    "--size", "1200,850", "--shot", str(out), "--script", "preset-input"],
+            app = subprocess.Popen([str(executable), "--silent", "--at", "10,10",
+                                    "--size", "1040,640", "--shot", str(out), "--script", "preset-input"],
                                    cwd=temp, env=env, stdout=log, stderr=log)
-            try:
+            def run_checks():
                 wait(lambda: (out/"input-ready.json").exists() or app.poll() is not None, "fixture setup", 90)
                 assert (out/"input-ready.json").exists(), "fixture app exited during setup; read app.log"
                 info = json.loads((out/"input-ready.json").read_text(encoding="utf-8"))
                 main_hwnd, (first, second) = info["main"], info["frames"]
-                for frame, x in [(first, 420), (second, u.GetSystemMetrics(0)- (rect(second).right-rect(second).left)-40)]:
-                    # Layout only: no activation or z-order changes.
-                    assert u.SetWindowPos(frame, 0, x, 180, 0, 0, 0x15)
+                move_frame(first, 640, 180)
+                move_right(second)
                 wait(lambda: order([main_hwnd, first, second]) == [second, first, main_hwnd],
                      "new editor opened behind the pinned editor or main window",
                      detail=lambda: (order([main_hwnd, first, second]), info, u.GetForegroundWindow()))
                 screenshot("00-desktop")
+                if args.case == "A":
+                    # Leave one unpinned editor, open routing from its bar, then
+                    # drag it aside to expose the channel window.
+                    button(second, 5)
+                    wait(lambda: not u.IsWindowVisible(second), "second editor did not close")
+                    button(first, 4)
+                    button(first, 6)
+                    channel = wait(lambda: u.FindWindowExW(0, 0, None, "Xirius · Channel Editor"),
+                                   "channel editor did not open")
+                    r = rect(first)
+                    x, y = r.left + 115, r.top + 14
+                    drag(first, (x, y), (x + 350, y))
+                    wait(lambda: rect(first).left >= r.left + 300, "external editor did not drag")
+                    bounds = rect(channel)
+                    exposed = next(((x, y) for x in range(bounds.left + 12, bounds.right - 12, 8)
+                                    for y in (bounds.top + 80, bounds.top + 120, bounds.top + 200)
+                                    if hit_root(x, y) == channel), None)
+                    assert exposed, "the channel edge did not become visible"
+                    windows = {first:"external", main_hwnd:"main", channel:"channel"}
+                    for hold in (0.12, 0, 0.08, 0):
+                        r = rect(first)
+                        click_window(first, r.left + 40, r.top + 110)
+                        wait(lambda: u.GetForegroundWindow() == first, "external editor is not foreground")
+                        x, y = exposed
+                        assert hit_root(x, y) == channel, "channel click point is covered"
+                        send([mouse(x, y, 0xC001), mouse(x, y, 0x0002)], pause=hold)
+                        send([mouse(x, y, 0x0004)], pause=0)
+                        wait(lambda: u.GetForegroundWindow() == channel and order(windows)[0] == first,
+                             "unpinned editor fell behind the channel group", seconds=3,
+                             detail=lambda: ([windows[h] for h in order(windows)],
+                                             windows.get(u.GetForegroundWindow())))
+                        assert hit_root(x, y) == channel, "clicked channel window is covered"
+                    passed("16-channel-unpinned")
+                    return
                 def open_list(frame):
                     button(frame)
                     hwnd = wait(lambda: popup(frame), f"list did not open for editor {frame} after {len(checks)} checks")
@@ -257,7 +337,7 @@ def main():
                 wait(lambda: not popup(first), "first list blocked second editor")
                 key(27)
                 passed("06-two-editors")
-                click(*info["builtin"])
+                click_window(main_hwnd, *info["builtin"])
                 key(0x7A, 0x10)  # Shift+F11 opens the selected track's instrument.
                 builtin = wait(lambda: u.FindWindowExW(0, 0, None, info["builtin_title"]), "built-in editor did not open")
                 wait(lambda: order([builtin, first, second])[-1] == builtin, "pinned editor behind built-in editor")
@@ -269,8 +349,8 @@ def main():
                 assert u.IsWindowVisible(first) and u.IsWindowVisible(second)
                 passed("08-channel-pinned")
                 # Leave the studio windows open and place their bars clear of the host controls.
-                for palette, x in [(builtin, 35), (channel, 60)]:
-                    assert u.SetWindowPos(palette, 0, x, 650, 0, 0, 0x15)
+                for palette, y in [(builtin, u.GetSystemMetrics(1) - 185), (channel, 320)]:
+                    move_frame(palette, 35, y)
                 open_list(second)
                 key(27)
                 click_main(main_hwnd)
@@ -279,43 +359,102 @@ def main():
                      "last touched editor order above the studio windows",
                      detail=lambda: [windows[h] for h in order(windows)])
                 passed("09-touch-order")
-                p = open_list(first)
-                type_text("clean")
-                key(13)
-                wait(lambda: not popup(first), "Enter did not choose Clean")
-                wait(lambda: control_text(u.GetDlgItem(first, 2)) == "Clean", "Clean did not load")
-                p = open_list(first)
-                type_text("bRi")
-                key(13)
-                wait(lambda: not popup(first), "Enter did not choose")
-                wait(lambda: "Bright" in control_text(u.GetDlgItem(first, 2)),
-                     "selected preset did not reach the song")
-                passed("10-search-enter")
-                p = open_list(first)
-                type_text("no matching preset")
-                key(40)  # overwrite -> save as; footer survives filtering
-                key(13)
-                save = wait(lambda: u.FindWindowExW(0, 0, None, "Save preset"), "save form did not open")
-                wait(lambda: u.GetForegroundWindow() == save, "save form not foreground")
-                assert u.GetWindow(save, 4) == first, "save form owner is not the editor"
-                passed("11-save-form-owner")
-                key(13)
-                wait(lambda: not u.IsWindowVisible(save), "save form did not close")
-                preset_dir = Path(temp) / "presets"
-                wait(lambda: any(preset_dir.rglob("Bright 2.xpreset")),
-                     "save form did not write the new preset")
-                wait(lambda: control_text(u.GetDlgItem(first, 2)) == "Bright 2",
-                     "saved preset did not reach the editor")
-                p = open_list(first)
-                type_text("no matching preset")
-                key(40)
-                key(40)  # save as -> file open; footer survives filtering
-                key(13)
-                dialog = wait(foreground_dialog, "file dialog did not become foreground")
-                assert u.GetWindow(dialog, 4) == first, "file dialog owner is not the editor"
-                passed("12-file-dialog-owner")
-                key(27)
-                wait(lambda: not u.IsWindowVisible(dialog), "file dialog did not close")
+                if args.case is None:
+                    # The left edge of each palette is exposed, even after the editors
+                    # return above the studio group. Re-activate it from an external editor.
+                    for palette in (channel, builtin, channel, builtin):
+                        r = rect(palette)
+                        x, y = r.left + 12, r.top + 80
+                        for hold in (0.12, 0):
+                            r = rect(second)
+                            click_window(second, r.left + 40, r.top + 110)
+                            wait(lambda: u.GetForegroundWindow() == second, "external editor is not foreground")
+                            assert hit_root(x, y) == palette, "palette click point is covered"
+                            if hold:
+                                send([mouse(x, y, 0xC001), mouse(x, y, 0x0002)], pause=hold)
+                                send([mouse(x, y, 0x0004)], pause=0)
+                            else:
+                                send([mouse(x, y, flag) for flag in (0xC001, 0x0002, 0x0004)], pause=0)
+                            wait(lambda: u.GetForegroundWindow() == palette
+                                 and order(windows)[:2] == [second, first],
+                                 "palette click did not restore editor order", seconds=3,
+                                 detail=lambda: ([windows[h] for h in order(windows)],
+                                                 windows.get(u.GetForegroundWindow())))
+                            assert hit_root(x, y) == palette, "clicked palette is covered"
+                    passed("13-palette-reactivation")
+                move_frame(channel, 35, info["external_track"][1] + 64)
+                if args.case in (None, "F"):
+                    click_main(main_hwnd)
+                    drag(main_hwnd, info["drag_from"], info["drag_to"])
+                    # A plain browser drop creates/selects an instrument track. Its editor
+                    # is opened separately with the instrument shortcut.
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
+                        assert not new_frame([first, second]), "browser drop auto-opened an editor"
+                        time.sleep(0.04)
+                    key(0x7A, 0x10)
+                    dropped = wait(lambda: new_frame([first, second]),
+                                   "new track's instrument did not open with Shift+F11")
+                    wait(lambda: order([main_hwnd, first, second, dropped])
+                         == [dropped, second, first, main_hwnd], "new track's editor is buried")
+                    passed("14-browser-drop")
+                    button(dropped, 5)
+                    wait(lambda: not u.IsWindowVisible(dropped), "new track's editor did not close")
+                if args.case in (None, "E"):
+                    button(second, 5)
+                    wait(lambda: not u.IsWindowVisible(second), "second editor did not close")
+                    click_window(main_hwnd, *info["external_track"])
+                    wait(lambda: u.GetForegroundWindow() == main_hwnd, "main window is not foreground")
+                    key(0x7A, 0x10)
+                    reopened = wait(lambda: new_frame([first, second]),
+                                    "Shift+F11 did not reopen the external editor")
+                    wait(lambda: order([first, reopened, main_hwnd]) == [reopened, first, main_hwnd]
+                         and u.GetForegroundWindow() == reopened,
+                         "Shift+F11 editor did not come to the foreground",
+                         detail=lambda: (order([first, reopened, main_hwnd]),
+                                         u.GetForegroundWindow(), reopened))
+                    passed("15-shortcut-foreground")
+                    move_right(reopened)
+                if args.case is None:
+                    p = open_list(first)
+                    type_text("clean")
+                    key(13)
+                    wait(lambda: not popup(first), "Enter did not choose Clean")
+                    wait(lambda: control_text(u.GetDlgItem(first, 2)) == "Clean", "Clean did not load")
+                    p = open_list(first)
+                    type_text("bRi")
+                    key(13)
+                    wait(lambda: not popup(first), "Enter did not choose")
+                    wait(lambda: "Bright" in control_text(u.GetDlgItem(first, 2)),
+                         "selected preset did not reach the song")
+                    passed("10-search-enter")
+                    p = open_list(first)
+                    type_text("no matching preset")
+                    key(40)  # overwrite -> save as; footer survives filtering
+                    key(13)
+                    save = wait(lambda: u.FindWindowExW(0, 0, None, "Save preset"), "save form did not open")
+                    wait(lambda: u.GetForegroundWindow() == save, "save form not foreground")
+                    assert u.GetWindow(save, 4) == first, "save form owner is not the editor"
+                    passed("11-save-form-owner")
+                    key(13)
+                    wait(lambda: not u.IsWindowVisible(save), "save form did not close")
+                    preset_dir = Path(temp) / "presets"
+                    wait(lambda: any(preset_dir.rglob("Bright 2.xpreset")),
+                         "save form did not write the new preset")
+                    wait(lambda: control_text(u.GetDlgItem(first, 2)) == "Bright 2",
+                         "saved preset did not reach the editor")
+                    p = open_list(first)
+                    type_text("no matching preset")
+                    key(40)
+                    key(40)  # save as -> file open; footer survives filtering
+                    key(13)
+                    dialog = wait(foreground_dialog, "file dialog did not become foreground")
+                    assert u.GetWindow(dialog, 4) == first, "file dialog owner is not the editor"
+                    passed("12-file-dialog-owner")
+                    key(27)
+                    wait(lambda: not u.IsWindowVisible(dialog), "file dialog did not close")
+            try:
+                run_checks()
             except BaseException as error:
                 screenshot("failure")
                 checks.append({"result":"failed", "error":str(error)})

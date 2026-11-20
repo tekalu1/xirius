@@ -1917,6 +1917,15 @@ impl Studio {
     /// the window's keys; the window itself is the plugin's). A window the
     /// person closed opens again.
     pub fn open_plugin(&mut self, t: TrackId, id: PluginId) -> bool {
+        self.open_plugin_from(t, id, Self::editor_foreground())
+    }
+
+    pub(crate) fn open_plugin_from(
+        &mut self,
+        t: TrackId,
+        id: PluginId,
+        foreground_from: u64,
+    ) -> bool {
         // Asked for again while it loads: it opens once loaded, as it will (PLG-050). Another
         // window asked for drops the wait.
         if let Some(w) = self.mixer.open_later.take()
@@ -1961,10 +1970,14 @@ impl Studio {
         self.replace_unpinned_editors(id);
         self.device_sweep_end();
         self.instruments.open.retain(|w| w.pinned);
-        match self.open_vst3_window(plugin, title, None) {
+        match self.open_vst3_window(plugin, title, foreground_from) {
             Ok(e) => self.mixer.editors.push(e),
             Err(e) if e == crate::transport::PREPARING => {
-                self.mixer.open_later = Some(crate::loading::OpenLater { track: t, id });
+                self.mixer.open_later = Some(crate::loading::OpenLater {
+                    track: t,
+                    id,
+                    foreground_from,
+                });
             }
             Err(e) => self.error = Some(e),
         }

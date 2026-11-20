@@ -2238,7 +2238,16 @@ impl PluginServer {
 
     /// Queued IPC; no foreign window is touched by the caller.
     pub fn raise_editor(&self, link: &PluginLink) {
-        self.with_slot(link, |o| Some(ToHost::RaiseEditor { slot: o.slot }));
+        self.raise_editor_from(link, 0);
+    }
+
+    pub fn raise_editor_from(&self, link: &PluginLink, foreground_from: u64) {
+        self.with_slot(link, |o| {
+            Some(ToHost::RaiseEditor {
+                slot: o.slot,
+                foreground_from,
+            })
+        });
     }
 
     pub fn editor_area(&self, link: &PluginLink, area: xirius_vst3::EditorArea) {

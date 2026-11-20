@@ -276,9 +276,16 @@ fn hosts_acknowledge_placement_and_preserve_the_requested_editor_order() {
                         ..Default::default()
                     },
                 );
-                host.raise_editor(link);
+                if ticket == 51 {
+                    // Even a request naming the current foreground cannot activate a parked frame.
+                    host.raise_editor_from(link, GetForegroundWindow() as u64);
+                } else {
+                    host.raise_editor(link);
+                }
                 wait_for_action(link, |action| *action == EditorAction::EditorRaised(ticket));
             }
+            assert_ne!(GetForegroundWindow(), first);
+            assert_ne!(GetForegroundWindow(), second);
             let mut order = Vec::new();
             let mut at = GetTopWindow(std::ptr::null_mut());
             while !at.is_null() {

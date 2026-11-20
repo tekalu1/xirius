@@ -1,6 +1,6 @@
 //! Explicit desktop fixture setup. Input is supplied by scripts/test_plugin_presets.py.
 use crate::{
-    shot::{Act, Play, Shot, Target},
+    shot::{Act, Play, Shot},
     studio::Studio,
 };
 use gpui::{App, Window};
@@ -42,12 +42,6 @@ fn prepare(_: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut App
         .find(|t| t.name == "Vocal")
         .unwrap()
         .id;
-    let second_track = project
-        .tracks
-        .values()
-        .find(|t| t.name == "Guitar")
-        .unwrap()
-        .id;
     let keys = project
         .tracks
         .values()
@@ -55,23 +49,13 @@ fn prepare(_: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut App
         .unwrap()
         .id;
     let source = project.tracks[&track].inserts[0].clone();
-    let old: Vec<_> = project.tracks[&second_track]
-        .inserts
-        .iter()
-        .map(|p| p.id)
-        .collect();
-    if !old.is_empty() {
-        assert!(
-            s.run_command("plugin.remove", json!({"ids":old})),
-            "{:?}",
-            s.error
-        );
-    }
+    let catalog = xirius_plugins::Catalog::load(s.song().plugin_cache());
+    s.use_plugins(catalog);
     assert!(s.run_command(
-        "plugin.add",
-        json!({"track":second_track, "name":source.name,
-        "kind":"effect", "format":"vst3", "uid":source.uid})
+        "track.add.with-instrument",
+        json!({"instrument":source.name, "format":"vst3", "uid":source.uid})
     ));
+    let second_track = *s.project().tracks.keys().max().unwrap();
     let second = s.project().tracks[&second_track].inserts[0].id;
     assert!(s.run_command(
         "plugin.isolation.set",
@@ -125,7 +109,18 @@ fn prepare(_: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut App
     let main = crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap();
     s.drawer_open = false;
     s.arrange_visible = true;
-    s.browser.open = false;
+    s.browser.open = true;
+    s.browser.tab = crate::browser::RailTab::Instruments;
+    s.browser.search.value.clone_from(&source.name);
+    assert!(s.run_command("browser.preset.list", json!({})));
+    crate::shot::run_for(&mut s, 10.0, |s| {
+        s.browser.track_library.as_ref().is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry.device == source.uid
+                    && entry.category == xirius_core::track_browser::Category::Instrument
+            })
+        })
+    });
     s.scroll = (0.0, 0.0);
     let viewport = window.viewport_size();
     let width = viewport.width.into();
@@ -134,24 +129,46 @@ fn prepare(_: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut App
         - xirius_design::Layout::BOTTOM_BAR_H)
         .max(0.0);
     let g = s.settled_geometry(width, height);
-    s.fold_all(&g, false);
+    s.fold_all(&g, true);
     let g = s.settled_geometry(width, height);
-    let (x, y) = s
-        .center_of(&g, crate::shot::resolve(&s, Target::Track("Keys")).unwrap())
-        .expect("the built-in instrument track must be visible");
     let scale = window.scale_factor();
-    let mut point = windows_sys::Win32::Foundation::POINT {
-        x: (x * scale) as i32,
-        y: ((y + xirius_design::Layout::TOP_BAR_H) * scale) as i32,
+    let screen = |(x, y): (f32, f32)| {
+        let mut point = windows_sys::Win32::Foundation::POINT {
+            x: (x * scale) as i32,
+            y: ((y + xirius_design::Layout::TOP_BAR_H) * scale) as i32,
+        };
+        // SAFETY: query the fixture's own main window.
+        unsafe { windows_sys::Win32::Graphics::Gdi::ClientToScreen(main as _, &mut point) };
+        [point.x, point.y]
     };
-    // SAFETY: query the fixture's own main window; no activation or synthetic messages.
-    unsafe {
-        windows_sys::Win32::Graphics::Gdi::ClientToScreen(main as _, &mut point);
-    }
+    let track_point = |track| {
+        s.center_of(
+            &g,
+            crate::studio::Hit::Row(crate::tree::RowKind::Track(track)),
+        )
+        .map(screen)
+        .expect("instrument track must be visible")
+    };
+    let browser = s.browser.layout(g.panel);
+    let item = browser.rows.iter().position(|placed| {
+        matches!(&placed.row, crate::browser::BRow::Item { item, .. } if item.name == source.name)
+    }).expect("fixture instrument in browser");
+    let drag_from = screen(
+        s.browser
+            .center_of(&browser, crate::browser::BrowserHit::Item(item))
+            .expect("fixture instrument must be visible"),
+    );
+    let drag_to = (g.lanes.right() - 55.0, g.lanes.bottom() - 30.0);
+    assert_eq!(
+        s.lib_drop_at(&g, drag_to.0, drag_to.1),
+        crate::browser_inst::Drop::New
+    );
     std::fs::write(
         dir.join("input-ready.json"),
         serde_json::to_vec_pretty(&json!({
-            "main":main, "frames":frames, "builtin":[point.x,point.y],
+            "main":main, "frames":frames, "builtin":track_point(keys),
+            "external_track":track_point(second_track),
+            "drag_from":drag_from, "drag_to":screen(drag_to),
             "builtin_title":format!("Xirius · {}", s.project().tracks[&keys].inserts[0].id)
         }))
         .unwrap(),

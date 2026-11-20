@@ -468,7 +468,7 @@ impl Host {
             | ToHost::SetParam { slot, .. }
             | ToHost::OpenEditor { slot, .. }
             | ToHost::CloseEditor { slot }
-            | ToHost::RaiseEditor { slot }
+            | ToHost::RaiseEditor { slot, .. }
             | ToHost::SetEditorArea { slot, .. }
             | ToHost::SetEditorBar { slot, .. }
             | ToHost::SetCaption { slot, .. }
@@ -634,11 +634,14 @@ impl Host {
                     }
                 }
             }
-            ToHost::RaiseEditor { slot } => {
+            ToHost::RaiseEditor {
+                slot,
+                foreground_from,
+            } => {
                 if let Some(editor) = self.instances.get(&slot).and_then(|i| i.editor.as_ref())
                     && editor.is_visible()
                 {
-                    editor.raise();
+                    editor.raise_from(foreground_from);
                 }
             }
             ToHost::SetCaption { slot, caption } => {

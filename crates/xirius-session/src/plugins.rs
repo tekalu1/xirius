@@ -2176,9 +2176,9 @@ impl PluginLoader {
     }
 
     /// Queues a raise without changing the view's open/closed state.
-    pub fn raise_editor(&self, id: PluginId) {
+    pub fn raise_editor(&self, id: PluginId, foreground_from: u64) {
         if let Some(r) = self.playing_remote(id) {
-            r.server.raise_editor(&r.link);
+            r.server.raise_editor_from(&r.link, foreground_from);
         }
     }
 

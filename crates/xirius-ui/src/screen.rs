@@ -1179,18 +1179,42 @@ fn watch_editor_bar(window: &Window, cx: &mut Context<Screen>) {
     .detach();
 }
 
-/// Scan status is sampled every 100 ms even when no frame is otherwise needed. Only a
-/// changed count, file, or finished catalog asks GPUI to redraw.
-fn watch_plugin_scan(window: &Window, cx: &mut Context<Screen>) {
+/// Sample the scan and resume editor placement after native input or window removal,
+/// even when no frame is otherwise needed.
+fn watch_plugin_status(window: &Window, cx: &mut Context<Screen>) {
     cx.spawn_in(window, async move |this, cx| {
+        #[cfg(windows)]
+        let mut previous_foreground = 0;
         loop {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(100))
                 .await;
-            let alive = this.update_in(cx, |this, _, cx| {
+            let alive = this.update_in(cx, |this, _window, cx| {
                 let Ok(mut studio) = this.studio.try_borrow_mut() else {
                     return;
                 };
+                #[cfg(windows)]
+                {
+                    // GPUI can report activation while Windows still has another
+                    // foreground HWND. Sample the OS, including returns to palettes.
+                    let foreground = if studio.mixer.editors.is_empty() {
+                        0
+                    } else {
+                        Studio::editor_foreground()
+                    };
+                    if foreground != previous_foreground {
+                        previous_foreground = foreground;
+                        if foreground != 0
+                            && (foreground == crate::device_window::hwnd_of(_window) as u64
+                                || this.device_windows.contains_hwnd(foreground, cx))
+                        {
+                            studio.studio_window_activated(foreground);
+                        }
+                    }
+                }
+                if !studio.finish_editor_open() {
+                    studio.pump_editor_raises();
+                }
                 if studio.poll_plugin_scan() {
                     cx.notify();
                 }
@@ -2531,12 +2555,9 @@ pub fn run(opts: Options) {
                         let _ai_server = None;
                         watch(window, cx, !scripted);
                         watch_editor_bar(window, cx);
-                        watch_plugin_scan(window, cx);
+                        watch_plugin_status(window, cx);
                         let _activation =
                             Some(cx.observe_window_activation(window, |this, window, cx| {
-                                this.studio
-                                    .borrow_mut()
-                                    .main_window_editor_event(window.is_window_active(), false);
                                 if !window.is_window_active() {
                                     this.last_caps = None;
                                     // The release will not come here (M-ui-3).
@@ -2548,9 +2569,7 @@ pub fn run(opts: Options) {
                         let _visibility =
                             cx.observe_window_visibility(window, |this, visibility, _, _| {
                                 if visibility == gpui::WindowVisibility::Visible {
-                                    this.studio
-                                        .borrow_mut()
-                                        .main_window_editor_event(false, true);
+                                    this.studio.borrow_mut().raise_editors_over(0);
                                 }
                             });
                         Screen {
