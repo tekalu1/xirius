@@ -52,7 +52,7 @@ jobs:
       - name: release and test runner scripts
         shell: bash
         run: |
-          for t in test_release test_release_ci_gate test_update_sign test_pre_push test_ci_tests; do
+          for t in test_release test_release_ci_gate test_update_sign test_pre_push test_ci_tests test_prune_deps; do
             python "scripts/$t.py"
           done
       - name: design lint
