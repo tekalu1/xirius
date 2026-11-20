@@ -967,14 +967,10 @@ mod capture_tests {
         }
     }
     #[test]
-    fn preset_requests_keep_the_anchor_and_are_consumed_once_from_the_host_queue() {
+    fn preset_choices_are_consumed_once_from_the_correct_host_queue() {
         use xirius_vst3::EditorAction;
         let (server, link, _, _) = fixture();
-        let request = EditorAction::PresetMenu {
-            x: -32000,
-            y: 92,
-            dpi: 168,
-        };
+        let request = EditorAction::PresetPick("load:Bright".into());
         server.inner.dispatch(
             0,
             FromHost::EditorAction {

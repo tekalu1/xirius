@@ -262,6 +262,8 @@ mod prepare_card_tests;
 pub mod prepare_shots;
 #[cfg(feature = "loading-probe")]
 mod prepared_shots;
+#[cfg(windows)]
+mod preset_input_shots;
 pub(crate) mod press_flow;
 pub mod quantize_import;
 pub mod quantize_panel;
@@ -474,13 +476,6 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("plugin-fixture", plugin_fixture_shots::SHOTS),
     #[cfg(windows)]
     ("plugin-keys", plugin_keys_shots::SHOTS),
-    #[cfg(windows)]
-    ("plugin-presets", device_window::preset_shots::SHOTS),
-    #[cfg(windows)]
-    (
-        "plugin-presets-front",
-        device_window::preset_front_shots::SHOTS,
-    ),
     ("plugin-recovery", plugin_recovery_shots::SHOTS),
     ("plugin-reload", plugin_reload_shots::SHOTS),
     ("plugin-swap", plugin_swap_shots::SHOTS),
@@ -493,6 +488,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("prepared", prepared_shots::SHOTS),
     #[cfg(feature = "loading-probe")]
     ("live-edit", live_edit_shots::SHOTS),
+    #[cfg(windows)]
+    ("preset-input", preset_input_shots::SHOTS),
     ("quiet", quiet_shots::QUIET),
     ("rail-tips", fixed_screens_shots::RAIL_TIPS),
     ("range-trim", range_trim_shots::SHOTS),
@@ -529,3 +526,6 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
 ];
 #[cfg(test)]
 mod save_crash_tests;
+
+#[cfg(windows)]
+mod file_owner;

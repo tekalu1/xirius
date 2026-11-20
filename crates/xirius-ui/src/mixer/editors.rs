@@ -48,6 +48,17 @@ fn cannot(name: &str, why: &str) -> String {
 }
 
 impl Studio {
+    fn editor_stack(&self) -> Vec<u64> {
+        let mut windows: Vec<_> = self
+            .mixer
+            .editors
+            .iter()
+            .filter_map(|e| self.mixer.editor_touches.get(&e.id).copied())
+            .collect();
+        windows.sort_by_key(|&(window, time)| std::cmp::Reverse((time, window)));
+        windows.into_iter().map(|(window, _)| window).collect()
+    }
+
     fn vst_bar(&self, plugin: &Plugin) -> xirius_vst3::EditorBar {
         let p = self.project();
         let track = p
@@ -65,6 +76,23 @@ impl Studio {
                 .get(&plugin.uid.to_ascii_lowercase())
                 .cloned()
                 .unwrap_or_default(),
+            menu: track.map_or_else(Vec::new, |t| {
+                use crate::instrument::menu::{self, Menu};
+                let (rows, current) =
+                    menu::view(&p, &self.instruments.presets, Menu::Preset(t.id, plugin.id));
+                rows.into_iter()
+                    .map(|row| xirius_vst3::PresetRow {
+                        enabled: !row.to.starts_with(menu::OFF),
+                        selected: row.to == current,
+                        footer: row.to.trim_start_matches(menu::OFF).starts_with(menu::FOOT),
+                        key: row.to,
+                        label: row.label,
+                    })
+                    .collect()
+            }),
+            stack: self.editor_stack(),
+            raise_ticket: 0,
+            stack_base: crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap_or(0) as u64,
             instrument: plugin.kind == xirius_core::model::PluginKind::Instrument,
             powered: plugin.runs(),
             pinned: self.mixer.editor_pins.contains(&plugin.id),
@@ -85,11 +113,82 @@ impl Studio {
     }
     /// Activation queues a raise on each plugin's GUI owner. It neither opens a view
     /// nor establishes an HWND owner across threads/processes.
-    pub(crate) fn main_window_editor_event(&self, active: bool, restored: bool) {
-        for e in main_window_requests(active, restored, &self.mixer.editors) {
-            if let Some(host) = self.transport.host() {
-                host.raise_plugin_editor(e.id);
+    pub(crate) fn main_window_editor_event(&mut self, active: bool, restored: bool) {
+        if active || restored {
+            self.raise_editors_over(0);
+        }
+    }
+
+    pub(crate) fn raise_editors_over(&mut self, window: u64) {
+        let stack = self.editor_stack();
+        let mut ids: Vec<_> = self.mixer.editors.iter().map(|e| e.id).collect();
+        ids.sort_by_key(|id| {
+            self.mixer
+                .editor_touches
+                .get(id)
+                .and_then(|(hwnd, _)| stack.iter().position(|h| h == hwnd))
+                .unwrap_or(usize::MAX)
+        });
+        self.mixer.editor_raises.base = window;
+        self.mixer.editor_raises.request(ids);
+        self.pump_editor_raises();
+    }
+
+    fn pump_editor_raises(&mut self) {
+        let Some((id, ticket)) = self.mixer.editor_raises.next(std::time::Instant::now()) else {
+            return;
+        };
+        let Some(mut bar) = self.mixer.editor_bars.get(&id).cloned() else {
+            self.mixer.editor_raises.ack(id, ticket);
+            return;
+        };
+        bar.stack = self.editor_stack();
+        bar.raise_ticket = ticket;
+        let base = self.mixer.editor_raises.base;
+        if base != 0 {
+            bar.stack_base = base;
+        }
+        #[cfg(windows)]
+        unsafe {
+            // SAFETY: queries and a foreground grant; no call waits on a plugin thread.
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                AllowSetForegroundWindow, GW_HWNDPREV, GW_OWNER, GetForegroundWindow, GetWindow,
+                GetWindowThreadProcessId, IsWindowVisible,
+            };
+            let foreground = GetForegroundWindow();
+            let mut process = 0;
+            GetWindowThreadProcessId(foreground, &mut process);
+            if process == std::process::id() {
+                if base == 0 {
+                    bar.stack_base = foreground as u64;
+                }
+                if let Some((window, _)) = self.mixer.editor_touches.get(&id)
+                    && GetWindowThreadProcessId(*window as _, &mut process) != 0
+                {
+                    AllowSetForegroundWindow(process);
+                }
             }
+            // Clicking the main window also brings its owned palettes forward. Use the
+            // highest visible member of that group as the insertion boundary.
+            let base = bar.stack_base as windows_sys::Win32::Foundation::HWND;
+            let owner = GetWindow(base, GW_OWNER);
+            let root = if owner.is_null() { base } else { owner };
+            if !root.is_null() {
+                let mut above = GetWindow(bar.stack_base as _, GW_HWNDPREV);
+                for _ in 0..4096 {
+                    if above.is_null() {
+                        break;
+                    }
+                    if IsWindowVisible(above) != 0 && GetWindow(above, GW_OWNER) == root {
+                        bar.stack_base = above as u64;
+                    }
+                    above = GetWindow(above, GW_HWNDPREV);
+                }
+            }
+        }
+        if let Some(host) = self.transport.host() {
+            host.plugin_editor_bar(id, bar);
+            host.raise_plugin_editor(id);
         }
     }
 
@@ -201,6 +300,7 @@ impl Studio {
     /// Shuts a plugin's window.
     pub(crate) fn close_editor(&mut self, id: PluginId) {
         self.mixer.editor_bars.remove(&id);
+        self.mixer.editor_touches.remove(&id);
         self.mixer
             .editor_pending
             .retain(|(other, _, _)| *other != id);
@@ -277,7 +377,7 @@ impl Studio {
     /// song. True when the song changed.
     pub fn poll_editors(&mut self) -> bool {
         let bar = self.poll_editor_bar();
-        let keys = bar | self.poll_editor_keys() | self.mixer.preset_menu.is_some();
+        let keys = bar | self.poll_editor_keys();
         let mut failed = Vec::new();
         let mut opened_sizes = Vec::new();
         if let Some(host) = self.transport.host() {
@@ -371,22 +471,7 @@ impl Studio {
             else {
                 continue;
             };
-            let bar = xirius_vst3::EditorBar {
-                track: track.shown_name().into(),
-                device: plugin.name.clone(),
-                preset: plugin.preset.clone().unwrap_or_else(|| "—".into()),
-                presets: self
-                    .instruments
-                    .presets
-                    .external
-                    .get(&plugin.uid.to_ascii_lowercase())
-                    .cloned()
-                    .unwrap_or_default(),
-                instrument: plugin.kind == xirius_core::model::PluginKind::Instrument,
-                powered: plugin.runs(),
-                pinned: self.mixer.editor_pins.contains(&e.id),
-                sidechain: plugin.sidechain.is_some(),
-            };
+            let bar = self.vst_bar(plugin);
             if self.mixer.editor_bars.get(&e.id) != Some(&bar) {
                 if let Some(host) = self.transport.host() {
                     host.plugin_editor_bar(e.id, bar.clone());
@@ -400,6 +485,7 @@ impl Studio {
             actions.extend(events.into_iter().map(|a| (e.id, track.id, a)));
         }
         let mut changed = false;
+        let mut new_editor = false;
         for (id, track, action) in actions {
             if !self.mixer.is_open(id) {
                 continue;
@@ -408,6 +494,7 @@ impl Studio {
                 action,
                 EditorAction::Power
                     | EditorAction::PresetSelect(_)
+                    | EditorAction::PresetPick(_)
                     | EditorAction::PresetPrevious
                     | EditorAction::PresetNext
                     | EditorAction::Sidechain
@@ -420,6 +507,14 @@ impl Studio {
             }
             changed = true;
             match action {
+                EditorAction::EditorRaised(ticket) => self.mixer.editor_raises.ack(id, ticket),
+                EditorAction::EditorTouched { window, time } => {
+                    new_editor |= !self.mixer.editor_touches.contains_key(&id);
+                    let entry = self.mixer.editor_touches.entry(id).or_default();
+                    if time >= entry.1 {
+                        *entry = (window, time);
+                    }
+                }
                 EditorAction::Power => {
                     // design-lint: allow(ui-blocking-io) PRJ-031: guarded dispatcher enqueues the model edit; the plugin GUI never waits for it.
                     self.run_command(
@@ -433,16 +528,17 @@ impl Studio {
                     }
                 }
                 EditorAction::Channel => self.open_channel(track),
-                EditorAction::PresetMenu { x, y, dpi } => {
-                    #[cfg(windows)]
-                    crate::device_window::preset_front_shots::mark("request_received_ms");
-                    self.mixer.preset_menu = Some((track, id, x, y, dpi));
-                }
                 EditorAction::PresetOpen => {
                     self.file_request = Some(crate::studio::FileRequest::PresetOpen(id))
                 }
                 EditorAction::PresetSave => {
                     self.file_request = Some(crate::studio::FileRequest::PresetSave(id))
+                }
+                EditorAction::PresetPick(key) => {
+                    self.inst_menu_pick(crate::instrument::menu::Menu::Preset(track, id), &key);
+                    if key == crate::instrument::menu::SAVE_AS && self.popup.is_some() {
+                        self.mixer.preset_save = Some(id);
+                    }
                 }
                 EditorAction::PresetSelect(preset) => {
                     // design-lint: allow(ui-blocking-io) UI-337: the guarded dispatcher loads on the song worker; the plugin GUI only reports the selected name.
@@ -467,17 +563,60 @@ impl Studio {
                 }
             }
         }
+        // The first touch carries the HWND. An earlier Opened reply can arrive before it,
+        // when the new editor still has no position in the last-used order.
+        #[cfg(windows)]
+        if new_editor {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                GetForegroundWindow, GetWindowThreadProcessId,
+            };
+            let mut process = 0;
+            // SAFETY: inspect the foreground process without sending it a window message.
+            unsafe { GetWindowThreadProcessId(GetForegroundWindow(), &mut process) };
+            if process == std::process::id() {
+                self.raise_editors_over(0);
+                return changed;
+            }
+        }
+        #[cfg(not(windows))]
+        let _ = new_editor;
+        self.pump_editor_raises();
         changed
     }
 }
 
-/// Activation and restoration request only views already tracked as open.
-fn main_window_requests(
-    active: bool,
-    restored: bool,
-    editors: &[OpenEditor],
-) -> impl Iterator<Item = &OpenEditor> {
-    editors.iter().filter(move |_| active || restored)
+/// Only one host places a frame at a time. A hung host cannot hold up other windows.
+#[derive(Default)]
+pub(crate) struct RaiseQueue {
+    base: u64,
+    pending: std::collections::VecDeque<PluginId>,
+    flight: Option<(PluginId, u64, std::time::Instant)>,
+    serial: u64,
+}
+impl RaiseQueue {
+    fn request(&mut self, ids: Vec<PluginId>) {
+        self.pending = ids.into();
+    }
+    fn ack(&mut self, id: PluginId, ticket: u64) {
+        if self
+            .flight
+            .is_some_and(|(current, serial, _)| current == id && serial == ticket)
+        {
+            self.flight = None;
+        }
+    }
+    fn next(&mut self, now: std::time::Instant) -> Option<(PluginId, u64)> {
+        if self.flight.is_some_and(|(_, _, sent)| {
+            now.duration_since(sent) < std::time::Duration::from_millis(500)
+        }) {
+            return None;
+        }
+        self.flight = None;
+        let id = self.pending.pop_front()?;
+        self.serial = self.serial.wrapping_add(1);
+        self.flight = Some((id, self.serial, now));
+        Some((id, self.serial))
+    }
 }
 
 #[cfg(test)]
@@ -485,21 +624,37 @@ mod activation_tests {
     use super::*;
 
     #[test]
-    fn activation_and_restore_request_open_views_without_opening_closed_devices() {
-        let mut open = vec![OpenEditor {
-            id: PluginId(7),
-            title: "Effect".into(),
-            at: Where::Host { opened: true },
-        }];
-        let requests = |active, restored, views: &[OpenEditor]| {
-            main_window_requests(active, restored, views)
-                .map(|e| e.id)
-                .collect::<Vec<_>>()
-        };
-        assert!(requests(false, false, &open).is_empty());
-        assert_eq!(requests(true, false, &open), [PluginId(7)]);
-        assert_eq!(requests(false, true, &open), [PluginId(7)]);
-        open.clear();
-        assert!(requests(true, true, &open).is_empty());
+    fn raising_waits_for_the_matching_host_and_skips_a_hung_one() {
+        let now = std::time::Instant::now();
+        let mut q = RaiseQueue::default();
+        q.request(vec![PluginId(3), PluginId(1), PluginId(2)]);
+        let (id, ticket) = q.next(now).unwrap();
+        assert_eq!(id, PluginId(3));
+        assert!(q.next(now).is_none());
+        q.ack(PluginId(1), ticket);
+        assert!(q.next(now).is_none());
+        q.ack(id, ticket);
+        assert_eq!(q.next(now).unwrap().0, PluginId(1));
+        assert_eq!(
+            q.next(now + std::time::Duration::from_secs(1)).unwrap().0,
+            PluginId(2)
+        );
+        q.ack(id, ticket);
+        assert!(q.next(now + std::time::Duration::from_secs(1)).is_none());
+    }
+
+    #[test]
+    fn a_new_activation_replaces_pending_order_without_concurrent_moves() {
+        let now = std::time::Instant::now();
+        let mut q = RaiseQueue::default();
+        q.request(vec![PluginId(1), PluginId(2)]);
+        let (id, ticket) = q.next(now).unwrap();
+        q.request(vec![PluginId(2), PluginId(1)]);
+        assert!(q.next(now).is_none());
+        q.ack(id, ticket);
+        let (id, ticket) = q.next(now).unwrap();
+        assert_eq!(id, PluginId(2));
+        q.ack(id, ticket);
+        assert_eq!(q.next(now).unwrap().0, PluginId(1));
     }
 }

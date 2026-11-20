@@ -244,6 +244,7 @@ fn wide(s: &str) -> Vec<u16> {
 /// What the window procedure and the frame share about one editor window. It lives in a box
 /// owned by the [`Editor`]; the window's `GWLP_USERDATA` points at it.
 struct WindowState {
+    presets: std::cell::RefCell<Option<crate::editor_presets::Popup>>,
     native_frame: bool,
     viewport: HWND,
     chrome: crate::editor_chrome::Controls,
@@ -263,6 +264,22 @@ struct WindowState {
 }
 
 impl WindowState {
+    fn touched(&self, hwnd: HWND) {
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+        let mut actions = self
+            .shared
+            .editor_actions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        actions.retain(|a| !matches!(a, crate::EditorAction::EditorTouched { .. }));
+        actions.push(crate::EditorAction::EditorTouched {
+            window: hwnd as u64,
+            time,
+        });
+    }
     fn view(&self) -> vst3::ComRef<'_, IPlugView> {
         // SAFETY: the editor keeps the view alive while the window points at this state.
         unsafe { vst3::ComRef::from_raw(self.view) }.expect("a view")
@@ -363,8 +380,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT, ScreenToClient};
     use windows_sys::Win32::UI::WindowsAndMessaging::WM_PAINT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP,
-        HTTOPLEFT, HTTOPRIGHT, WM_COMMAND, WM_DRAWITEM, WM_NCCALCSIZE, WM_NCHITTEST,
+        BN_DOUBLECLICKED, GetDlgItem, GetMessagePos, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT,
+        HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, MA_ACTIVATEANDEAT,
+        WM_COMMAND, WM_DRAWITEM, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_NCCALCSIZE, WM_NCHITTEST,
+        WindowFromPoint,
     };
     // SAFETY: the style belongs to this window; a fallback keeps its native frame.
     let native =
@@ -377,6 +396,31 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     }
     // SAFETY: our class's pointer, cleared before its state is released.
     if let Some(st) = unsafe { state(hwnd) } {
+        if msg == WM_MOUSEACTIVATE && (lp as u32 >> 16) == WM_LBUTTONDOWN {
+            // The second press is consumed during Windows' mouse activation, before a
+            // BN_CLICKED can reopen the list after its normal deactivation.
+            let list = st.presets.borrow();
+            if let Some(list) = list.as_ref().filter(|list| list.shown()) {
+                // SAFETY: query the current mouse message and this frame's band control.
+                let on_button = unsafe {
+                    let pos = GetMessagePos();
+                    let point = windows_sys::Win32::Foundation::POINT {
+                        x: pos as i16 as i32,
+                        y: (pos >> 16) as i16 as i32,
+                    };
+                    WindowFromPoint(point) == GetDlgItem(hwnd, crate::editor_chrome::PRESET as i32)
+                };
+                if on_button {
+                    list.dismiss();
+                    return MA_ACTIVATEANDEAT as LRESULT;
+                }
+            }
+        }
+        use windows_sys::Win32::UI::WindowsAndMessaging::{WA_CLICKACTIVE, WM_ACTIVATE};
+        // Closing an owned popup can reactivate a window without anyone touching it.
+        if msg == WM_ACTIVATE && wp & 0xffff == WA_CLICKACTIVE as usize {
+            st.touched(hwnd);
+        }
         if msg == WM_PAINT || msg == windows_sys::Win32::UI::WindowsAndMessaging::WM_PRINTCLIENT {
             let mut ps = PAINTSTRUCT::default();
             // SAFETY: balanced paint scope on the frame.
@@ -426,14 +470,43 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             );
             return 1;
         }
-        if msg == WM_COMMAND && (wp >> 16) == 0 {
+        if msg == WM_COMMAND {
+            let id = wp & 0xffff;
+            let event = (wp >> 16) as u32;
+            // An owner-drawn button can report BN_DOUBLECLICKED when the list was
+            // dismissed and the button is pressed again within the double-click interval.
+            if id == crate::editor_chrome::PRESET && matches!(event, 0 | BN_DOUBLECLICKED) {
+                st.touched(hwnd);
+                let mut popup = st.presets.borrow_mut();
+                if let Some(list) = popup.as_ref()
+                    && list.shown()
+                {
+                    list.dismiss();
+                    return 0;
+                }
+                // SAFETY: the native control belongs to this frame.
+                let button = unsafe { GetDlgItem(hwnd, crate::editor_chrome::PRESET as i32) };
+                *popup = crate::editor_presets::Popup::new(
+                    hwnd,
+                    button,
+                    st.shared.clone(),
+                    st.chrome_scale.get(),
+                    st.chrome_caption.get(),
+                );
+                return 0;
+            }
+            if event != 0 {
+                // SAFETY: non-click notifications keep their normal default handling.
+                return unsafe { DefWindowProcW(hwnd, msg, wp, lp) };
+            }
             let bar = st
                 .shared
                 .editor_bar
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone();
-            if let Some(action) = crate::editor_chrome::command(hwnd, wp & 0xffff, &bar) {
+            if let Some(action) = crate::editor_chrome::command(hwnd, id, &bar) {
+                st.touched(hwnd);
                 let mut actions = st
                     .shared
                     .editor_actions
@@ -908,6 +981,7 @@ impl Plugin {
             return Err(error("cannot route plug-in viewport keys"));
         }
         let state = Box::new(WindowState {
+            presets: Default::default(),
             native_frame,
             viewport,
             chrome: crate::editor_chrome::Controls::new(hwnd),
@@ -985,6 +1059,7 @@ impl Plugin {
             editor.state.size.set(now);
         }
         editor.state.live.set(true);
+        editor.state.touched(hwnd);
         // SAFETY: a plain query on our window (96 in a process that is not DPI aware).
         let dpi = unsafe { GetDpiForWindow(hwnd) };
         editor.state.set_scale(dpi.max(96) as f32 / 96.0);
@@ -1239,34 +1314,52 @@ impl Editor {
 
     /// Brings a hidden or buried window back above the others, without activating it.
     pub fn raise(&self) {
-        let main = self
+        let bar = self
             ._shared
-            .editor_position
+            .editor_bar
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .area
-            .map_or(std::ptr::null_mut(), |area| area.main_window as HWND);
-        // SAFETY: our own window.
+            .clone();
+        // SAFETY: queries do not send messages to another GUI thread. Only our own frame moves.
         unsafe {
             use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GW_HWNDPREV, GWL_EXSTYLE, GetWindow, GetWindowLongW, WS_EX_TOPMOST,
+                GW_HWNDNEXT, GW_HWNDPREV, GWL_EXSTYLE, GetWindow, WS_EX_TOPMOST,
             };
-            let previous = if IsWindow(main) != 0 {
-                GetWindow(main, GW_HWNDPREV)
+            let mut above = Vec::new();
+            let has_base = IsWindow(bar.stack_base as HWND) != 0;
+            let mut cursor = if has_base {
+                GetWindow(bar.stack_base as HWND, GW_HWNDPREV)
             } else {
-                HWND_TOP
+                windows_sys::Win32::UI::WindowsAndMessaging::GetTopWindow(std::ptr::null_mut())
             };
-            if previous == self.hwnd {
-                return;
+            while !cursor.is_null() && above.len() < 4096 {
+                above.push(cursor as u64);
+                cursor = GetWindow(cursor, if has_base { GW_HWNDPREV } else { GW_HWNDNEXT });
             }
-            // Stay in the normal band even if a topmost window precedes the main window.
-            let after = if !previous.is_null()
-                && GetWindowLongW(previous, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST != 0
-            {
-                HWND_TOP
-            } else {
-                previous
-            };
+            let rank = bar
+                .stack
+                .iter()
+                .position(|&h| h == self.hwnd as u64)
+                .unwrap_or(0);
+            let after = bar.stack[..rank]
+                .iter()
+                .rev()
+                .find(|h| above.contains(h))
+                .copied()
+                .or_else(|| {
+                    // A background GUI's HWND_TOP can leave its frame below the active
+                    // window. Insert after a concrete normal window above the base.
+                    if !has_base {
+                        return None;
+                    }
+                    above.iter().copied().find(|&h| {
+                        h != self.hwnd as u64
+                            && !bar.stack.contains(&h)
+                            && GetWindowLongPtrW(h as HWND, GWL_EXSTYLE) & WS_EX_TOPMOST as isize
+                                == 0
+                    })
+                })
+                .map_or(HWND_TOP, |h| h as HWND);
             SetWindowPos(
                 self.hwnd,
                 after,
@@ -1275,8 +1368,13 @@ impl Editor {
                 0,
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            )
+            );
         };
+        self._shared
+            .editor_actions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(crate::EditorAction::EditorRaised(bar.raise_ticket));
     }
 
     /// The window's top-left corner on the screen.

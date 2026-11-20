@@ -21,10 +21,6 @@ use crate::independent::{Key, Kind, Over, Spec};
 pub(crate) mod drag_shots;
 pub(crate) mod input_shots;
 #[cfg(windows)]
-pub(crate) mod preset_front_shots;
-#[cfg(windows)]
-pub(crate) mod preset_shots;
-#[cfg(windows)]
 pub(crate) mod verify_shots;
 
 #[derive(Default)]
@@ -32,12 +28,12 @@ pub(crate) struct Windows {
     open: HashMap<PluginId, WindowHandle<DeviceWindow>>,
     channel: Option<WindowHandle<DeviceWindow>>,
     macros: Option<WindowHandle<DeviceWindow>>,
-    preset: Option<WindowHandle<DeviceWindow>>,
+    save: Option<WindowHandle<DeviceWindow>>,
 }
 
 impl Windows {
     pub(crate) fn close(&mut self, cx: &mut App) {
-        if let Some(handle) = self.preset.take() {
+        if let Some(handle) = self.save.take() {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         }
         if let Some(handle) = self.macros.take() {
@@ -63,9 +59,6 @@ impl Windows {
         }
         if let Some(h) = self.macros {
             out.push((Kind::Macros, h));
-        }
-        if let Some(h) = self.preset {
-            out.push((Kind::Presets, h));
         }
         out
     }
@@ -231,7 +224,6 @@ impl Windows {
             Kind::Device(id) => self.open.get(&id).copied(),
             Kind::Channel => self.channel,
             Kind::Macros => self.macros,
-            Kind::Presets => self.preset,
         };
         if let Some(handle) = handle {
             let _ = handle.update(cx, |_, _, cx| cx.notify());
@@ -239,9 +231,15 @@ impl Windows {
     }
 
     pub(crate) fn sync(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
+        self.sync_save(studio, main, cx);
+        let old_channel = self.channel.is_some();
+        let old_macros = self.macros.is_some();
         self.sync_channel(studio, main, cx);
         self.sync_macros(studio, main, cx);
-        self.sync_preset(studio, main, cx);
+        let mut opened = self
+            .macros
+            .filter(|_| !old_macros)
+            .or(self.channel.filter(|_| !old_channel));
         let wanted: Vec<_> = {
             let s = studio.borrow();
             s.instruments
@@ -325,6 +323,7 @@ impl Windows {
             match result {
                 Ok(handle) => {
                     self.open.insert(id, handle);
+                    opened = Some(handle);
                 }
                 Err(error) => {
                     let mut s = studio.borrow_mut();
@@ -333,76 +332,108 @@ impl Windows {
                 }
             }
         }
+        #[cfg(windows)]
+        if let Some(handle) = opened {
+            let studio = studio.clone();
+            cx.defer(move |cx| {
+                if let Ok(hwnd) = handle.update(cx, |_, window, _| hwnd_of(window)) {
+                    studio.borrow_mut().raise_editors_over(hwnd as u64);
+                }
+            });
+        }
+        #[cfg(not(windows))]
+        let _ = opened;
     }
 
-    fn sync_preset(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
-        let request = studio.borrow_mut().mixer.preset_menu.take();
-        let Some((track, id, x, y, dpi)) = request else {
-            if let Some(handle) = self.preset {
+    /// Saving keeps the shared library form (folders and instrument effects), separate
+    /// from the host's list. This window exists only after an explicit save request.
+    fn sync_save(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
+        let request = studio.borrow_mut().mixer.preset_save.take();
+        let Some(id) = request else {
+            if let Some(handle) = self.save {
                 cx.defer(move |cx| {
                     let _ = handle.update(cx, |_, _, cx| cx.notify());
                 });
             }
             return;
         };
-        if let Some(handle) = self.preset.take() {
+        let Some(mut popup) = studio.borrow_mut().popup.take() else {
+            return;
+        };
+        popup.anchor = crate::studio::Rect::new(6.0, 0.0, 280.0, 0.0);
+        if let Some(handle) = self.save.take() {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         }
-        // The point is in physical screen pixels: it becomes logical ones by the scale of the
-        // display it is on, which need not be the one of the window that sent it.
-        let popup = size(px(332.0), px(420.0));
-        let screens = crate::independent::screens(cx);
-        let (initial, display) = match crate::independent::popup_bounds((x, y), popup, &screens) {
-            Some((i, bounds)) => (bounds, Some(screens[i].id)),
-            None => {
-                let scale = dpi.max(96) as f32 / 96.0;
-                let at = point(px(x as f32 / scale), px(y as f32 / scale));
-                (Bounds::new(at, popup), None)
-            }
-        };
-        #[cfg(windows)]
-        preset_front_shots::mark("sync_begin_ms");
         let shared = studio.clone();
-        let spec = Spec {
-            kind: Kind::Presets,
-            title: "Presets".into(),
-            initial,
-            display,
-            min_size: None,
-            resizable: false,
-            positions: None,
-        };
-        #[cfg(windows)]
-        preset_front_shots::mark("create_begin_ms");
-        let result = crate::independent::open(cx, main, spec, move |window, cx| {
-            let focus = cx.focus_handle();
-            window.focus(&focus, cx);
-            cx.new(|cx| {
-                let mut view = DeviceWindow::new(shared, Some(id), None, focus, window, cx);
-                view.menu_only = true;
-                view.with(window, |s, _| {
-                    s.open_inst_menu(
-                        crate::instrument::menu::Menu::Preset(track, id),
-                        crate::studio::Rect {
-                            x: 6.0,
-                            y: 0.0,
-                            w: 320.0,
-                            h: 0.0,
-                        },
-                    )
+        let parked = std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_some();
+        let initial = Bounds::new(
+            main.bounds().origin + point(px(80.0), px(100.0)),
+            size(px(300.0), px(440.0)),
+        );
+        let result = cx.open_window(
+            gpui::WindowOptions {
+                window_bounds: Some(gpui::WindowBounds::Windowed(initial)),
+                titlebar: Some(gpui::TitlebarOptions {
+                    title: Some("Save preset".into()),
+                    ..Default::default()
+                }),
+                show: false,
+                focus: false,
+                is_resizable: false,
+                is_minimizable: false,
+                ..Default::default()
+            },
+            move |window, cx| {
+                window.resize(initial.size);
+                let focus = cx.focus_handle();
+                window.focus(&focus, cx);
+                let entity = cx.new(|cx| {
+                    let mut view = DeviceWindow::new(shared.clone(), None, None, focus, window, cx);
+                    view.preset_save = true;
+                    view.popup = Some(popup);
+                    view
                 });
-                view
-            })
-        });
-        match result {
-            Ok(handle) => {
                 #[cfg(windows)]
-                let _ = handle.update(cx, |_, window, _| {
-                    preset_front_shots::mark("create_end_ms");
-                    crate::independent::present_popup(window, initial, (x, y));
-                });
-                self.preset = Some(handle);
-            }
+                {
+                    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+                    let hwnd = hwnd_of(window) as windows_sys::Win32::Foundation::HWND;
+                    if hwnd.is_null() {
+                        return entity;
+                    }
+                    let owner = shared.borrow().mixer.editor_hwnd(id).unwrap_or(0);
+                    // SAFETY: only this new dialog is changed. The external frame remains
+                    // unowned; it never waits on the main window's GUI thread.
+                    unsafe {
+                        if IsWindow(owner as _) != 0 {
+                            SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, owner);
+                        }
+                        if parked {
+                            SetWindowPos(
+                                hwnd,
+                                std::ptr::null_mut(),
+                                -30000,
+                                -30000,
+                                0,
+                                0,
+                                SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER,
+                            );
+                            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                        } else {
+                            ShowWindow(hwnd, SW_SHOW);
+                            SetForegroundWindow(hwnd);
+                        }
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = (id, parked);
+                    window.activate_window();
+                }
+                entity
+            },
+        );
+        match result {
+            Ok(handle) => self.save = Some(handle),
             Err(error) => studio.borrow_mut().error = Some(error.to_string()),
         }
     }
@@ -560,7 +591,7 @@ struct DeviceWindow {
     id: Option<PluginId>,
     focus: FocusHandle,
     popup: Option<Popup>,
-    menu_only: bool,
+    preset_save: bool,
     /// The Macro Controls (`id` is `None` as for the Channel Editor).
     macros: bool,
     /// Files from another app are over this window (their light is cleaned on exit).
@@ -641,7 +672,7 @@ pub(crate) fn with_surface<R>(
 }
 
 /// The OS's own handle of a GPUI window, as `WindowFromPoint` reports it.
-#[cfg(all(windows, not(test)))]
+#[cfg(windows)]
 fn hwnd_of(window: &Window) -> isize {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let Ok(h) = HasWindowHandle::window_handle(window) else {
@@ -663,10 +694,14 @@ impl DeviceWindow {
         cx: &mut Context<Self>,
     ) -> Self {
         let activation = cx.observe_window_activation(window, |view, window, cx| {
-            if !window.is_window_active() && view.menu_only {
-                view.popup = None;
-                cx.notify();
+            if view.preset_save {
                 return;
+            }
+            #[cfg(windows)]
+            if window.is_window_active() {
+                view.studio
+                    .borrow_mut()
+                    .raise_editors_over(hwnd_of(window) as u64);
             }
             if !window.is_window_active() {
                 let changed = view.with(window, |s, _| {
@@ -688,9 +723,6 @@ impl DeviceWindow {
             }
         });
         let bounds = cx.observe_window_bounds(window, move |view, window, cx| {
-            if view.menu_only {
-                return;
-            }
             if let Some((positions, key)) = &place {
                 positions.borrow_mut().insert(*key, window.bounds());
             }
@@ -730,7 +762,7 @@ impl DeviceWindow {
             id,
             focus,
             popup: None,
-            menu_only: false,
+            preset_save: false,
             macros: false,
             files_dragged: false,
             _activation: activation,
@@ -754,11 +786,11 @@ impl DeviceWindow {
     }
 
     /// Whether the device this window shows is one files drop onto (UI-333, UI-334): the
-    /// Channel Editor, the Macro Controls and the preset menu are not. Without this a file
+    /// Channel Editor and the Macro Controls are not. Without this a file
     /// let go on any other detached window would fall through to the song's lanes, whose
     /// geometry is the main window's, not this surface's.
     fn takes_files(&self) -> bool {
-        if self.menu_only {
+        if self.preset_save {
             return false;
         }
         let Some(id) = self.id else {
@@ -847,16 +879,8 @@ impl Render for DeviceWindow {
             self.files_dragged = false;
             self.studio.borrow_mut().drop_hover(false);
         }
-        let live = if self.menu_only {
+        let live = if self.preset_save {
             self.popup.is_some()
-                && self.id.is_some_and(|id| {
-                    self.studio
-                        .borrow()
-                        .mixer
-                        .editors
-                        .iter()
-                        .any(|e| e.id == id)
-                })
         } else if self.macros {
             self.studio.borrow().macro_pad.is_some()
         } else {
@@ -869,16 +893,6 @@ impl Render for DeviceWindow {
         if !live {
             window.defer(cx, |window, _| window.remove_window());
         }
-        if self.menu_only
-            && let Some(popup) = &self.popup
-        {
-            let area = work_size(window, cx).unwrap_or((332.0, 420.0));
-            let rect = popup.layout((area.0.min(332.0), area.1.min(420.0))).rect;
-            let wanted = size(px(rect.x + rect.w + 6.0), px(rect.y + rect.h + 6.0));
-            if window.viewport_size() != wanted {
-                window.resize(wanted);
-            }
-        }
         if self.macros {
             // The window is exactly its panel: whatever size the system gave it, the surface
             // is brought to the content's.
@@ -887,7 +901,7 @@ impl Render for DeviceWindow {
                 window.resize(wanted);
             }
         }
-        if self.id.is_none() && !self.menu_only && !self.macros {
+        if self.id.is_none() && !self.macros && !self.preset_save {
             // The least width follows the layers: one added while it is open widens the least.
             let least = {
                 let s = self.studio.borrow();
@@ -924,10 +938,6 @@ impl Render for DeviceWindow {
             |_, _, _| (),
             move |bounds, _, window, cx| {
                 entity.update(cx, |view, cx| {
-                    #[cfg(windows)]
-                    if view.menu_only {
-                        preset_front_shots::mark("first_paint_ms");
-                    }
                     let theme = view.studio.borrow().caption.map_or_else(
                         || view.studio.borrow().wanted_theme(crate::theme::THEME),
                         |c| {
@@ -950,8 +960,8 @@ impl Render for DeviceWindow {
                         c: &colors,
                         origin: (0.0, 0.0),
                     };
-                    if view.menu_only {
-                        s.refresh_popup();
+                    if view.preset_save {
+                        // The shared preset form below is the complete content.
                     } else if view.macros {
                         crate::macro_pad::paint::paint(&mut pen, &s);
                     } else if view.id.is_some() {
@@ -980,9 +990,8 @@ impl Render for DeviceWindow {
         )
         .size_full();
         // The bar's empty parts, which the system moves the window by (UI-337). They come from the
-        // very functions the press hit test uses, so the two cannot drift. The Presets popup has no
-        // bar.
-        let drags = if self.menu_only {
+        // very functions the press hit test uses, so the two cannot drift.
+        let drags = if self.preset_save {
             Vec::new()
         } else {
             self.with(window, |s, g| {
@@ -1015,7 +1024,7 @@ impl Render for DeviceWindow {
         };
         // The marks of what this window shows (Macro Controls, a device, the Channel Editor) belong
         // to its own tree, in its own coordinates.
-        let marks = if self.menu_only {
+        let marks = if self.preset_save {
             Vec::new()
         } else if self.macros {
             crate::macro_pad::marks(&self.studio.borrow())

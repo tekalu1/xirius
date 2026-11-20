@@ -67,22 +67,35 @@ artifacts untouched. The cleanup boundaries and retention rules run in CI with
 
 ## Native preset popup (Windows desktop)
 
-After `python scripts/ci_tests.py --prepare`, run
-`cargo test -p xirius-ui --test plugin_preset_front_window -- --nocapture`.
-The `_window` suffix excludes this test from CI. It opens the fixture editor in a
-dedicated host, off every display with silent output, and sends `BM_CLICK` to its
-preset button. Both pin states must put the popup above the editor in native window
-order and at `WindowFromPoint` below the button. It also checks placement, selection,
-closure, and the editor's unchanged owner, pin state and order relative to the main
-window. Each run uses a temporary folder for data and removes it afterwards.
-An additional case gives the editor `WS_EX_TOPMOST`; this is independent of the
-pin button, which retains an editor rather than making it always on top.
-Two more cases temporarily attach the input queues and activate the editor before
-`BM_CLICK`, asserting `GetForegroundWindow` first. Run this manual test only on an
-unused desktop: these cases deliberately change the foreground window, without
-injecting keyboard or mouse input. Both pin states use ordinary non-topmost editors.
-The scenario writes `front.json`, including notification, creation, first paint callback,
-and request-to-popup observation times. The paint callback is not a GPU presentation timestamp.
+The CI-safe `xirius-engine --test editor_open_window` cases open parked fixture editors.
+They check that the list belongs to the editor host, has the editor as owner, filters
+searches, clears search before closing on Escape, and delivers the selected key over IPC.
+The placement case waits for each host acknowledgement and checks native window order.
+UI unit tests exercise placement sequencing, stale acknowledgements and a stalled host.
+These message tests make no claim about foreground activation or physical input.
+
+On an **unused Windows desktop**, after `python scripts/ci_tests.py --prepare`, run:
+
+```powershell
+python scripts/test_plugin_presets.py --work <temporary-folder> --out <results-folder>
+```
+
+The script checks running Xirius processes with `Get-CimInstance Win32_Process` before
+opening anything and refuses to overlap another run. It launches the checkout's debug
+UI with isolated data and silent output, loads the repository's fixture in two dedicated
+hosts, and uses `SendInput` for mouse clicks and keyboard input. It leaves Windows'
+foreground rules intact: no `AttachThreadInput`, `BM_CLICK`, or topmost windows.
+`result.json` records each assertion and the corresponding desktop BMP; `app.log` records
+fixture setup and shutdown. A failure is an error, not a skipped check. Temporary user data
+is removed on exit; the result folder is retained for review.
+
+Use a desktop that can fit the 1200 × 850 logical-pixel main window and both fixture editors
+without covering their controls. The checks cover foreground activation, search and two-stage
+Escape, repeat-button, editor-body and outside-click dismissal, two editors with a list open,
+pinned editors with built-in/channel windows, most-recently-touched stacking, preset selection,
+and the owners of the save form and native file dialog. Check installed-plugin compatibility in
+a separate manual pass.
+macOS has no external plugin editor (NSView host) yet and is outside this desktop test's scope.
 
 ## What a test may leave
 

@@ -12,7 +12,7 @@ use xirius_vst3::{Caption, PluginState};
 
 /// The version of these messages and of the shared memory's layout together. Bump it with
 /// any change to either.
-pub const PROTOCOL: u32 = 16;
+pub const PROTOCOL: u32 = 17;
 /// Starts the encoded [`FromHost::Hello`], so a stray first message is not taken for one.
 const HELLO_MAGIC: u32 = u32::from_le_bytes(*b"XPHH");
 
@@ -426,6 +426,20 @@ impl ToHost {
                 for name in &bar.presets {
                     o.str(name);
                 }
+                o.u64(bar.stack_base)
+                    .u64(bar.raise_ticket)
+                    .u32(bar.stack.len() as u32);
+                for hwnd in &bar.stack {
+                    o.u64(*hwnd);
+                }
+                o.u32(bar.menu.len() as u32);
+                for row in &bar.menu {
+                    o.str(&row.key)
+                        .str(&row.label)
+                        .u8(u8::from(row.enabled))
+                        .u8(u8::from(row.selected))
+                        .u8(u8::from(row.footer));
+                }
             }
             ToHost::SetEditorArea { slot, area } => {
                 o.u8(12).u32(*slot);
@@ -532,6 +546,18 @@ impl ToHost {
                     pinned: i.u8()? != 0,
                     sidechain: i.u8()? != 0,
                     presets: i.list(|i| i.str())?,
+                    stack_base: i.u64()?,
+                    raise_ticket: i.u64()?,
+                    stack: i.list(|i| i.u64())?,
+                    menu: i.list(|i| {
+                        Ok(xirius_vst3::PresetRow {
+                            key: i.str()?,
+                            label: i.str()?,
+                            enabled: i.u8()? != 0,
+                            selected: i.u8()? != 0,
+                            footer: i.u8()? != 0,
+                        })
+                    })?,
                 },
             },
             12 => ToHost::SetEditorArea {
@@ -683,11 +709,15 @@ impl FromHost {
             FromHost::EditorAction { slot, action } => {
                 o.u8(10).u32(*slot).u8(action.tag());
                 match action {
-                    xirius_vst3::EditorAction::PresetSelect(name) => {
+                    xirius_vst3::EditorAction::PresetSelect(name)
+                    | xirius_vst3::EditorAction::PresetPick(name) => {
                         o.str(name);
                     }
-                    xirius_vst3::EditorAction::PresetMenu { x, y, dpi } => {
-                        o.u32(*x as u32).u32(*y as u32).u32(*dpi);
+                    xirius_vst3::EditorAction::EditorRaised(ticket) => {
+                        o.u64(*ticket);
+                    }
+                    xirius_vst3::EditorAction::EditorTouched { window, time } => {
+                        o.u64(*window).u64(*time);
                     }
                     _ => {}
                 }
@@ -802,10 +832,11 @@ impl FromHost {
                 slot: i.u32()?,
                 action: match i.u8()? {
                     6 => xirius_vst3::EditorAction::PresetSelect(i.str()?),
-                    7 => xirius_vst3::EditorAction::PresetMenu {
-                        x: i.u32()? as i32,
-                        y: i.u32()? as i32,
-                        dpi: i.u32()?,
+                    10 => xirius_vst3::EditorAction::PresetPick(i.str()?),
+                    12 => xirius_vst3::EditorAction::EditorRaised(i.u64()?),
+                    11 => xirius_vst3::EditorAction::EditorTouched {
+                        window: i.u64()?,
+                        time: i.u64()?,
                     },
                     tag => xirius_vst3::EditorAction::from_byte(tag)
                         .ok_or_else(|| bad("editor action"))?,
@@ -935,6 +966,16 @@ mod tests {
                     pinned: true,
                     sidechain: false,
                     presets: vec!["Default".into(), "My preset".into()],
+                    stack: vec![42, 24],
+                    stack_base: 12,
+                    raise_ticket: 123,
+                    menu: vec![xirius_vst3::PresetRow {
+                        key: "load:My preset".into(),
+                        label: "My preset".into(),
+                        enabled: true,
+                        selected: true,
+                        footer: false,
+                    }],
                 },
             },
             ToHost::SetEditorArea {
@@ -1001,10 +1042,17 @@ mod tests {
             },
             FromHost::EditorAction {
                 slot: 4,
-                action: xirius_vst3::EditorAction::PresetMenu {
-                    x: -1200,
-                    y: -400,
-                    dpi: 168,
+                action: xirius_vst3::EditorAction::PresetPick("load:Bright".into()),
+            },
+            FromHost::EditorAction {
+                slot: 4,
+                action: xirius_vst3::EditorAction::EditorRaised(987),
+            },
+            FromHost::EditorAction {
+                slot: 4,
+                action: xirius_vst3::EditorAction::EditorTouched {
+                    window: 42,
+                    time: 123456,
                 },
             },
             FromHost::Hello {

@@ -290,7 +290,11 @@ fn common_bar_and_view_share_the_gui_thread_without_topmost_or_native_caption() 
         SendMessageW(hwnd, WM_COMMAND, 4, 0);
     }
     assert_eq!(
-        editor.take_actions(),
+        editor
+            .take_actions()
+            .into_iter()
+            .filter(|a| !matches!(a, EditorAction::EditorTouched { .. }))
+            .collect::<Vec<_>>(),
         [EditorAction::Power, EditorAction::Pin]
     );
     let frame = client(hwnd);

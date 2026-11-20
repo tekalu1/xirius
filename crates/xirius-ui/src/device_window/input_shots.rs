@@ -530,9 +530,7 @@ fn handle(studio: &Rc<RefCell<Studio>>, id: PluginId, cx: &App) -> gpui::AnyWind
             handle
                 .downcast::<DeviceWindow>()
                 .and_then(|h| h.read(cx).ok())
-                .is_some_and(|view| {
-                    view.id == Some(id) && Rc::ptr_eq(&view.studio, studio) && !view.menu_only
-                })
+                .is_some_and(|view| view.id == Some(id) && Rc::ptr_eq(&view.studio, studio))
         })
         .expect("the independent device window")
 }
