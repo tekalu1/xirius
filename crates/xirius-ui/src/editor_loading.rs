@@ -103,6 +103,8 @@ impl Windows {
                 })
                 .collect::<Vec<_>>()
         };
+        #[cfg(windows)]
+        let open_before = self.open.len();
         self.open.retain(|id, handle| {
             if wanted.iter().any(|p| p.id == *id) {
                 let handle = *handle;
@@ -114,6 +116,13 @@ impl Windows {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
             false
         });
+        #[cfg(windows)]
+        if self.open.len() < open_before {
+            // Retiring an owned loading window can move the studio's window group above
+            // the newly opened editor. Place the editors after the removal is processed.
+            let studio = studio.clone();
+            cx.defer(move |_| studio.borrow_mut().raise_editors_over(0));
+        }
         for pending in wanted {
             if self.open.contains_key(&pending.id) {
                 continue;
