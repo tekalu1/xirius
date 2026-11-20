@@ -193,7 +193,8 @@ def main():
     root = Path(__file__).resolve().parents[1]
     with isolated_data(args.work) as temp:
         env = os.environ.copy()
-        env.update({"LOCALAPPDATA":temp, "APPDATA":temp, "XIRIUS_CONFIG_DIR":temp+"/config",
+        env.update({"LOCALAPPDATA":temp, "APPDATA":temp, "TEMP":temp, "TMP":temp,
+                    "XIRIUS_CONFIG_DIR":temp+"/config", "XIRIUS_PRESETS":temp+"/presets",
                     "XIRIUS_PLUGIN_CACHE":temp+"/plugins.json", "XIRIUS_KEEP_DIR":temp+"/keep",
                     "XIRIUS_CRASH_DIR":temp+"/crashes", "XIRIUS_PEAK_CACHE":temp+"/peaks",
                     "XIRIUS_VIEW_FILE":temp+"/view.json", "XIRIUS_DESKTOP_INPUT":"1"})
@@ -209,12 +210,12 @@ def main():
                 assert (out/"input-ready.json").exists(), "fixture app exited during setup; read app.log"
                 info = json.loads((out/"input-ready.json").read_text(encoding="utf-8"))
                 main_hwnd, (first, second) = info["main"], info["frames"]
+                for frame, x in [(first, 420), (second, u.GetSystemMetrics(0)- (rect(second).right-rect(second).left)-40)]:
+                    # Layout only: no activation or z-order changes.
+                    assert u.SetWindowPos(frame, 0, x, 180, 0, 0, 0x15)
                 wait(lambda: order([main_hwnd, first, second]) == [second, first, main_hwnd],
                      "new editor opened behind the pinned editor or main window",
                      detail=lambda: (order([main_hwnd, first, second]), info, u.GetForegroundWindow()))
-                for frame, x in [(first, 420), (second, u.GetSystemMetrics(0)- (rect(second).right-rect(second).left)-40)]:
-                    u.SetWindowPos(frame, 0, x, 180, 0, 0, 0x15)  # layout only: no activation/z-order
-                time.sleep(0.5)
                 screenshot("00-desktop")
                 def open_list(frame):
                     button(frame)
@@ -298,8 +299,13 @@ def main():
                 wait(lambda: u.GetForegroundWindow() == save, "save form not foreground")
                 assert u.GetWindow(save, 4) == first, "save form owner is not the editor"
                 passed("11-save-form-owner")
-                key(27)
+                key(13)
                 wait(lambda: not u.IsWindowVisible(save), "save form did not close")
+                preset_dir = Path(temp) / "presets"
+                wait(lambda: any(preset_dir.rglob("Bright 2.xpreset")),
+                     "save form did not write the new preset")
+                wait(lambda: control_text(u.GetDlgItem(first, 2)) == "Bright 2",
+                     "saved preset did not reach the editor")
                 p = open_list(first)
                 type_text("no matching preset")
                 key(40)
