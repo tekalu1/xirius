@@ -714,7 +714,7 @@ fn paint_head_meters(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     let tree = studio.tree();
     pen.mask(region(g, g.column), |pen| {
         for row in &tree.rows {
-            let RowKind::Track(t) = row.kind else {
+            let Some(t) = row.channel() else {
                 continue;
             };
             let top = studio.row_y(g, row);
@@ -1074,7 +1074,7 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
             if let RowKind::Folder(f) = row.kind {
                 crate::arrange::folder_band::paint(pen, studio, &project, g, row, f);
             }
-            if let RowKind::Track(t) = row.kind
+            if let Some(t) = row.channel()
                 && let Some(track) = project.tracks.get(&t)
             {
                 let stacks = xirius_core::takes::stacks(track);
@@ -1175,12 +1175,12 @@ fn paint_row_parts(
             if studio.hover == Hit::FolderColor(f) {
                 pen.round(cell, c.hover, Radius::S);
             }
-            let ink = folder
+            let folder_ink = folder
                 .color
                 .as_deref()
                 .and_then(crate::song::palette_color)
                 .map_or(c.ink, |k| c.tracks[k.index() % c.tracks.len()]);
-            pen.icon("folder", cell, ink);
+            pen.icon("folder", cell, folder_ink);
             // The name stops before the output bus button (EDT-073).
             let bus = studio.folder_bus_rect(row, g.column.w, f);
             let name_right = parts.name_right.min(bus.x - Space::X1.px());
@@ -1188,7 +1188,7 @@ fn paint_row_parts(
                 g.column.x + parts.name_x,
                 top,
                 name_right - parts.name_x,
-                row.h,
+                if row.bus.is_some() { 32.0 } else { row.h },
             );
             pen.mask(name_r, |pen| {
                 pen.text(
@@ -1201,6 +1201,72 @@ fn paint_row_parts(
                 );
             });
             crate::folder_bus::paint(pen, studio, project, g, row, top, f);
+            if let Some(t) = row.bus {
+                let track = &project.tracks[&t];
+                for (rect, label, on, lit, hot) in [
+                    (
+                        parts.mute,
+                        "M",
+                        track.mute,
+                        c.mute_on,
+                        studio.hover == Hit::Mute(t),
+                    ),
+                    (
+                        parts.solo,
+                        "S",
+                        track.solo,
+                        c.solo_on,
+                        studio.hover == Hit::Solo(t),
+                    ),
+                ] {
+                    if let Some(rect) = rect {
+                        let (face, ink) = pen.transition_pair(
+                            &studio.motion,
+                            studio.ai.motion,
+                            at(rect),
+                            &format!("{label}-{t}"),
+                            on,
+                            if hot {
+                                (c.hover, c.ink_strong)
+                            } else {
+                                (c.surface_3, c.ink_on_toggle)
+                            },
+                            lit,
+                        );
+                        pen.round(at(rect), face, Radius::Clip);
+                        pen.text(
+                            label,
+                            FontSize::Caption,
+                            Weight::Semibold,
+                            ink,
+                            at(rect),
+                            Align::Center,
+                        );
+                    }
+                }
+                if let Some(r) = parts.fader {
+                    crate::head_fader::paint_fader(pen, studio, t, at(r));
+                    let value = crate::head_fader::text(
+                        studio.head_fader_value(t).unwrap_or(track.volume_db),
+                    );
+                    pen.digits(
+                        &value,
+                        FontSize::Caption,
+                        Weight::Medium,
+                        c.ink,
+                        at(Rect::new(r.right() + 3.0, r.y, 38.0, r.h)),
+                        Align::Center,
+                    );
+                }
+                if let Some(r) = parts.output {
+                    pen.icon(
+                        "output",
+                        at(Rect::new(r.x - 20.0, r.y + 4.0, 16.0, 16.0)),
+                        c.ink,
+                    );
+                    paint_row_output(pen, studio, project, track, at(r));
+                }
+            }
         }
         RowKind::Track(t) => {
             let Some(track) = project.tracks.get(&t) else {
@@ -1404,41 +1470,52 @@ fn paint_row_parts(
                 }
             }
             if let Some(r) = parts.output {
-                let r = at(r);
-                pen.round(r, c.surface_3, Radius::S);
-                let label = output_label(project, track);
-                let text = Rect::new(
-                    r.x + Space::X2.px(),
-                    r.y,
-                    r.w - Layout::ICON_SIZE - Space::X3.px(),
-                    r.h,
-                );
-                pen.mask(text, |pen| {
-                    pen.text(
-                        &label,
-                        FontSize::Caption,
-                        Weight::Medium,
-                        c.ink,
-                        text,
-                        Align::Left,
-                    );
-                });
-                pen.icon(
-                    "chevron-down",
-                    Rect::new(
-                        r.right() - Layout::ICON_SIZE - Space::X1.px(),
-                        r.y + (r.h - Layout::ICON_SIZE) / 2.0,
-                        Layout::ICON_SIZE,
-                        Layout::ICON_SIZE,
-                    ),
-                    c.ink,
-                );
+                paint_row_output(pen, studio, project, track, at(r));
             }
         }
     }
     for i in 0..row.depth_dots().min(Layout::DEPTH_DOTS_MAX) {
         pen.round(at(RowParts::depth_dot(row, i)), c.ink, Radius::Pill);
     }
+}
+
+fn paint_row_output(pen: &mut Pen, studio: &Studio, project: &Project, track: &Track, r: Rect) {
+    let c = pen.c;
+    if studio.hover == Hit::Output(track.id)
+        || studio
+            .popup
+            .as_ref()
+            .is_some_and(|p| p.kind == crate::popup::PopupKind::Output(track.id))
+    {
+        pen.round(r, c.surface_3, Radius::S);
+    }
+    let label = output_label(project, track);
+    let text = Rect::new(
+        r.x + Space::X2.px(),
+        r.y,
+        r.w - Layout::ICON_SIZE - Space::X3.px(),
+        r.h,
+    );
+    pen.mask(text, |pen| {
+        pen.text(
+            &label,
+            FontSize::Caption,
+            Weight::Medium,
+            c.ink,
+            text,
+            Align::Left,
+        );
+    });
+    pen.icon(
+        "chevron-down",
+        Rect::new(
+            r.right() - Layout::ICON_SIZE - Space::X1.px(),
+            r.y + (r.h - Layout::ICON_SIZE) / 2.0,
+            Layout::ICON_SIZE,
+            Layout::ICON_SIZE,
+        ),
+        c.ink,
+    );
 }
 
 /// The snowflake (EXP-004): lit while the track is frozen, a square that stops the freeze

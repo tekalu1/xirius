@@ -123,17 +123,14 @@ fn several_nodes_are_packed_into_one_new_folder_where_the_first_one_was() {
     let (a, b, c): (TrackId, TrackId, TrackId) =
         (a.parse().unwrap(), b.parse().unwrap(), c.parse().unwrap());
     // in column order, whatever the order of the ids
-    // the new folder's bus is made right under it
+    // the new folder owns its bus as its first child
     let bus = s.project().folders[&f]
         .bus
         .expect("a bus is made with the folder");
-    assert_eq!(
-        column(&s),
-        [Node::Folder(f), Node::Track(bus), Node::Track(b)]
-    );
+    assert_eq!(column(&s), [Node::Folder(f), Node::Track(b)]);
     assert_eq!(
         s.project().folders[&f].children,
-        [Node::Track(a), Node::Track(c)]
+        [Node::Track(bus), Node::Track(a), Node::Track(c)]
     );
     s.project().validate_deep().unwrap();
     s.run_value("history.undo", json!({}), &RunOptions::human())
@@ -155,15 +152,15 @@ fn what_is_inside_a_picked_folder_goes_along_and_is_not_moved_twice() {
     let inner: FolderId = f.parse().unwrap();
     let outer_bus = s.project().folders[&outer].bus.unwrap();
     let inner_bus = s.project().folders[&inner].bus.unwrap();
-    // the picked folder takes its bus in; the outer folder has its own right under it
-    assert_eq!(column(&s), [Node::Folder(outer), Node::Track(outer_bus)]);
+    // Each folder owns its channel inside its own children.
+    assert_eq!(column(&s), [Node::Folder(outer)]);
     assert_eq!(
         s.project().folders[&outer].children,
-        [Node::Folder(inner), Node::Track(inner_bus)]
+        [Node::Track(outer_bus), Node::Folder(inner)]
     );
     assert_eq!(
         s.project().folders[&inner].children,
-        [Node::Track(x.parse().unwrap())]
+        [Node::Track(inner_bus), Node::Track(x.parse().unwrap())]
     );
     s.project().validate_deep().unwrap();
 }
@@ -210,14 +207,14 @@ fn a_folder_is_copied_with_its_tracks_clips_and_folders_under_new_ids() {
     assert_eq!(s.history().len(), n + 1);
     let copy: FolderId = id_of(&r).parse().unwrap();
     let p = s.project();
-    // Drums, its bus, the copy and the copy's bus
-    assert_eq!(p.root.len(), 4);
-    assert_eq!(p.root[2], Node::Folder(copy));
+    // Drums and its copy each hold their own bus.
+    assert_eq!(p.root.len(), 2);
+    assert_eq!(p.root[1], Node::Folder(copy));
     assert_eq!(p.folders[&copy].name, "Drums コピー");
     let kids = &p.folders[&copy].children;
-    // the inner folder, its bus, Kick
+    // the copy's bus, the inner folder, Kick
     assert_eq!(kids.len(), 3);
-    let Node::Folder(inner) = kids[0] else {
+    let Node::Folder(inner) = kids[1] else {
         panic!("{kids:?}")
     };
     let Node::Track(kick) = kids[2] else {
@@ -231,7 +228,7 @@ fn a_folder_is_copied_with_its_tracks_clips_and_folders_under_new_ids() {
         p.tracks[&kick].clips[0].id,
         p.tracks[&k.parse::<TrackId>().unwrap()].clips[0].id
     );
-    let Node::Track(hat) = p.folders[&inner].children[0] else {
+    let Node::Track(hat) = p.folders[&inner].children[1] else {
         panic!("not a track")
     };
     assert_eq!(p.tracks[&hat].name, "Hat");

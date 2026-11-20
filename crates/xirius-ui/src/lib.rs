@@ -241,6 +241,7 @@ mod search_field_tests;
 #[cfg(test)]
 mod text_field_tests;
 // Windows-only: these scenarios send Win32 messages to native plugin editor windows.
+pub mod folder_row_shots;
 #[cfg(windows)]
 pub mod plugin_keys_shots;
 pub mod plugin_recovery_shots;
@@ -425,6 +426,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("feel2", feel2_shots::SHOTS),
     ("fill-ink", fill_ink_shots::SHOTS),
     ("folder-band", folder_band_shots::SHOTS),
+    ("folder-row", folder_row_shots::SHOTS),
     ("heavy-plugin", heavy_plugin_shots::SHOTS),
     ("history-time", history_time_shots::SHOTS),
     ("home-draft-delete", home_draft_delete_shots::SHOTS),

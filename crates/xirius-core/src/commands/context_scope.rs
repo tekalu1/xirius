@@ -23,6 +23,9 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 for id in ids {
                     p.folder(id)?;
                     for t in p.tracks_in(id) {
+                        if p.row_bus(id) == Some(t) {
+                            continue;
+                        }
                         let id = AnyId::Track(t);
                         if !tracks.contains(&id) {
                             tracks.push(id);

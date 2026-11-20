@@ -553,6 +553,9 @@ impl Reader<'_> {
                 self.channel_values(tid, c);
                 tid
             });
+            if let Some(b) = bus {
+                kids_out.insert(0, Node::Track(b));
+            }
             self.p.folders.insert(
                 fid,
                 Folder {
@@ -564,14 +567,11 @@ impl Reader<'_> {
                     },
                     color,
                     bus,
-                    made_bus: None,
+                    made_bus: bus,
                     children: kids_out,
                 },
             );
             out.push(Node::Folder(fid));
-            if let Some(b) = bus {
-                out.push(Node::Track(b));
-            }
             return;
         }
         let kind = if standalone || matches!(role, "effect" | "submix") {

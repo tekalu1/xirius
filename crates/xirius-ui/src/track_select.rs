@@ -14,6 +14,12 @@ use crate::tools::Mods;
 use crate::tree::RowKind;
 
 impl Studio {
+    pub(crate) fn channel_row(&self, kind: RowKind) -> RowKind {
+        match kind {
+            RowKind::Track(t) => self.project().bus_folder(t).map_or(kind, RowKind::Folder),
+            _ => kind,
+        }
+    }
     /// The rows of the column, top to bottom (the ones inside a closed folder are not there).
     fn row_order(&self) -> Vec<RowKind> {
         self.tree().rows.iter().map(|r| r.kind).collect()
@@ -37,6 +43,7 @@ impl Studio {
 
     /// The row is lit as selected: in the set, or the focus.
     pub fn is_picked(&self, kind: RowKind) -> bool {
+        let kind = self.channel_row(kind);
         self.selected_row == Some(kind) || self.arrange.tracks.contains(&kind)
     }
 
@@ -84,6 +91,7 @@ impl Studio {
     /// Ctrl adds it or takes it away, Shift chooses the range from the anchor, Ctrl+Shift adds the
     /// range to the selection.
     pub fn pick_row(&mut self, kind: RowKind, mods: Mods) {
+        let kind = self.channel_row(kind);
         let picked = self.picked_rows();
         if mods.shift {
             let anchor = self
@@ -220,7 +228,7 @@ impl Studio {
             .iter()
             .filter(|r| match r.kind {
                 RowKind::Track(_) => true,
-                RowKind::Folder(f) => self.is_collapsed(f),
+                RowKind::Folder(f) => self.is_collapsed(f) || r.bus.is_some(),
             })
             .map(|r| r.kind)
             .collect();

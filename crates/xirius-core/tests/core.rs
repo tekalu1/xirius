@@ -171,8 +171,8 @@ fn a_new_bus_for_a_folder_is_one_step() {
     let p = s.project();
     assert_eq!(p.track(bus).unwrap().name, "Drum bus");
     assert_eq!(p.folders[&f.parse().unwrap()].bus, Some(bus));
-    // The bus is made outside the folder (at the top), so the folder can play to it.
-    assert!(p.root.contains(&xirius_core::id::Node::Track(bus)));
+    // The bus is held inside the folder and represented by its row.
+    assert_eq!(p.row_bus(f.parse().unwrap()), Some(bus));
     let _ = kick;
     // Without a name, one is made up.
     let g = id_of(&run(&mut s, "folder.add", json!({})));
@@ -184,15 +184,12 @@ fn a_new_bus_for_a_folder_is_one_step() {
     s.undo(1).unwrap();
     assert_eq!(hash(&s), before);
     assert!(s.project().track(bus).is_err());
-    // Made inside the folder itself, the bus would be a loop: nothing is made.
-    assert_eq!(
-        code(try_run(
-            &mut s,
-            "folder.bus.add",
-            json!({"id": f, "into": f})
-        )),
-        ErrorCode::Conflict
-    );
+    // Explicitly putting the bus in its own folder uses that folder's row too.
+    let made = run(&mut s, "folder.bus.add", json!({"id": f, "into": f}));
+    let channel = made.data["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(s.project().row_bus(f.parse().unwrap()), Some(channel));
+    s.project().validate_deep().unwrap();
+    s.undo(1).unwrap();
     assert_eq!(hash(&s), before);
     // A folder that does not exist makes nothing either.
     assert!(try_run(&mut s, "folder.bus.add", json!({"id": "fld_999"})).is_err());

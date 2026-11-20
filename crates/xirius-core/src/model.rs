@@ -1422,6 +1422,62 @@ impl Project {
         (folder.bus == Some(b) && self.tracks.contains_key(&b)).then_some(b)
     }
 
+    /// A folder whose own bus is held inside it uses one combined row (UI-356).
+    /// The channel keeps its ID, effects, automation and routing.
+    pub fn row_bus(&self, f: FolderId) -> Option<TrackId> {
+        self.own_bus(f).filter(|b| {
+            self.tracks[b].kind == TrackKind::Bus
+                && self.folders[&f].children.contains(&Node::Track(*b))
+        })
+    }
+
+    pub fn bus_folder(&self, t: TrackId) -> Option<FolderId> {
+        self.folders
+            .keys()
+            .copied()
+            .find(|f| self.row_bus(*f) == Some(t))
+    }
+
+    /// Upgrade only unambiguous, automatically made buses. Opening does not write a file.
+    pub fn migrate_folder_rows(&mut self) {
+        let mut ids: Vec<_> = self.folders.keys().copied().collect();
+        ids.sort();
+        for f in ids {
+            let Some(b) = self.own_bus(f) else { continue };
+            if self.row_bus(f).is_some()
+                || self.tracks[&b].kind != TrackKind::Bus
+                || self.tracks[&b].name != self.folders[&f].name
+                || self
+                    .folders
+                    .values()
+                    .any(|other| other.id != f && other.bus == Some(b))
+                || self.find_node(Node::Track(b)).is_none()
+            {
+                continue;
+            }
+            let before = self.clone();
+            let outputs: Vec<_> = self
+                .tracks
+                .keys()
+                .map(|t| (*t, self.effective_output(*t)))
+                .collect();
+            self.detach(Node::Track(b));
+            self.folders
+                .get_mut(&f)
+                .unwrap()
+                .children
+                .insert(0, Node::Track(b));
+            for (t, output) in outputs {
+                if self.effective_output(t) != output {
+                    Arc::make_mut(self.tracks.get_mut(&t).unwrap()).output = output;
+                }
+            }
+            if self.check_routing().is_err() {
+                *self = before;
+            }
+        }
+    }
+
     /// The folder's own bus while it sits right under the folder: it moves with it.
     pub fn attached_bus(&self, f: FolderId) -> Option<TrackId> {
         let b = self.own_bus(f)?;
@@ -1475,7 +1531,10 @@ impl Project {
             return Some(o);
         }
         for f in self.ancestors(Node::Track(id)) {
-            if let Some(b) = self.folders[&f].bus {
+            if let Some(b) = self.folders[&f]
+                .bus
+                .filter(|b| *b != id || self.row_bus(f) != Some(id))
+            {
                 return Some(Output::Bus(b));
             }
         }
@@ -1502,7 +1561,10 @@ impl Project {
             }
             let mut cur = Node::Track(id);
             while let Some((Parent::Folder(f), _)) = pm.get(&cur) {
-                if let Some(b) = self.folders[f].bus {
+                if let Some(b) = self.folders[f]
+                    .bus
+                    .filter(|b| *b != id || self.row_bus(*f) != Some(id))
+                {
                     return Some(b);
                 }
                 cur = Node::Folder(*f);

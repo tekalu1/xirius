@@ -260,3 +260,57 @@ fn the_same_export_again_keeps_the_folder() {
     run(&mut s, "export.update", json!({ "job": job }));
     assert_eq!(file_names(&out), vec!["Demo_Strings.wav"]);
 }
+
+#[test]
+fn nested_row_buses_render_once_and_make_one_stem_each() {
+    let dir = Dir::new();
+    let mut s = song(dir.path());
+    let child = voice(&mut s, "Child", 60);
+    let outer = run(&mut s, "folder.add", json!({"name":"Outer"})).data;
+    let inner = run(&mut s, "folder.add", json!({"name":"Inner"})).data;
+    run(
+        &mut s,
+        "track.move",
+        json!({"ids":[inner["id"]], "into":outer["id"]}),
+    );
+    run(
+        &mut s,
+        "track.move",
+        json!({"ids":[child], "into":inner["id"]}),
+    );
+    let nested = dir.path().join("nested.wav");
+    let options = Options {
+        bit_depth: Some(32),
+        ..Options::default()
+    };
+    export::mixdown(s.project(), &nested, &options).unwrap();
+    let out = dir.path().join("stems");
+    run(
+        &mut s,
+        "export.stems",
+        json!({"folders":[outer["id"],inner["id"]], "dir":out, "bit_depth":32}),
+    );
+    assert_eq!(file_names(&out), ["Demo_Inner.wav", "Demo_Outer.wav"]);
+    run(
+        &mut s,
+        "track.output.set",
+        json!({"ids":[child], "to":"master"}),
+    );
+    let direct = dir.path().join("direct.wav");
+    export::mixdown(s.project(), &direct, &options).unwrap();
+    let reference = floats(&direct);
+    assert!(reference.iter().any(|x| x.abs() > 0.01));
+    for file in [
+        nested,
+        out.join("Demo_Inner.wav"),
+        out.join("Demo_Outer.wav"),
+    ] {
+        let samples = floats(&file);
+        assert_eq!(samples.len(), reference.len());
+        let worst = samples
+            .iter()
+            .zip(&reference)
+            .fold(0f32, |m, (a, b)| m.max((a - b).abs()));
+        assert!(worst < 1e-5, "channel counted once: {worst}");
+    }
+}

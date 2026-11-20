@@ -416,7 +416,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     let p = s.project();
     let mut out = Vec::new();
     for row in &s.tree().rows {
-        let RowKind::Track(t) = row.kind else {
+        let Some(t) = row.channel() else {
             continue;
         };
         let Some(track) = p.tracks.get(&t) else {

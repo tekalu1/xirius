@@ -112,7 +112,7 @@ fn dashed(pen: &mut Pen, pts: &[(f32, f32)], color: Hsla) {
 
 /// The automation button in a track's head, and the heads of its lanes.
 pub fn head(pen: &mut Pen, studio: &Studio, project: &Project, g: &Geometry, row: &Row, top: f32) {
-    let RowKind::Track(t) = row.kind else {
+    let Some(t) = row.channel() else {
         return;
     };
     let Some(track) = project.tracks.get(&t) else {

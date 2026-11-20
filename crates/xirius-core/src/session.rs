@@ -670,8 +670,10 @@ impl Session {
                 if ok
                     && idx.first == 0
                     && !idx.steps.is_empty()
-                    && store.state_format(0) == Some(HISTORY_FORMAT_VERSION)
-                    && store.state_format(1) == Some(FORMAT_VERSION)
+                    && matches!(
+                        (store.state_format(0), store.state_format(1)),
+                        (Some(2), Some(1)) | (Some(HISTORY_FORMAT_VERSION), Some(FORMAT_VERSION))
+                    )
                 {
                     if idx.cursor == 0 {
                         ok = false;

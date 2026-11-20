@@ -513,6 +513,49 @@ impl RowParts {
         let x = row.content_x();
         let right = column_w.max(row.head_w) - Space::X2.px();
         match row.kind {
+            RowKind::Folder(_) if row.bus.is_some() => {
+                let chevron = Rect::new(x, 10.0, Layout::ICON_SIZE, Layout::ICON_SIZE);
+                let icon = Rect::new(
+                    chevron.right() + Space::X1.px(),
+                    Self::LINE_1_Y,
+                    Layout::ROW_ICON,
+                    Layout::ROW_ICON,
+                );
+                let left = icon.x;
+                let t = Layout::TOGGLE;
+                let mute = Rect::new(left, Self::LINE_2_Y, t, t);
+                let solo = Rect::new(mute.right() + Layout::TOGGLE_GAP, Self::LINE_2_Y, t, t);
+                let meter = Rect::new(right - Self::METER_W, Self::LINE_1_Y, Self::METER_W, 50.0);
+                let start = solo.right() + Space::X2.px();
+                let end = meter.x - 44.0;
+                RowParts {
+                    chevron: Some(chevron),
+                    icon,
+                    name_x: icon.right() + Space::X2.px(),
+                    name_right: meter.x - 68.0,
+                    mute: Some(mute),
+                    solo: Some(solo),
+                    arm: None,
+                    ear: None,
+                    keys: None,
+                    widen: None,
+                    output: Some(Rect::new(
+                        left + Layout::ICON_SIZE + Space::X1.px(),
+                        Self::LINE_3_Y,
+                        right - left - Layout::ICON_SIZE - Space::X1.px(),
+                        24.0,
+                    )),
+                    auto: Some(Rect::new(
+                        meter.x - 44.0,
+                        10.0,
+                        Layout::ICON_SIZE,
+                        Layout::ICON_SIZE,
+                    )),
+                    meter: Some(meter),
+                    freeze: None,
+                    fader: Some(Rect::new(start, Self::LINE_2_Y, (end - start).max(20.0), t)),
+                }
+            }
             RowKind::Folder(_) => {
                 let icon_y = (row.h - Layout::ROW_ICON) / 2.0;
                 let chevron = Rect::new(
@@ -1322,7 +1365,7 @@ impl Studio {
             Hit::Row(kind) => {
                 let row = self.tree.row_of(kind)?;
                 let name = g.parts(row).name_x;
-                let y = if matches!(kind, RowKind::Track(_)) {
+                let y = if row.channel().is_some() {
                     18.0
                 } else {
                     row.h / 2.0
@@ -1473,6 +1516,12 @@ impl Studio {
             let (lx, ly) = (x - g.column.x, y - top);
             let on = |r: Option<Rect>| r.is_some_and(|r| r.contains(lx, ly));
             match row.kind {
+                _ if row.bus.is_some() && on(parts.mute) => return Hit::Mute(row.bus.unwrap()),
+                _ if row.bus.is_some() && on(parts.solo) => return Hit::Solo(row.bus.unwrap()),
+                _ if row.bus.is_some() && on(parts.fader) => {
+                    return Hit::HeadFader(row.bus.unwrap());
+                }
+                _ if row.bus.is_some() && on(parts.output) => return Hit::Output(row.bus.unwrap()),
                 RowKind::Folder(f) if on(parts.chevron) => return Hit::Chevron(f),
                 RowKind::Folder(f) if self.folder_bus_rect(row, g.column.w, f).contains(lx, ly) => {
                     return Hit::FolderBus(f);
@@ -3812,9 +3861,8 @@ mod tests {
             choose(&mut s, Action::AddTrack(kind));
             assert!(s.popup.is_none());
             assert_eq!(s.song.steps(), n, "{kind}");
-            // the folder's row and the row of its bus
-            let row_count = if kind == "folder" { 2 } else { 1 };
-            assert_eq!(s.tree.rows.len(), rows + row_count, "{kind}");
+            // A folder and its channel share one row.
+            assert_eq!(s.tree.rows.len(), rows + 1, "{kind}");
             // a folder comes with a bus of its name
             let added = 1;
             assert_eq!(s.project().tracks.len(), tracks + added, "{kind}");

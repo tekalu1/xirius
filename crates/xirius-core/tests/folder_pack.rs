@@ -29,7 +29,7 @@ fn unpack_restores_nonconsecutive_tracks_across_a_serialization() {
         .unwrap()
         .parse()
         .unwrap();
-    assert_eq!(s.project().folders[&f].children.len(), 2);
+    assert_eq!(s.project().folders[&f].children.len(), 3);
     let p = serde_json::from_slice(&serde_json::to_vec(s.project()).unwrap()).unwrap();
     let mut reopened = Session::from_project(p);
     run(&mut reopened, "folder.unpack", json!({"id":f.to_string()}));

@@ -122,7 +122,15 @@ fn paint_strip(
     if hover == Some(MixerHit::Color(t)) {
         pen.round(icon_r, c.hover, Radius::S);
     }
-    pen.icon(track_icon(track), icon_r, icon_ink);
+    pen.icon(
+        if studio.project().bus_folder(t).is_some() {
+            "folder"
+        } else {
+            track_icon(track)
+        },
+        icon_r,
+        icon_ink,
+    );
     // A frozen track's name is followed by the snowflake (EXP-004).
     let flake = if track.frozen.is_some() {
         12.0 + 4.0
