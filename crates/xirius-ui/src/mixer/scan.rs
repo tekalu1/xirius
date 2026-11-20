@@ -236,10 +236,32 @@ mod menu_io_tests {
     #[test]
     fn running_scan_does_not_request_frames_between_status_samples() {
         let root = tempfile::tempdir().unwrap();
+        let release = crate::browser_io_tests::Release::new();
+        let gate = release.0.clone();
+        let cache = root.path().join("catalog.json");
+        let (tx, entered) = mpsc::channel();
+        let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+            if op == "plugin_scan" && path == cache {
+                let _ = tx.send(());
+                drop(
+                    gate.1
+                        .wait_while(gate.0.lock().unwrap(), |done| !*done)
+                        .unwrap(),
+                );
+            }
+            Ok(())
+        }));
         let (mut studio, _) = scanning(root.path());
+        entered.recv_timeout(Duration::from_secs(20)).unwrap();
         studio.mixer.scan.polled = Some(Instant::now());
         assert!(!studio.poll_plugin_scan());
         assert!(!studio.poll_plugin_scan());
+        // The worker is still held while polling is checked. Let it finish writing its
+        // catalog before the folder goes, or it can recreate the folder after cleanup.
+        release.release();
+        scan_done(&mut studio);
+        drop(studio);
+        root.close().unwrap();
     }
 
     #[test]
