@@ -305,6 +305,7 @@ impl Builder {
     }
 
     pub fn set_dir(&mut self, dir: Option<PathBuf>) {
+        self.ara.relocate(self.dir.as_deref(), dir.as_deref());
         self.plugins.set_sample_home(dir.clone(), self.rate);
         self.dir = dir;
     }

@@ -22,6 +22,16 @@ use crate::model::Project;
 /// The version of the archive wrapper this build writes and reads up to.
 pub const ARCHIVE_VERSION: u32 = 2;
 
+/// The persistent ID used by archives that identify a source by its original file name.
+pub fn source_id(file: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in file.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("xirius.source.{h:016x}")
+}
+
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
 pub struct Ara {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -46,6 +56,9 @@ pub struct AraClip {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clone_of: Option<ClipId>,
+    /// Set when saving gathers this file under another name. Older rows use the clip's file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
 }
 
 /// A plugin's archive (the shape of `xirius_ara::archive::Archive`).
@@ -146,6 +159,7 @@ mod tests {
                 plugin: "vst3:m".into(),
                 name: "M".into(),
                 clone_of: None,
+                source_id: None,
             },
         );
         p.ara.archives.insert(

@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 
 use xirius_ara::fake;
 use xirius_ara::remote_client::RemoteService;
-use xirius_ara::service::source_id;
 use xirius_ara::shared_audio::SharedAudio;
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
@@ -38,7 +37,7 @@ fn make_song(audio: Arc<SourceAudio>) -> Song {
             regions: Vec::new(),
             key: 42,
             clone_of: None,
-            source: source_id("source.wav"),
+            source: "source.wav".into(),
             name: "source".into(),
             audio,
             start: 0.0,
@@ -191,7 +190,7 @@ fn analysis_edit_archive_and_render_cross_the_host_boundary() {
     );
     assert!(!remote.notes(42, false, WAIT).is_empty());
     assert!(remote.probe(WAIT).unwrap().reads_off_thread > 0);
-    let source = source_id("source.wav");
+    let source = "source.wav".to_string();
     let first_name = remote.source_mapping_name_for_test(&source).unwrap();
     assert!(SharedAudio::open(&first_name).is_ok());
 

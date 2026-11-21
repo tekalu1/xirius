@@ -197,11 +197,42 @@ impl Session {
                 .push(rel.rsplit('/').next().unwrap_or(&rel).to_string());
         }
         if !pairs.is_empty() {
+            // These references are to the same audio. Keep the persistent IDs used by the
+            // live documents and their archives, even when the clip goes from absolute to relative.
+            let sources: Vec<_> = self
+                .current
+                .ara
+                .clips
+                .iter()
+                .filter_map(|(&id, row)| {
+                    let (_, clip) = self.current.clip(id).ok()?;
+                    let crate::model::ClipBody::Audio { file, .. } = &clip.body else {
+                        return None;
+                    };
+                    pairs.iter().any(|p| p["from"] == file.as_str()).then(|| {
+                        (
+                            id,
+                            row.source_id
+                                .clone()
+                                .unwrap_or_else(|| crate::ara::source_id(file)),
+                        )
+                    })
+                })
+                .collect();
             let r = self.run_value(
                 "clip.relink",
                 json!({ "files": pairs }),
                 &RunOptions::default(),
             )?;
+            if !sources.is_empty() {
+                self.amend(|p| {
+                    for (id, source) in sources {
+                        if let Some(row) = p.ara.clips.get_mut(&id) {
+                            row.source_id = Some(source);
+                        }
+                    }
+                })?;
+            }
             got.relinked = r.data["relinked"].as_u64().unwrap_or(0) as usize;
         }
         Ok(got)

@@ -121,7 +121,7 @@ pub struct ClipSpec {
     pub key: u64,
     /// The clip this one was duplicated from: its modification is cloned with its edits.
     pub clone_of: Option<u64>,
-    /// The persistent id of the clip's audio source (one per file, see [`source_id`]).
+    /// The persistent id of the clip's audio source, assigned by the caller.
     pub source: String,
     pub name: String,
     /// The file's samples at its own rate.
@@ -145,16 +145,6 @@ impl PartialEq for ClipSpec {
             && self.offset == o.offset
             && self.duration == o.duration
     }
-}
-
-/// The persistent id of a file's audio source.
-pub fn source_id(file: &str) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in file.bytes() {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    format!("xirius.source.{h:016x}")
 }
 
 /// The persistent id of a clip's modification.
@@ -1305,16 +1295,12 @@ impl Ara {
     fn sync(&mut self, song: Song) {
         // Host-only placement, loop and grid changes do not invalidate source analysis.
         // Re-archive only when the source/modification set or source audio changes.
-        if self.clips.len() != song.clips.len()
+        let mut archive_changed = self.clips.len() != song.clips.len()
             || song.clips.iter().any(|spec| {
-                self.clips.get(&spec.key).is_none_or(|clip| {
-                    clip.spec.source != spec.source || !Arc::ptr_eq(&clip.spec.audio, &spec.audio)
-                })
-            })
-        {
-            self.cache_needed = true;
-            *lock(&self.shared.analysis_archive) = None;
-        }
+                self.clips
+                    .get(&spec.key)
+                    .is_none_or(|clip| clip.spec.source != spec.source)
+            });
         let musical = Musical {
             tempos: song.tempos.clone(),
             bars: song.bars.clone(),
@@ -1387,17 +1373,25 @@ impl Ara {
         // New and changed clips. A clone's original is made first.
         let mut order: Vec<&ClipSpec> = song.clips.iter().collect();
         order.sort_by_key(|c| c.clone_of.is_some());
+        let mut changed_audio = HashSet::new();
         for spec in order {
-            if let Err(e) = self.ensure_source(spec, &mut new_sources) {
-                self.fail_clip(spec.key, &e.0);
-                continue;
+            match self.ensure_source(spec, &mut new_sources) {
+                Ok(true) => {
+                    changed_audio.insert(spec.source.as_str());
+                    archive_changed = true;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    self.fail_clip(spec.key, &e.0);
+                    continue;
+                }
             }
             match self.clips.get_mut(&spec.key) {
                 Some(c) => {
-                    if c.spec == *spec {
+                    let same_audio = !changed_audio.contains(spec.source.as_str());
+                    if same_audio && c.spec == *spec {
                         continue;
                     }
-                    let same_audio = Arc::ptr_eq(&c.spec.audio, &spec.audio);
                     let moved_only = same_region_sound(&c.spec, spec)
                         && c.spec.offset == spec.offset
                         && c.spec.duration == spec.duration
@@ -1433,6 +1427,10 @@ impl Ara {
             }
         }
 
+        if archive_changed {
+            self.cache_needed = true;
+            *lock(&self.shared.analysis_archive) = None;
+        }
         let mut restored_archive = false;
         let mut restored_analysis = false;
         // The archive goes into the objects just made with the same persistent ids; kept while
@@ -1488,13 +1486,21 @@ impl Ara {
         self.publish();
     }
 
-    fn ensure_source(&mut self, spec: &ClipSpec, new: &mut Vec<String>) -> Result<(), Error> {
+    /// Returns whether an existing source received different audio.
+    fn ensure_source(&mut self, spec: &ClipSpec, new: &mut Vec<String>) -> Result<bool, Error> {
         if let Some(s) = self.sources.get_mut(&spec.source) {
             if !Arc::ptr_eq(&s.audio, &spec.audio) {
+                let content = fingerprint(&spec.audio);
+                if s.fingerprint == content {
+                    // A relocated copy has new sample storage and the same content.
+                    s.audio = spec.audio.clone();
+                    self.side.set_source(s.key, s.audio.clone());
+                    return Ok(false);
+                }
                 // The file changed on disk: the plugin reads it again.
                 self.doc.enable_samples_access(s.r, false);
                 s.audio = spec.audio.clone();
-                s.fingerprint = fingerprint(&spec.audio);
+                s.fingerprint = content;
                 s.props.frames = spec.audio.frames() as i64;
                 s.props.rate = spec.audio.rate;
                 s.props.channels = spec.audio.channel_count() as i32;
@@ -1507,8 +1513,9 @@ impl Ara {
                     self.doc.request_analysis(s.r, &self.kinds);
                     self.analysis_requests += 1;
                 }
+                return Ok(true);
             }
-            return Ok(());
+            return Ok(false);
         }
         let key = self.next_source;
         self.next_source += 1;
@@ -1534,7 +1541,7 @@ impl Ara {
             },
         );
         new.push(spec.source.clone());
-        Ok(())
+        Ok(false)
     }
 
     fn make_clip(&mut self, spec: &ClipSpec) -> Result<(), Error> {

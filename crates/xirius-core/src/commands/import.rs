@@ -253,6 +253,7 @@ fn relink(p: &mut Project, cx: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         .collect::<CmdResult<Vec<(String, String)>>>()?;
     let ids: Vec<TrackId> = p.tracks.keys().copied().collect();
     let mut changed = 0;
+    let mut relinked_clips = Vec::new();
     for id in ids {
         let t = &p.tracks[&id];
         let hits = t.clips.iter().any(|c| {
@@ -277,6 +278,9 @@ fn relink(p: &mut Project, cx: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             if let ClipBody::Audio { file, .. } = &mut clip.body
                 && let Some((_, to)) = pairs.iter().find(|(f, _)| f == file)
             {
+                if file != to {
+                    relinked_clips.push(clip.id);
+                }
                 *file = to.clone();
                 changed += 1;
             }
@@ -289,6 +293,11 @@ fn relink(p: &mut Project, cx: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
                     changed += 1;
                 }
             }
+        }
+    }
+    for id in relinked_clips {
+        if let Some(row) = p.ara.clips.get_mut(&id) {
+            row.source_id = None;
         }
     }
     if changed == 0 {
