@@ -113,6 +113,16 @@ fn the_windows_are_owned_by_the_main_window_and_go_with_it() {
 #[test]
 fn the_bar_is_the_caption_and_the_rest_is_the_client() {
     let (report, _tmp) = run();
+    let geometry = rows(&report, "geometry");
+    assert_eq!(geometry.len(), 3, "{geometry:?}");
+    for g in geometry {
+        let scale = g["scale"].as_f64().unwrap();
+        for axis in 0..2 {
+            let client = g["client_px"][axis].as_f64().unwrap();
+            let viewport = g["viewport_logical"][axis].as_f64().unwrap();
+            assert!((viewport * scale - client).abs() <= 1.0, "{g}");
+        }
+    }
     let hits = rows(&report, "hits");
     for window in ["built-in instrument", "channel editor", "macro controls"] {
         let mine: Vec<&Value> = hits.iter().filter(|h| h["window"] == window).collect();

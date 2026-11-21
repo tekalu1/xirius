@@ -64,6 +64,8 @@ struct Query {
 #[derive(Clone, Debug)]
 struct Win {
     scale: f32,
+    bounds_size: [f32; 2],
+    viewport: [f32; 2],
     queries: Vec<Query>,
     head: (f32, f32),
 }
@@ -191,6 +193,7 @@ fn surface(
 fn layout(h: WindowHandle<DeviceWindow>, cx: &mut App) -> Option<Win> {
     h.update(cx, |view, window, _| {
         let scale = window.scale_factor();
+        let bounds_size = window.bounds().size;
         let viewport = window.viewport_size();
         let (w, hh): (f32, f32) = (viewport.width.into(), viewport.height.into());
         view.with(window, |s, g| {
@@ -239,6 +242,8 @@ fn layout(h: WindowHandle<DeviceWindow>, cx: &mut App) -> Option<Win> {
             ));
             Some(Win {
                 scale,
+                bounds_size: [bounds_size.width.into(), bounds_size.height.into()],
+                viewport: [w, hh],
                 queries,
                 head: (bar.space.x + bar.space.w / 2.0, mid),
             })
@@ -723,6 +728,7 @@ fn run(link: &Link) -> Value {
     let mut pictures = vec![shot(&titles[0], "sampler-device", &dir)];
 
     // c) the hit tests and the double click
+    let mut geometry = Vec::new();
     let mut hits = Vec::new();
     let mut press = Vec::new();
     let mut double = Vec::new();
@@ -731,6 +737,10 @@ fn run(link: &Link) -> Value {
             hits.push(json!({"window": NAMES[k], "label": "layout", "ok": false}));
             continue;
         };
+        geometry.push(json!({
+            "window": NAMES[k], "frame": rect(hs[k]), "client_px": client(hs[k]),
+            "bounds_logical": w.bounds_size, "viewport_logical": w.viewport, "scale": w.scale,
+        }));
         for q in &w.queries {
             link.mouse(k, q.x, q.y);
             // SAFETY: a plain query message to a window of this process, answered by the UI
@@ -905,7 +915,7 @@ fn run(link: &Link) -> Value {
     pictures.push(shot(MACROS_TITLE, "macro-controls", &dir));
     json!({
         "scale": scale, "owner": owners, "z_before": z_before, "z_after_raise": z_after_raise,
-        "opening": opening, "sizes": sizes, "hits": hits, "press": press,
+        "opening": opening, "sizes": sizes, "geometry": geometry, "hits": hits, "press": press,
         "double_click": double, "minimise": minimise, "reopen": reopened,
         "least_width": least, "multi_sizes": multi_sizes, "multi": multi,
         "pictures": pictures,
