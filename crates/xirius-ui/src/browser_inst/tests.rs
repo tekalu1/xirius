@@ -242,6 +242,7 @@ fn a_drop_between_folder_children_uses_the_reorder_boundary() {
             .run("track.add.audio", json!({"name":name,"into":folder}))
             .unwrap();
     }
+    s.fold_all(&g, false);
     let child = track(&s, "Two");
     let row = *s.tree().row_of(RowKind::Track(child)).unwrap();
     let at = (g.column.x + 30.0, g.column.y + row.y - s.scroll.1 + 1.0);
