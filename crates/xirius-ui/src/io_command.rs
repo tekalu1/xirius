@@ -41,16 +41,24 @@ pub(crate) fn handles(name: &str) -> bool {
 }
 
 pub(crate) fn captures(name: &str) -> bool {
+    exports_audio(name)
+        || matches!(
+            name,
+            "plugin.preset.save"
+                | "track.preset.save"
+                | "track.preset.update"
+                | "preset.save"
+                | "browser.preset.save"
+                | "version.save"
+                | "project.save"
+                | "project.save-as"
+        )
+}
+
+pub(crate) fn exports_audio(name: &str) -> bool {
     matches!(
         name,
-        "plugin.preset.save"
-            | "track.preset.save"
-            | "track.preset.update"
-            | "preset.save"
-            | "browser.preset.save"
-            | "version.save"
-            | "project.save"
-            | "project.save-as"
+        "export.mixdown" | "export.stems" | "export.selection" | "export.update"
     )
 }
 

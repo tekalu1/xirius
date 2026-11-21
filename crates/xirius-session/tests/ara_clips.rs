@@ -1,9 +1,9 @@
 //! The song's audio clips played through an ARA plugin (EDT-023, PLG-032, PLG-036, PLG-037,
 //! PLG-047, ARC-025, ENG-025), with the stand-in plugin of `xirius_ara::fake` registered as
-//! `fake:ara`. One test: the stand-in's edits are global to the process.
+//! `fake:ara`. The stand-in's edits and archive gates are global to the process.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
@@ -22,6 +22,7 @@ use xirius_session::tempo::TempoMap;
 
 const RATE: u32 = 48_000;
 const PLUGIN: &str = "fake:ara";
+static FIXTURE: Mutex<()> = Mutex::new(());
 
 struct Dir(PathBuf);
 
@@ -125,6 +126,7 @@ fn peak(b: &mut Builder, p: &Project) -> f32 {
 
 #[test]
 fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
+    let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
     xirius_session::ara::register(
         PLUGIN,
         "Fake ARA",
@@ -311,7 +313,7 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
         assert!(take(&mut s, &player), "the edit before its notice was lost");
     }
     assert_eq!(s.project().ara.archives[PLUGIN], archive);
-    // Nothing changed since: asked again, nothing is written and the song stays as it is.
+    // Nothing changed since: the fresh archive is identical and the song stays as it is.
     player.ara().ask_archives(s.project());
     until("the answer", || !pending(&player, s.project()));
     assert!(!take(&mut s, &player));
@@ -494,4 +496,86 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
         reopened.project().ara.clips[&a.parse::<ClipId>().unwrap()].plugin,
         PLUGIN
     );
+}
+
+#[test]
+fn explicit_save_keeps_an_ara_edit_without_notices() {
+    let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
+    xirius_session::ara::register(
+        PLUGIN,
+        "Fake ARA",
+        Arc::new(|| fake::loader(Config::default())),
+    );
+    let dir = Dir::new();
+    write_wav(
+        &dir.0.join("a.wav"),
+        &vec![0.5; RATE as usize],
+        &vec![0.5; RATE as usize],
+        RATE,
+        32,
+    )
+    .unwrap();
+    let mut s = session(Project::new("song"));
+    let track = id_of(&run(&mut s, "track.add.audio", json!({})));
+    let id = id_of(&run(
+        &mut s,
+        "clip.add.audio",
+        json!({"track": track, "at": 0, "length": 1920, "file": "a.wav"}),
+    ));
+    run(
+        &mut s,
+        "clip.ara.attach",
+        json!({"ids": [id], "plugin": PLUGIN}),
+    );
+    let folder = dir.0.join("song");
+    let mut player = live(RATE, &dir.0);
+    let p = s.project();
+    player.sync_ara(p, &TempoMap::from_project(p), &mut Vec::new());
+    until("the initial analysis archive", || {
+        player
+            .ara()
+            .doc(PLUGIN)
+            .unwrap()
+            .service()
+            .analysis_archive()
+            .is_some()
+    });
+    assert!(!take(&mut s, &player));
+    assert!(s.project().ara.archives.is_empty());
+
+    let modification = modification_id(id.parse::<ClipId>().unwrap().0);
+    fake::edit_with_notices(&modification, 0.5, fake::EditNotices::None);
+    player.ara().ask_archives(s.project());
+    until("the explicit save's archive", || {
+        !pending(&player, s.project())
+    });
+    assert!(
+        take(&mut s, &player),
+        "the save did not collect the silent edit"
+    );
+
+    // A second save requested while an archive is being written must still capture
+    // an edit that the plugin applies after the first request.
+    let gate = fake::hold_store();
+    player.ara().ask_archives(s.project());
+    gate.wait_entered();
+    fake::edit_with_notices(&modification, 0.75, fake::EditNotices::None);
+    player.ara().ask_archives(s.project());
+    gate.release();
+    until("the queued save's archive", || {
+        !pending(&player, s.project())
+    });
+    assert!(
+        take(&mut s, &player),
+        "the queued save did not collect the silent edit"
+    );
+    s.save_as(&folder).unwrap();
+    drop(player);
+
+    let reopened = Session::open_with(&folder, shared_registry()).unwrap();
+    let p = reopened.project();
+    let mut player = live(RATE, &dir.0);
+    player.sync_ara(p, &TempoMap::from_project(p), &mut Vec::new());
+    until("the restored render", || through(&player, p, &id));
+    assert!((peak(&mut player, p) - 0.375).abs() < 1e-3);
 }

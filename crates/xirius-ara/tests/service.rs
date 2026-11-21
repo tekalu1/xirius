@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use xirius_ara::fake::{self, Config};
 use xirius_ara::host::Request;
 use xirius_ara::service::{BLOCK, Placement, modification_id, source_id};
+use xirius_ara::sys;
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -326,6 +327,61 @@ fn an_edit_on_the_first_render_after_restoring_is_archived() {
             .unwrap()
             .close(Instant::now() + WAIT)
     );
+    no_violations();
+}
+
+#[test]
+fn modification_content_edits_are_dirty_and_archived() {
+    let key = 3704;
+    let audio = tone(48000.0, 0.1, 0.5);
+    let song = song(vec![clip(key, "content-edit.wav", &audio, 0.0, 0.0, 0.1)]);
+    let service = start(Config::default(), None);
+    service.sync(&song);
+    until("the analysis archive", || {
+        service.analysis_archive().is_some()
+    });
+    assert!(
+        !service.take_dirty(),
+        "analysis alone marked the document changed"
+    );
+
+    let flags = sys::UPDATE_TIMING_SCOPE_REMAINS_UNCHANGED
+        | sys::UPDATE_TUNING_SCOPE_REMAINS_UNCHANGED
+        | sys::UPDATE_HARMONIC_SCOPE_REMAINS_UNCHANGED;
+    for (flags, gain) in [
+        (flags, 0.5),
+        (flags | sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED, 0.25),
+    ] {
+        fake::edit_with_notices(
+            &modification_id(key),
+            gain,
+            fake::EditNotices::ModificationAndRegion(flags),
+        );
+        until("the plugin to apply the edit", || {
+            let expected = peak(&audio.channels[0]) * gain;
+            service
+                .notes(key, true, WAIT)
+                .first()
+                .is_some_and(|note| (note.volume - expected).abs() < 1e-4)
+        });
+        assert!(
+            service.take_dirty(),
+            "a content-only edit must mark the document changed"
+        );
+        // Give the notification back to the conditional save after checking it was set.
+        service.mark_changed();
+        let (bytes, _) = service
+            .store_changed_later()
+            .unwrap()
+            .recv_timeout(WAIT)
+            .unwrap()
+            .expect("the content-only edit must have an archive");
+        let wrapped = bytes.strip_prefix(b"XiriusARA\0\x01").unwrap();
+        let header_len = u64::from_le_bytes(wrapped[..8].try_into().unwrap()) as usize;
+        let stored: serde_json::Value = serde_json::from_slice(&wrapped[8 + header_len..]).unwrap();
+        assert_eq!(stored["modifications"][modification_id(key)], gain);
+    }
+    assert!(service.close(Instant::now() + WAIT));
     no_violations();
 }
 
@@ -706,7 +762,13 @@ fn completed_analysis_is_cached_and_changed_audio_invalidates_it() {
     assert_eq!(p.analysis_starts, 1);
     assert!(service.close(Instant::now() + WAIT));
 
-    let service = start(Config::default(), Some(cached.clone()));
+    let service = start(
+        Config {
+            restore_content_only: true,
+            ..Config::default()
+        },
+        Some(cached.clone()),
+    );
     service.sync(&song(vec![spec.clone()]));
     assert_eq!(ready(&service, 9003).left, before.left);
     let p = service.probe(WAIT).unwrap();

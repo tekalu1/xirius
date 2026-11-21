@@ -620,11 +620,24 @@ impl Studio {
         } else {
             mcp.is_none() && leaving.is_none()
         };
+        let fresh_ara = explicit_retry
+            || matches!(leaving, Some(Leave::Dawproject(_) | Leave::Version(_)))
+            || retry_command.as_ref().is_some_and(|(name, raw, _, _)| {
+                self.song
+                    .session()
+                    .execution_targets(name, raw)
+                    .iter()
+                    .any(|(name, _)| crate::io_command::exports_audio(name))
+            });
         let pull = capture
             .then(|| {
-                self.transport
-                    .host_mut()
-                    .map(|host| host.begin_pull_states())
+                self.transport.host_mut().map(|host| {
+                    if fresh_ara {
+                        host.begin_fresh_pull_states()
+                    } else {
+                        host.begin_pull_states()
+                    }
+                })
             })
             .flatten();
         let work = if let Some(pull) = pull {

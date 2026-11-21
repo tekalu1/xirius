@@ -329,7 +329,12 @@ impl SessionHost {
     }
 
     pub fn begin_pull_states(&mut self) -> crate::plugins::StatePull {
-        // The ARA plugins' archives too, so they are written by the time the song is.
+        self.builder.ara().ask_changed_archives(&self.song);
+        self.builder.plugins_mut().begin_pull_states()
+    }
+
+    /// For an explicit save or export, also request an archive from every ARA document.
+    pub fn begin_fresh_pull_states(&mut self) -> crate::plugins::StatePull {
         self.builder.ara().ask_archives(&self.song);
         self.builder.plugins_mut().begin_pull_states()
     }
