@@ -125,14 +125,19 @@ fn press(s: &mut Studio, g: &Geometry, hit: MixerHit) -> bool {
 }
 
 /// The host's window of `id` is on the instance that plays, off every screen, and draws something.
-fn check_window(s: &mut Studio, id: PluginId, what: &str) {
+fn check_window(s: &mut Studio, id: PluginId, what: &str, previous: Option<isize>) -> isize {
     assert_eq!(s.error, None, "{what}");
     assert!(s.mixer.is_open(id), "{what}: the window opened");
     assert_eq!(s.mixer.editor_heard(id), Some(true), "{what}: heard");
     let until = Instant::now() + Duration::from_secs(10);
     let hwnd = loop {
         s.tick();
-        if let Some(hwnd) = s.mixer.editor_hwnd(id) {
+        // Closing and reopening are queued in the host. The old frame can still
+        // match by title while the new request is waiting to be handled.
+        if s.host_said_editor_open(id)
+            && let Some(hwnd) = s.mixer.editor_hwnd(id)
+            && Some(hwnd) != previous
+        {
             break hwnd;
         }
         assert!(
@@ -178,6 +183,7 @@ fn check_window(s: &mut Studio, id: PluginId, what: &str) {
         c.distinct_colors > 1,
         "{what}: the host window drew ({c:?})"
     );
+    hwnd
 }
 
 #[test]
@@ -203,7 +209,7 @@ fn a_vst3_effects_window_opens_in_its_host_and_draws() {
     s.popup_action(&g, Action::Pick(pick));
     let id = s.project().tracks[&t].inserts[0].id;
     assert!(s.mixer.is_open(id), "inserting opens the editor");
-    check_window(&mut s, id, "kHs Gain");
+    check_window(&mut s, id, "effect editor", None);
 
     // Pressing the row again shuts it.
     assert!(press(&mut s, &g, MixerHit::Open(t, id)));
@@ -245,11 +251,10 @@ fn a_vst3_instruments_window_opens_from_the_keys_button_and_the_mixer() {
     let (x, y) = s.center_of(&g, Hit::Keys(t)).expect("on screen");
     assert_eq!(s.hit(&g, x, y), Hit::Keys(t));
     assert!(s.press(&g, Hit::Keys(t)));
-    check_window(&mut s, id, name);
-    let hwnd = s.mixer.editor_hwnd(id);
+    let hwnd = check_window(&mut s, id, name, None);
     // Pressed again, it stays open (it comes to the top), as a built-in's window does.
     assert!(s.press(&g, Hit::Keys(t)));
-    assert_eq!(s.mixer.editor_hwnd(id), hwnd);
+    assert_eq!(s.mixer.editor_hwnd(id), Some(hwnd));
 
     // The instrument's row in the mixer shuts it, and opens it again.
     s.drawer_open = true;
@@ -258,7 +263,8 @@ fn a_vst3_instruments_window_opens_from_the_keys_button_and_the_mixer() {
     assert!(press(&mut s, &g, MixerHit::Open(t, id)));
     assert!(!s.mixer.is_open(id));
     assert!(press(&mut s, &g, MixerHit::Open(t, id)));
-    check_window(&mut s, id, name);
+    check_window(&mut s, id, name, Some(hwnd));
+    assert!(crate::park::origin(hwnd).is_none(), "the old frame closed");
 }
 
 #[test]
