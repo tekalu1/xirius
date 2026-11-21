@@ -91,6 +91,10 @@ cleanup・グルーヴ・通知・外部監視・クラッシュ記録・更新�
 各呼び出しの根拠はその行の注釈に残す。通常画面全体を除外する許可は加えていない。
 
 `cargo run -p xirius-design-lint -- --audit-ui-io` は、許可済みのものも含む呼び出し位置を出す。
+ブラウザーからトラックの境目にエフェクトを落とすと、`fx_chain.rs` は既存の
+`arrange_run` を通じて `track.add.with-effect` を一度実行する。トラック作成と
+インサート追加は同じ Session コマンドで処理する。
+
 `--ui-io-inventory` の安定した集計は [ui-io-audit.tsv](ui-io-audit.tsv) に記録する。
 
 UI-368: ルーラーの押下処理を `press_flow.rs` に分けたため、そこでの `arrange_run`、`lock`、`seek` と `ruler_drag.rs` の `seek` を一覧に追加した。これらは既存の画面入力から実行する操作で、描画の経路には置かない。
