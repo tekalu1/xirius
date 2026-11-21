@@ -19,6 +19,139 @@ fn first_row(s: &Studio, g: &Geometry, t: TrackId) -> Rect {
         .unwrap()
         .inserts
 }
+
+fn drag_browser_effect(s: &mut Studio, g: &Geometry, name: &str, to: (f32, f32)) {
+    s.browser.tab = crate::browser::RailTab::Effects;
+    s.browser.search.value = name.into();
+    let layout = s.browser.layout(g.panel);
+    let row = layout
+        .rows
+        .iter()
+        .position(|r| matches!(&r.row, BRow::Item { item, .. } if item.name == name))
+        .expect("effect in the browser");
+    let (x, y) = s.browser.center_of(&layout, BrowserHit::Item(row)).unwrap();
+    assert!(s.chain_down(g, x, y));
+    assert!(s.fx_move(to.0, to.1));
+    assert!(s.fx_up(g, to.0, to.1, false));
+}
+
+#[test]
+fn browser_effect_seams_make_default_audio_tracks_with_one_undo() {
+    use xirius_core::id::{FolderId, Node};
+    use xirius_core::model::{Parent, TrackKind};
+
+    let external = xirius_plugins::Entry {
+        uid: "0123456789ABCDEF0123456789ABCDEF".into(),
+        name: "Fixture Effect".into(),
+        vendor: "Test".into(),
+        kind: PluginKind::Effect,
+        format: "vst3".into(),
+        category: "Fx".into(),
+        version: "1".into(),
+        path: "fixture.vst3".into(),
+        ara: false,
+        requires_process_main: false,
+    };
+    for (effect, uid, format) in [
+        ("EQ", "eq", "builtin"),
+        (external.name.as_str(), external.uid.as_str(), "vst3"),
+    ] {
+        for (in_folder, edge) in [(false, 0), (false, 1), (false, 3), (true, 1)] {
+            let mut s = Studio::new(crate::song::Song::empty());
+            s.use_plugins(xirius_plugins::Catalog {
+                entries: vec![external.clone()],
+                failures: Vec::new(),
+            });
+            let parent = if in_folder {
+                let out = s.song.run("folder.add", json!({"name":"Folder"})).unwrap();
+                Parent::Folder(out["id"].as_str().unwrap().parse::<FolderId>().unwrap())
+            } else {
+                Parent::Root
+            };
+            let into = match parent {
+                Parent::Root => "root".to_string(),
+                Parent::Folder(f) => f.to_string(),
+            };
+            for name in ["Audio", "Two", "Three"] {
+                assert!(s.run_command("track.add.audio", json!({"name":name,"into":into})));
+            }
+            let normal = s.song.run("track.add.audio", json!({"into":into})).unwrap();
+            let normal: TrackId = normal["id"].as_str().unwrap().parse().unwrap();
+            let default = s.project().tracks[&normal].clone();
+            s.song.run("history.undo", json!({})).unwrap();
+
+            let g = s.geometry(1600.0, 1000.0);
+            let before = s.project();
+            let children = before.children(parent);
+            let tree = s.tree();
+            let y = if let Some(Node::Track(t)) = children.get(edge) {
+                tree.row_of(RowKind::Track(*t)).unwrap().y
+            } else {
+                tree.height
+            };
+            let y = g.column.y + y - s.scroll.1;
+            drag_browser_effect(&mut s, &g, effect, (g.column.x + 25.0, y));
+            let project = s.project();
+            assert_eq!(
+                project.tracks.len(),
+                before.tracks.len() + 1,
+                "{effect}, {parent:?}, edge {edge}"
+            );
+            let Node::Track(new) = project.children(parent)[edge] else {
+                panic!("new track at the seam")
+            };
+            let mut expected = children.to_vec();
+            expected.insert(edge, Node::Track(new));
+            assert_eq!(project.children(parent), &expected);
+            if in_folder {
+                assert_eq!(project.root, before.root);
+            }
+            let track = &project.tracks[&new];
+            assert_eq!(track.kind, TrackKind::Audio);
+            assert_eq!(
+                (&track.name, &track.color, track.armed),
+                (&default.name, &default.color, default.armed)
+            );
+            let [insert] = track.inserts.as_slice() else {
+                panic!("one effect in the first insert")
+            };
+            assert_eq!(
+                (insert.kind, insert.uid.as_str(), insert.format.as_str()),
+                (PluginKind::Effect, uid, format)
+            );
+            if format == "builtin" {
+                assert!(s.instruments.is_open(insert.id));
+            }
+            assert!(s.run_command("history.undo", json!({})));
+            assert_eq!(s.project().children(parent), children);
+            assert_eq!(s.project().tracks.len(), before.tracks.len());
+        }
+    }
+}
+
+#[test]
+fn browser_effect_over_a_track_still_appends_to_that_track() {
+    let (mut s, _, a, _) = setup();
+    s.drawer_open = false;
+    let g = s.geometry(1600.0, 1000.0);
+    let before = s.project();
+    let row = s.tree().row_of(RowKind::Track(a)).unwrap();
+    let to = (
+        g.column.x + 30.0,
+        g.column.y + row.y + row.h / 2.0 - s.scroll.1,
+    );
+    drag_browser_effect(&mut s, &g, "EQ", to);
+    let after = s.project();
+    assert_eq!(after.root, before.root);
+    assert_eq!(after.tracks.len(), before.tracks.len());
+    assert_eq!(
+        after.tracks[&a].inserts.len(),
+        before.tracks[&a].inserts.len() + 1
+    );
+    let insert = after.tracks[&a].inserts.last().unwrap();
+    assert_eq!(insert.uid, "eq");
+    assert!(s.instruments.is_open(insert.id));
+}
 fn close(s: &mut Studio) {
     s.instruments.open.clear();
     s.popup = None;

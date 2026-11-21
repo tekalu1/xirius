@@ -133,6 +133,10 @@ pub const LABELS: &[(&str, &str)] = &[
     ("clip.open", "エディターを表示"),
     // track
     ("track.add.audio", "オーディオトラックを追加"),
+    (
+        "track.add.with-effect",
+        "エフェクト付きオーディオトラックを追加",
+    ),
     ("track.add.instrument", "インストゥルメントトラックを追加"),
     ("track.add.bus", "バスを追加"),
     ("track.delete", "トラックを削除"),

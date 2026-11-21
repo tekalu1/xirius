@@ -130,7 +130,12 @@ fn prepare(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut
             })
         })
     });
-    let g = browser_geometry(&mut s, window, drag_name);
+    let g = browser_geometry(
+        &mut s,
+        window,
+        drag_name,
+        crate::browser::RailTab::Instruments,
+    );
     let screen = |at| screen_point(main, window, at);
     let track_point = |track| {
         s.center_of(
@@ -174,7 +179,28 @@ fn prepare_cold(s: &mut Studio, window: &Window, dir: PathBuf) {
     crate::shot::run_for(s, 10.0, |s| !s.input_blocked());
     assert!(!s.input_blocked());
     let main = crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap();
-    let g = browser_geometry(s, window, &name);
+    if std::env::var_os("XIRIUS_PRESET_INPUT_EFFECT").is_some() {
+        let g = browser_geometry(s, window, &name, crate::browser::RailTab::Effects);
+        let from = browser_item(s, &g, &name);
+        let p = s.project();
+        let track = p.tracks.values().find(|t| t.name == "Vocal").unwrap().id;
+        let row = s.tree().row_of(crate::tree::RowKind::Track(track)).unwrap();
+        let to = (g.column.x + 50.0, g.column.y + row.y - s.scroll.1 - 2.0);
+        let root = &p.root;
+        let before_index = root
+            .iter()
+            .position(|node| *node == xirius_core::id::Node::Track(track));
+        input_ready(
+            dir,
+            &json!({
+                "main":main, "drag_from":screen_point(main, window, from),
+                "drag_to":screen_point(main, window, to), "root":root,
+                "before_index":before_index.unwrap(), "inserts":track_inserts(&p)
+            }),
+        );
+        return;
+    }
+    let g = browser_geometry(s, window, &name, crate::browser::RailTab::Instruments);
     let [from, to] = drag_points(s, &g, &name);
     input_ready(
         dir,
@@ -186,11 +212,16 @@ fn prepare_cold(s: &mut Studio, window: &Window, dir: PathBuf) {
     );
 }
 
-fn browser_geometry(s: &mut Studio, window: &Window, name: &str) -> Geometry {
+fn browser_geometry(
+    s: &mut Studio,
+    window: &Window,
+    name: &str,
+    tab: crate::browser::RailTab,
+) -> Geometry {
     s.drawer_open = false;
     s.arrange_visible = true;
     s.browser.open = true;
-    s.browser.tab = crate::browser::RailTab::Instruments;
+    s.browser.tab = tab;
     s.browser.search.value = name.into();
     s.scroll = (0.0, 0.0);
     let viewport = window.viewport_size();
@@ -215,18 +246,29 @@ fn screen_point(main: isize, window: &Window, (x, y): (f32, f32)) -> [i32; 2] {
     [point.x, point.y]
 }
 
-fn drag_points(s: &Studio, g: &Geometry, name: &str) -> [(f32, f32); 2] {
+fn browser_item(s: &Studio, g: &Geometry, name: &str) -> (f32, f32) {
     let browser = s.browser.layout(g.panel);
     let item = browser.rows.iter().position(|placed| {
         matches!(&placed.row, crate::browser::BRow::Item { item, .. } if item.name == name)
-    }).expect("fixture instrument in browser");
-    let from = s
-        .browser
+    }).expect("fixture plugin in browser");
+    s.browser
         .center_of(&browser, crate::browser::BrowserHit::Item(item))
-        .expect("fixture instrument must be visible");
+        .expect("fixture plugin must be visible")
+}
+
+fn drag_points(s: &Studio, g: &Geometry, name: &str) -> [(f32, f32); 2] {
+    let from = browser_item(s, g, name);
     let to = (g.lanes.right() - 55.0, g.lanes.bottom() - 30.0);
     assert_eq!(s.lib_drop_at(g, to.0, to.1), crate::browser_inst::Drop::New);
     [from, to]
+}
+
+fn track_inserts(p: &xirius_core::model::Project) -> serde_json::Value {
+    serde_json::Value::Object(p.tracks.values().map(|t| {
+        (t.id.to_string(), json!({
+            "kind":t.kind, "plugins":t.inserts.iter().map(|plugin| &plugin.uid).collect::<Vec<_>>()
+        }))
+    }).collect())
 }
 
 fn input_ready(dir: PathBuf, data: &serde_json::Value) {
@@ -262,7 +304,10 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>) -> bool {
             let temp = dir.join("input-state.tmp");
             std::fs::write(
                 &temp,
-                serde_json::to_vec(&json!({"root":p.root,"editor":editor})).unwrap(),
+                serde_json::to_vec(
+                    &json!({"root":p.root,"editor":editor,"inserts":track_inserts(&p)}),
+                )
+                .unwrap(),
             )
             .unwrap();
             std::fs::rename(temp, dir.join("input-state.json")).unwrap();
