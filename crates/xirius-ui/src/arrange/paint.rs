@@ -829,9 +829,7 @@ pub fn overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     balloon(pen, g, d.at, studio.drag_tip(&plan));
 }
 
-/// The transform frame round the range (AUT-010): a line along its top and down both sides, with
-/// the handle that scales on the top edge and the one that tilts on the corner, as the velocity
-/// lane's frame has them. It follows the values while a handle is dragged.
+/// The same insertion line and plus for reordered rows and devices dropped from the browser.
 pub(crate) fn paint_track_seam(
     pen: &mut Pen,
     studio: &Studio,
@@ -854,6 +852,9 @@ pub(crate) fn paint_track_seam(
     });
 }
 
+/// The transform frame round the range (AUT-010): a line along its top and down both sides, with
+/// the handle that scales on the top edge and the one that tilts on the corner, as the velocity
+/// lane's frame has them. It follows the values while a handle is dragged.
 fn range_frame(pen: &mut Pen, studio: &Studio, g: &Geometry, lanes_region: Rect) {
     let how = studio
         .arrange
