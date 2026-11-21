@@ -160,7 +160,12 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
             rows.push(row(if save { SAVE } else { "off:@save" }, "上書き保存"));
             rows.push(row(SAVE_AS, "名前を付けて保存…"));
             rows.push(row(OPEN, "ファイルから読み込む…"));
-            rows.push(row(SHOW, "ブラウザーに表示"));
+            let show = if x.builtin().is_some() {
+                SHOW
+            } else {
+                "off:@show"
+            };
+            rows.push(row(show, "ブラウザーに表示"));
             let now = presets
                 .origin(x)
                 .map(|n| format!("{LOAD}{n}"))

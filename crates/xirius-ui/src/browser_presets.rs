@@ -309,6 +309,11 @@ impl Studio {
                 .as_ref()
                 .is_some_and(|es| es.iter().any(|e| e.id == held.device))
         {
+            if self.mixer_hit(g, x, y).is_none()
+                && let Some(insertion) = self.browser_track_insertion(g, x, y)
+            {
+                return Drop::Insert(insertion);
+            }
             let Some(args) = self.track_preset_drop_args(g, x, y, held.device) else {
                 return Drop::Nothing;
             };
@@ -335,8 +340,12 @@ impl Studio {
             .is_some_and(|es| es.iter().any(|e| e.id == held.device))
         {
             if let Some(args) = self.track_preset_drop_args(g, x, y, held.device) {
+                let new_track = args["target"] == "new";
                 // design-lint: allow(ui-blocking-io) BRW-017: the guarded dispatcher sends preset I/O to the song owner via io_command::handles.
-                self.run_command("browser.preset.apply", args);
+                let result = self.arrange_run("browser.preset.apply", args);
+                if new_track && let Some(data) = result {
+                    self.browser_preset_track_added(&data);
+                }
             }
             return;
         }
@@ -347,7 +356,7 @@ impl Studio {
             Drop::New => {
                 self.preset_on_new_track(held.device, &held.name);
             }
-            Drop::Nothing => {}
+            Drop::Insert(_) | Drop::Nothing => {}
         }
     }
 
@@ -435,6 +444,11 @@ impl Studio {
         if !g.column.contains(x, y) && !g.lanes.contains(x, y) {
             return None;
         }
+        if let Some(insertion) = self.browser_track_insertion(g, x, y) {
+            insertion.set_args(&mut args);
+            args["target"] = json!("new");
+            return Some(args);
+        }
         if let Some(RowKind::Track(t)) = self
             .tree()
             .row_at(y - g.column.y + self.scroll.1)
@@ -449,8 +463,16 @@ impl Studio {
             args["track"] = json!(t.to_string());
         } else {
             args["target"] = json!("new");
+            args["into"] = json!("root");
         }
         Some(args)
+    }
+
+    pub(crate) fn browser_preset_track_added(&mut self, data: &serde_json::Value) {
+        if let Some(track) = data["id"].as_str().and_then(|id| id.parse().ok()) {
+            self.select_row(Some(RowKind::Track(track)));
+            self.open_new_instrument(track);
+        }
     }
 
     /// The device window's ブラウザーに表示: the browser opens on the device's tab with the

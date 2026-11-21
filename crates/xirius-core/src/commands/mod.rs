@@ -363,6 +363,21 @@ pub(crate) fn insert_at(
     Ok(())
 }
 
+pub(crate) fn new_track_position(p: &Project, a: &Args) -> CmdResult<(Parent, Option<i64>)> {
+    if a.opt_str("before").is_none() {
+        return Ok((parent_arg(p, a, "into")?, a.opt_i64("index")));
+    }
+    if a.opt_str("into").is_some() || a.opt_i64("index").is_some() {
+        return Err(CmdError::invalid(
+            "--before と --into・--index は併用できません",
+        ));
+    }
+    let (parent, index) = p
+        .find_node(Node::Track(a.id("before")?))
+        .ok_or_else(|| CmdError::not_found("挿入先のトラックが見つかりません"))?;
+    Ok((parent, Some(index as i64)))
+}
+
 /// Every node of the column, top to bottom, folders before their children.
 pub(crate) fn column_nodes(p: &Project) -> Vec<Node> {
     fn walk(p: &Project, kids: &[Node], out: &mut Vec<Node>) {

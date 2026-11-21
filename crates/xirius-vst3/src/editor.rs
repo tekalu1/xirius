@@ -1329,7 +1329,7 @@ impl Editor {
         // SAFETY: queries do not send messages to another GUI thread. Only our own frame moves.
         unsafe {
             use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GW_HWNDNEXT, GW_HWNDPREV, GWL_EXSTYLE, GetWindow, SetForegroundWindow,
+                GW_HWNDNEXT, GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GetWindow, SetForegroundWindow,
                 WS_EX_TOPMOST,
             };
             let mut above = Vec::new();
@@ -1348,11 +1348,23 @@ impl Editor {
                 .iter()
                 .position(|&h| h == self.hwnd as u64)
                 .unwrap_or(0);
+            let foreground = GetForegroundWindow();
+            let ceiling = (foreground_from == 0
+                && has_base
+                && GetWindow(foreground, GW_OWNER) == bar.stack_base as HWND)
+                .then(|| above.iter().position(|&h| h == foreground as u64))
+                .flatten();
             let after = bar.stack[..rank]
                 .iter()
                 .rev()
-                .find(|h| above.contains(h))
+                .find(|h| {
+                    above
+                        .iter()
+                        .take(ceiling.unwrap_or(above.len()))
+                        .any(|w| w == *h)
+                })
                 .copied()
+                .or_else(|| ceiling.map(|_| foreground as u64))
                 .or_else(|| {
                     // A background GUI's HWND_TOP can leave its frame below the active
                     // window. Insert after a concrete normal window above the base.

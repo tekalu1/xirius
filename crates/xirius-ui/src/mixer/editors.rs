@@ -133,7 +133,7 @@ impl Studio {
             self.close_editor(id);
         }
     }
-    /// The main window and its palettes use the same stack when activated.
+    /// Reconcile the desktop's owner group after a Studio window is activated.
     #[cfg(windows)]
     pub(crate) fn studio_window_activated(&mut self, window: u64) {
         self.queue_editor_raises(window);
@@ -253,12 +253,14 @@ impl Studio {
                     AllowSetForegroundWindow(process);
                 }
             }
-            // Clicking the main window also brings its owned palettes forward. Use the
-            // highest visible member of that group as the insertion boundary.
             let base = bar.stack_base as windows_sys::Win32::Foundation::HWND;
             let owner = GetWindow(base, GW_OWNER);
             let root = if owner.is_null() { base } else { owner };
-            if !root.is_null() {
+            if !owner.is_null() && base == foreground {
+                // The active palette is the ceiling for the external editors.
+                bar.stack_base = root as u64;
+            } else if !root.is_null() {
+                // Clicking the main window raises its owned group as well.
                 let mut above = GetWindow(bar.stack_base as _, GW_HWNDPREV);
                 for _ in 0..4096 {
                     if above.is_null() {
@@ -618,7 +620,7 @@ impl Studio {
                         self.mixer.editor_pins.insert(id);
                     }
                 }
-                EditorAction::Channel => self.open_channel(track),
+                EditorAction::Channel => self.open_channel_beside(track, id),
                 EditorAction::PresetOpen => {
                     self.file_request = Some(crate::studio::FileRequest::PresetOpen(id))
                 }

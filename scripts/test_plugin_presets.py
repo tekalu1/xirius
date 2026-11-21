@@ -31,7 +31,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True, help="temporary data parent")
     parser.add_argument("--out", type=Path, required=True, help="screenshots and result.json")
-    parser.add_argument("--case", choices=["A", "E", "F"], help="run one follow-up scenario")
+    parser.add_argument("--case", choices=["A", "E", "F", "G"], help="run one follow-up scenario")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("this test requires Windows")
@@ -236,6 +236,9 @@ def main():
                     "XIRIUS_CRASH_DIR":temp+"/crashes", "XIRIUS_PEAK_CACHE":temp+"/peaks",
                     "XIRIUS_VIEW_FILE":temp+"/view.json", "XIRIUS_DESKTOP_INPUT":"1"})
         env.pop("XIRIUS_EDITOR_OFFSCREEN", None)
+        env.pop("XIRIUS_PRESET_INPUT_BUILTIN", None)
+        if args.case == "G":
+            env["XIRIUS_PRESET_INPUT_BUILTIN"] = "1"
         # The fixture accepts both roles, but scans as an effect. Seed the isolated
         # cache before the app starts so the song owner's index lists it as an instrument.
         probe = Path(temp) / "fixture.json"
@@ -246,7 +249,7 @@ def main():
         Path(env["XIRIUS_PLUGIN_CACHE"]).write_text(json.dumps({"version": 2, "bundles": [
             {"path": str(fixture), "fingerprint": "", "entries": entries}]
         }), encoding="utf-8")
-        for name in ("input-ready.json", "input-done"):
+        for name in ("input-ready.json", "input-done", "input-state-request", "input-state.json"):
             (out/name).unlink(missing_ok=True)
         with (out/"app.log").open("w", encoding="utf-8") as log:
             app = subprocess.Popen([str(executable), "--silent", "--at", "10,10",
@@ -263,9 +266,44 @@ def main():
                      "new editor opened behind the pinned editor or main window",
                      detail=lambda: (order([main_hwnd, first, second]), info, u.GetForegroundWindow()))
                 screenshot("00-desktop")
+                if args.case == "G":
+                    request = out / "input-state-request"
+                    reply = out / "input-state.json"
+
+                    def state():
+                        reply.unlink(missing_ok=True)
+                        request.touch()
+                        wait(lambda: not request.exists(), "fixture did not report the track order")
+                        return json.loads(reply.read_text(encoding="utf-8"))
+
+                    click_main(main_hwnd)
+                    drag(main_hwnd, info["drag_from"], info["seam"])
+                    original = info["root"]
+                    index = info["before_index"]
+
+                    def new_order():
+                        current = state()
+                        return current if current["root"] != original else None
+
+                    inserted = wait(new_order, "instrument drop did not create a track")
+                    actual = inserted["root"]
+                    assert len(actual) == len(original) + 1, actual
+                    assert actual[:index] + actual[index + 1:] == original, actual
+                    title = inserted["editor"]
+                    assert title, "the inserted track was not selected"
+                    editor = wait(lambda: u.FindWindowExW(0, 0, None, title),
+                                  "inserted track's built-in editor did not open")
+                    wait(lambda: u.GetForegroundWindow() == editor
+                         and order([editor, first, second, main_hwnd])[0] == editor,
+                         "inserted track's editor did not come to the foreground")
+                    passed("17-instrument-insertion")
+                    click_main(main_hwnd)
+                    key(ord("Z"), 0x11)
+                    wait(lambda: state()["root"] == original, "undo did not restore the track order")
+                    passed("18-instrument-insertion-undo")
+                    return
                 if args.case == "A":
-                    # Leave one unpinned editor, open routing from its bar, then
-                    # drag it aside to expose the channel window.
+                    # Leave one unpinned editor and open the channel from its routing button.
                     button(second, 5)
                     wait(lambda: not u.IsWindowVisible(second), "second editor did not close")
                     button(first, 4)
@@ -273,10 +311,12 @@ def main():
                     channel = wait(lambda: u.FindWindowExW(0, 0, None, "Xirius · Channel Editor"),
                                    "channel editor did not open")
                     r = rect(first)
-                    x, y = r.left + 115, r.top + 14
-                    drag(first, (x, y), (x + 350, y))
-                    wait(lambda: rect(first).left >= r.left + 300, "external editor did not drag")
                     bounds = rect(channel)
+                    assert (bounds.right <= r.left or bounds.left >= r.right
+                            or bounds.bottom <= r.top or bounds.top >= r.bottom), (
+                                "channel did not open beside the external editor",
+                                (bounds.left, bounds.top, bounds.right, bounds.bottom),
+                                (r.left, r.top, r.right, r.bottom))
                     exposed = next(((x, y) for x in range(bounds.left + 12, bounds.right - 12, 8)
                                     for y in (bounds.top + 80, bounds.top + 120, bounds.top + 200)
                                     if hit_root(x, y) == channel), None)
@@ -290,8 +330,8 @@ def main():
                         assert hit_root(x, y) == channel, "channel click point is covered"
                         send([mouse(x, y, 0xC001), mouse(x, y, 0x0002)], pause=hold)
                         send([mouse(x, y, 0x0004)], pause=0)
-                        wait(lambda: u.GetForegroundWindow() == channel and order(windows)[0] == first,
-                             "unpinned editor fell behind the channel group", seconds=3,
+                        wait(lambda: u.GetForegroundWindow() == channel and order(windows) == [channel, first, main_hwnd],
+                             "channel click did not raise it above the external editor", seconds=3,
                              detail=lambda: ([windows[h] for h in order(windows)],
                                              windows.get(u.GetForegroundWindow())))
                         assert hit_root(x, y) == channel, "clicked channel window is covered"
@@ -340,12 +380,12 @@ def main():
                 click_window(main_hwnd, *info["builtin"])
                 key(0x7A, 0x10)  # Shift+F11 opens the selected track's instrument.
                 builtin = wait(lambda: u.FindWindowExW(0, 0, None, info["builtin_title"]), "built-in editor did not open")
-                wait(lambda: order([builtin, first, second])[-1] == builtin, "pinned editor behind built-in editor")
+                wait(lambda: u.GetForegroundWindow() == builtin and order([builtin, first, second])[0] == builtin,
+                     "built-in editor did not open in front of the pinned editors")
                 assert u.IsWindowVisible(first) and u.IsWindowVisible(second)
                 passed("07-builtin-pinned")
                 button(first, 6)
                 channel = wait(lambda: u.FindWindowExW(0, 0, None, "Xirius · Channel Editor"), "channel editor did not open")
-                wait(lambda: order([channel, first, second])[-1] == channel, "pinned editor behind channel editor")
                 assert u.IsWindowVisible(first) and u.IsWindowVisible(second)
                 passed("08-channel-pinned")
                 # Leave the studio windows open and place their bars clear of the host controls.
@@ -376,8 +416,8 @@ def main():
                             else:
                                 send([mouse(x, y, flag) for flag in (0xC001, 0x0002, 0x0004)], pause=0)
                             wait(lambda: u.GetForegroundWindow() == palette
-                                 and order(windows)[:2] == [second, first],
-                                 "palette click did not restore editor order", seconds=3,
+                                 and order([palette, second, first, main_hwnd]) == [palette, second, first, main_hwnd],
+                                 "palette click did not raise it while preserving external editor order", seconds=3,
                                  detail=lambda: ([windows[h] for h in order(windows)],
                                                  windows.get(u.GetForegroundWindow())))
                             assert hit_root(x, y) == palette, "clicked palette is covered"
@@ -386,17 +426,11 @@ def main():
                 if args.case in (None, "F"):
                     click_main(main_hwnd)
                     drag(main_hwnd, info["drag_from"], info["drag_to"])
-                    # A plain browser drop creates/selects an instrument track. Its editor
-                    # is opened separately with the instrument shortcut.
-                    deadline = time.monotonic() + 2
-                    while time.monotonic() < deadline:
-                        assert not new_frame([first, second]), "browser drop auto-opened an editor"
-                        time.sleep(0.04)
-                    key(0x7A, 0x10)
                     dropped = wait(lambda: new_frame([first, second]),
-                                   "new track's instrument did not open with Shift+F11")
+                                   "new track's instrument did not open on drop")
                     wait(lambda: order([main_hwnd, first, second, dropped])
-                         == [dropped, second, first, main_hwnd], "new track's editor is buried")
+                         == [dropped, second, first, main_hwnd]
+                         and u.GetForegroundWindow() == dropped, "new track's editor is buried")
                     passed("14-browser-drop")
                     button(dropped, 5)
                     wait(lambda: not u.IsWindowVisible(dropped), "new track's editor did not close")

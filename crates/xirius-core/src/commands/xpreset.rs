@@ -60,6 +60,11 @@ pub(super) fn defs() -> Vec<CommandDef> {
                     &["track", "instrument", "insert", "effect", "new"],
                     "適用先",
                 ),
+                ArgDef::text(
+                    "into",
+                    "新規トラックのフォルダー（root または省略時は最上位）",
+                ),
+                ArgDef::int("index", "新規トラックの位置（0 が先頭。省略時は末尾）"),
                 at(),
                 of(),
             ],

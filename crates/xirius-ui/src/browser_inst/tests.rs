@@ -188,5 +188,82 @@ fn an_empty_song_takes_a_dropped_instrument_as_its_first_track() {
     assert_eq!(s.selected_row, Some(RowKind::Track(new)));
     assert!(s.mixer.open_later.is_none());
     assert!(s.mixer.editors.is_empty());
-    assert!(s.instruments.open.is_empty());
+    assert!(
+        s.instruments
+            .is_open(current(&s.project().tracks[&new]).unwrap().id)
+    );
+}
+
+#[test]
+fn dropping_on_the_first_middle_and_last_seams_inserts_in_one_step() {
+    use xirius_core::id::Node;
+    for edge in [0, 1, 2, 3] {
+        let mut s = Studio::new(crate::song::Song::empty());
+        s.mixer.catalog = Some(Arc::new(Catalog::default()));
+        for name in ["One", "Two", "Three"] {
+            assert!(s.run_command("track.add.audio", json!({"name":name})));
+        }
+        let g = s.geometry(1600.0, 1000.0);
+        let before = s.project().root.clone();
+        let tree = s.tree();
+        let y = tree.rows.get(edge).map_or(tree.height, |row| row.y);
+        let point = (g.column.x + 20.0, g.column.y + y - s.scroll.1);
+        let steps = s.song().steps();
+        drag(&mut s, &g, "Sampler", point);
+        let Some(RowKind::Track(new)) = s.selected_row else {
+            panic!("select the new track")
+        };
+        let mut expected = before.clone();
+        expected.insert(edge, Node::Track(new));
+        assert_eq!(s.project().root, expected);
+        assert!(
+            s.instruments
+                .is_open(current(&s.project().tracks[&new]).unwrap().id)
+        );
+        assert_eq!(s.song().steps(), steps + 1);
+        s.song.run("history.undo", json!({})).unwrap();
+        assert_eq!(s.project().root, before);
+    }
+}
+
+#[test]
+fn a_drop_between_folder_children_uses_the_reorder_boundary() {
+    use xirius_core::id::Node;
+    let (mut s, g) = studio();
+    let folder: xirius_core::id::FolderId =
+        s.song.run("folder.add", json!({"name":"Group"})).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+    let parent = Parent::Folder(folder);
+    for name in ["One", "Two"] {
+        s.song
+            .run("track.add.audio", json!({"name":name,"into":folder}))
+            .unwrap();
+    }
+    let child = track(&s, "Two");
+    let row = *s.tree().row_of(RowKind::Track(child)).unwrap();
+    let at = (g.column.x + 30.0, g.column.y + row.y - s.scroll.1 + 1.0);
+    let Drop::Insert(insertion) = s.instrument_drop_at(&g, at.0, at.1) else {
+        panic!("a folder seam is highlighted");
+    };
+    let (expected_parent, index, mark) = s.drop_at(&g, at.1, &[]).unwrap();
+    assert_eq!(expected_parent, parent);
+    assert_eq!(
+        insertion,
+        Insertion {
+            parent,
+            index,
+            mark
+        }
+    );
+    drag(&mut s, &g, "Sampler", at);
+    let Some(RowKind::Track(new)) = s.selected_row else {
+        panic!("select the new track")
+    };
+    assert_eq!(
+        s.project().find_node(Node::Track(new)),
+        Some((parent, index))
+    );
 }

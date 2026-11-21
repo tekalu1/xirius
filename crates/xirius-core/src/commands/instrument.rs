@@ -56,9 +56,9 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ArgDef::text(
                     "into",
                     "追加先のフォルダーの ID（root または省略時は最上位）",
-                )
-                .default(json!("root")),
+                ),
                 ArgDef::int("index", "フォルダー内の位置（0 が先頭。省略時は末尾）"),
+                ArgDef::id("before", IdKind::Track, "このトラックの直前（into・index と併用不可）"),
                 ArgDef::text("instrument", "インストゥルメントの名前").req(),
                 ArgDef::text("format", "vst3・clap・builtin など").default(json!("builtin")),
                 ArgDef::text("uid", "形式ごとの固有 ID（省略時は名前）"),
@@ -235,7 +235,7 @@ pub(super) fn add_with_instrument(p: &mut Project, _: &EditCtx<'_>, a: &Args) ->
             ));
         }
     };
-    let parent = parent_arg(p, a, "into")?;
+    let (parent, index) = super::new_track_position(p, a)?;
     let name = match a.opt_str("name").map(str::trim).filter(|n| !n.is_empty()) {
         Some(n) => n.to_string(),
         None => free_name(p, &instrument),
@@ -308,7 +308,7 @@ pub(super) fn add_with_instrument(p: &mut Project, _: &EditCtx<'_>, a: &Args) ->
         Some(id)
     };
     p.tracks.insert(tid, Arc::new(track));
-    insert_at(p, parent, a.opt_i64("index"), Node::Track(tid))?;
+    insert_at(p, parent, index, Node::Track(tid))?;
     let msg = match (clip, armed) {
         (Some(_), _) => format!("トラック「{name}」にノート {count} 個を置きました"),
         (None, true) => format!("トラック「{name}」を作成し、録音準備にしました"),

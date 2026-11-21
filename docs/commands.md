@@ -799,6 +799,8 @@ GitHub のリリースから新しいバージョンがあるかを確認しま�
 | `at` | — | `{"type":"string"}` | エフェクトとチェーンを入れる場所（track・after:<機器>・branch:<分岐か層>[:<位置>]） |
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `entry` | 必須 | `{"type":"string"}` | 一覧の entry id |
+| `index` | — | `{"type":"integer"}` | 新規トラックの位置（0 が先頭。省略時は末尾） |
+| `into` | — | `{"type":"string"}` | 新規トラックのフォルダー（root または省略時は最上位） |
 | `of` | — | `{"type":"string"}` | プリセットを読み込むプラグイン（plugin の ID） |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `target` | — | `{"enum":["track","instrument","insert","effect","new"],"type":"string"}` | 適用先 |
@@ -7659,12 +7661,13 @@ Key
 |---|---|---|---|
 | `arm` | — | `{"type":"boolean"}` | 録音準備にする |
 | `at` | — | `{"oneOf":[{"type":"integer"},{"type":"string"}]}` | クリップの位置（省略時は曲の頭）（小節.拍.tick（例: 3.1.0）または tick 数） |
+| `before` | — | `{"type":"string"}` | このトラックの直前（into・index と併用不可）（track の ID） |
 | `clip` | — | `{"type":"string"}` | クリップの名前（省略時はトラック名） |
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `format` | — | `{"default":"builtin","type":"string"}` | vst3・clap・builtin など |
 | `index` | — | `{"type":"integer"}` | フォルダー内の位置（0 が先頭。省略時は末尾） |
 | `instrument` | 必須 | `{"type":"string"}` | インストゥルメントの名前 |
-| `into` | — | `{"default":"root","type":"string"}` | 追加先のフォルダーの ID（root または省略時は最上位） |
+| `into` | — | `{"type":"string"}` | 追加先のフォルダーの ID（root または省略時は最上位） |
 | `name` | — | `{"type":"string"}` | トラック名（省略時はインストゥルメントの名前） |
 | `notes` | — | `{"items":{"type":"object"},"type":"array"}` | ノートの一覧（{at, pitch, length, velocity} の配列。at・length は「小節.拍.tick」または tick 数で、at はクリップの頭から） |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |

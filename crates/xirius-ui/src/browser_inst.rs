@@ -4,9 +4,10 @@
 
 use serde_json::json;
 use xirius_core::id::TrackId;
-use xirius_core::model::TrackKind;
+use xirius_core::model::{Parent, TrackKind};
 use xirius_design::{FontSize, Radius, Space, Weight};
 
+use crate::arrange::DropMark;
 use crate::browser::{BRow, BrowserHit, LibItem};
 use crate::draw::{Align, Pen};
 use crate::instrument::{Pick, resolve};
@@ -30,13 +31,31 @@ pub struct LibDrag {
 }
 
 /// What letting go of a dragged instrument does there.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Drop {
     /// It becomes the instrument of this track.
     Replace(TrackId),
     /// A new track plays it.
     New,
+    Insert(Insertion),
     Nothing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Insertion {
+    parent: Parent,
+    index: usize,
+    mark: DropMark,
+}
+
+impl Insertion {
+    pub(crate) fn set_args(self, args: &mut serde_json::Value) {
+        args["into"] = json!(match self.parent {
+            Parent::Root => "root".to_string(),
+            Parent::Folder(folder) => folder.to_string(),
+        });
+        args["index"] = json!(self.index);
+    }
 }
 
 /// What a double click and a drop off the tracks do (the first row of S38).
@@ -54,21 +73,46 @@ impl Studio {
 
     /// A new instrument track playing `name` (one step); it is selected.
     pub fn use_on_new_track(&mut self, name: &str) -> bool {
+        self.add_browser_instrument(name, None, false)
+    }
+
+    fn add_browser_instrument(
+        &mut self,
+        name: &str,
+        insertion: Option<Insertion>,
+        open: bool,
+    ) -> bool {
         let Some(pick) = self.lib_resolve(name) else {
             return false;
         };
+        let mut args = json!({ "instrument": pick.name, "format": pick.format, "uid": pick.uid });
+        if let Some(insertion) = insertion {
+            insertion.set_args(&mut args);
+        }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-        let Some(data) = self.arrange_run(
-            "track.add.with-instrument",
-            json!({ "instrument": pick.name, "format": pick.format, "uid": pick.uid }),
-        ) else {
+        let Some(data) = self.arrange_run("track.add.with-instrument", args) else {
             return false;
         };
         if let Some(t) = data["id"].as_str().and_then(|s| s.parse().ok()) {
             self.select_row(Some(RowKind::Track(t)));
             self.begin_loading_instrument(t, name, &pick.format);
+            if open {
+                self.open_new_instrument(t);
+            }
         }
         true
+    }
+
+    pub(crate) fn open_new_instrument(&mut self, t: TrackId) {
+        let id = self
+            .project()
+            .tracks
+            .get(&t)
+            .and_then(|track| crate::instrument::current(track))
+            .map(|plugin| plugin.id);
+        if let Some(id) = id {
+            self.open_when_loaded(t, id);
+        }
     }
 
     /// The instrument of track `t` is on its way in: the list's item shows the spinner.
@@ -168,17 +212,55 @@ impl Studio {
         if let Some(held) = d.preset.as_ref().filter(|_| d.moved) {
             self.preset_drop(g, x, y, held);
         } else if d.moved {
-            match self.lib_drop_at(g, x, y) {
+            match self.instrument_drop_at(g, x, y) {
                 Drop::Replace(t) => {
                     self.use_on_track(t, d.name);
                 }
                 Drop::New => {
-                    self.use_on_new_track(d.name);
+                    self.add_browser_instrument(d.name, None, true);
+                }
+                Drop::Insert(insertion) => {
+                    self.add_browser_instrument(d.name, Some(insertion), true);
                 }
                 Drop::Nothing => {}
             }
         }
         true
+    }
+
+    fn instrument_drop_at(&self, g: &Geometry, x: f32, y: f32) -> Drop {
+        self.browser_track_insertion(g, x, y)
+            .map_or_else(|| self.lib_drop_at(g, x, y), Drop::Insert)
+    }
+
+    pub(crate) fn browser_track_insertion(
+        &self,
+        g: &Geometry,
+        x: f32,
+        y: f32,
+    ) -> Option<Insertion> {
+        const SEAM: f32 = 5.0;
+        if !g.column.contains(x, y) && !g.lanes.contains(x, y) {
+            return None;
+        }
+        let (parent, index, mark) = self.drop_at(g, y, &[]).or_else(|| {
+            let ty = y - g.column.y + self.scroll.1;
+            let tree = self.tree();
+            let row = tree.rows.iter().find(|row| row.y > ty)?;
+            (row.y - ty <= SEAM).then_some(())?;
+            self.drop_at(g, g.column.y + row.y - self.scroll.1 + 0.01, &[])
+        })?;
+        let DropMark::Line { y: edge, .. } = mark else {
+            return None;
+        };
+        let edge = g.column.y + edge - self.scroll.1;
+        (edge >= g.column.y && edge <= g.column.bottom() && (y - edge).abs() <= SEAM).then_some(
+            Insertion {
+                parent,
+                index,
+                mark,
+            },
+        )
     }
 
     /// What dropping an instrument at a point does.
@@ -212,7 +294,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     let c = pen.c;
     let drop = match &d.preset {
         Some(held) => studio.preset_drop_at(g, d.at.0, d.at.1, held.effect),
-        None => studio.lib_drop_at(g, d.at.0, d.at.1),
+        None => studio.instrument_drop_at(g, d.at.0, d.at.1),
     };
     let tracks = Rect::new(
         g.column.x,
@@ -261,6 +343,12 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
                 pen.mask(tracks, |pen| {
                     pen.fill(Rect::new(tracks.x, y, tracks.w, 2.0), c.ring);
                 });
+            }
+            NEW_LABEL.to_string()
+        }
+        Drop::Insert(insert) => {
+            if let DropMark::Line { y, depth } = insert.mark {
+                crate::arrange::paint::paint_track_seam(pen, studio, g, y, depth);
             }
             NEW_LABEL.to_string()
         }

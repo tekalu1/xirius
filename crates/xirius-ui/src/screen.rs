@@ -2187,7 +2187,7 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
         && {
             #[cfg(windows)]
             {
-                crate::preset_input_shots::ready()
+                crate::preset_input_shots::ready(&studio)
                     && crate::device_window::drag_shots::ready(&studio, window, cx)
                     && crate::device_window::verify_shots::ready(&studio, window, cx)
             }

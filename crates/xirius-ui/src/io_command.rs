@@ -133,6 +133,9 @@ impl Studio {
         self.clear_error();
         self.track_browser_answer(name, &result.data);
         self.after_edit();
+        if name == "browser.preset.apply" && raw.contains_key("into") {
+            self.browser_preset_track_added(&result.data);
+        }
         if xirius_session::sample_files::NAMES.contains(&name) {
             self.after_command(name, &result.data);
         }
