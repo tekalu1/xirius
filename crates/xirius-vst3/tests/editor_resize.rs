@@ -179,7 +179,7 @@ fn a_drag_and_a_dpi_change_reach_the_view_through_its_constraint() {
         },
     );
     assert_eq!(to.right, before.right);
-    let minimum = constrain((412.0 * scale).ceil() as i32, MIN.1).0;
+    let minimum = constrain((360.0 * scale).ceil() as i32, MIN.1).0;
     assert_eq!(client(editor.viewport_hwnd() as HWND).0, minimum);
     assert_eq!(editor.size().0, minimum);
 
@@ -254,8 +254,8 @@ fn a_window_resized_without_a_drag_still_tells_the_view() {
 #[test]
 fn common_bar_and_view_share_the_gui_thread_without_topmost_or_native_caption() {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GWL_EXSTYLE, GWL_STYLE, GetDlgItem, GetWindowLongW, GetWindowThreadProcessId, WM_COMMAND,
-        WS_CAPTION, WS_EX_TOPMOST,
+        GWL_EXSTYLE, GWL_STYLE, GetDlgItem, GetWindowLongW, GetWindowThreadProcessId,
+        IsWindowVisible, WM_COMMAND, WS_CAPTION, WS_EX_TOPMOST,
     };
     use xirius_vst3::{EditorAction, EditorBar};
     let plugin = fixture();
@@ -281,13 +281,18 @@ fn common_bar_and_view_share_the_gui_thread_without_topmost_or_native_caption() 
             GetWindowThreadProcessId(hwnd, std::ptr::null_mut()),
             GetWindowThreadProcessId(editor.viewport_hwnd() as HWND, std::ptr::null_mut())
         );
-        let button = GetDlgItem(hwnd, 3);
+        assert!(GetDlgItem(hwnd, 3).is_null());
+        let button = GetDlgItem(hwnd, 6);
         assert!(!button.is_null());
         let mut label = [0u16; 32];
         let n = GetWindowTextW(button, label.as_mut_ptr(), label.len() as i32);
-        assert_eq!(String::from_utf16_lossy(&label[..n as usize]), "表示先");
+        assert_eq!(
+            String::from_utf16_lossy(&label[..n as usize]),
+            "チャンネルエディター"
+        );
         SendMessageW(hwnd, WM_COMMAND, 1, 0);
         SendMessageW(hwnd, WM_COMMAND, 4, 0);
+        SendMessageW(hwnd, WM_COMMAND, 6, 0);
     }
     assert_eq!(
         editor
@@ -295,7 +300,11 @@ fn common_bar_and_view_share_the_gui_thread_without_topmost_or_native_caption() 
             .into_iter()
             .filter(|a| !matches!(a, EditorAction::EditorTouched { .. }))
             .collect::<Vec<_>>(),
-        [EditorAction::Power, EditorAction::Pin]
+        [
+            EditorAction::Power,
+            EditorAction::Pin,
+            EditorAction::Channel
+        ]
     );
     let frame = client(hwnd);
     let view = client(editor.viewport_hwnd() as HWND);
@@ -303,8 +312,14 @@ fn common_bar_and_view_share_the_gui_thread_without_topmost_or_native_caption() 
     editor
         .capture_bmp(&shot_dir().join("common-frame-fixture.bmp"))
         .unwrap();
-    for id in 1..=5 {
+    let mut last_left = i32::MIN;
+    // Power, previous, preset, next, channel, pin, close.
+    for id in [1, 8, 2, 11, 6, 4, 5] {
         let button = unsafe { GetDlgItem(hwnd, id) };
+        assert_ne!(unsafe { IsWindowVisible(button) }, 0, "bar button {id}");
+        let left = window_rect(button).left;
+        assert!(left > last_left, "bar button {id} is out of order");
+        last_left = left;
         let picture = xirius_vst3::capture_window(
             button as isize,
             &shot_dir().join(format!("common-frame-button-{id}.bmp")),

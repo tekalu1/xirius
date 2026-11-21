@@ -197,6 +197,7 @@ pub(super) fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
             let id = first(&s.borrow(), t).ok_or("no clip")?.id;
             let p = spot(s, w, Hit::Clip(t, id))?;
             right_click(p, w, cx);
+            cell(s, "書き出し", w, cx)?;
             cell(s, "バウンス", w, cx)?;
             cell(s, "新しいトラックにバウンス", w, cx)?;
             check(s.borrow().job.is_some(), "the bounce did not start")?;
@@ -214,6 +215,7 @@ pub(super) fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
                     .ok_or("the row is not on the screen")
             })?;
             right_click(p, w, cx);
+            cell(s, "トラック", w, cx)?;
             cell(s, "トラックをフリーズ", w, cx)?;
             check(s.borrow().job.is_some(), "the freeze did not start")?;
             wait_job(s, w)?;

@@ -1056,23 +1056,28 @@ fn preset_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             }
             BRow::Item {
                 item,
+                track_key: Some(key),
                 presets: None,
                 ..
-            } if s.browser.track_library.is_some() => (
-                format!("track-browser-device-{}", item.name),
+            } => (
+                format!("track-browser-{key}"),
                 accesskit::Node::new(accesskit::Role::ListItem),
                 item.name.to_string(),
                 BrowserHit::Item(i),
             ),
             BRow::Item {
                 item,
+                track_key,
                 presets: Some(open),
                 ..
             } => {
                 let mut node = accesskit::Node::new(accesskit::Role::Button);
                 node.set_expanded(*open);
                 (
-                    format!("presets-{}", item.name),
+                    track_key.as_ref().map_or_else(
+                        || format!("presets-{}", item.name),
+                        |key| format!("track-browser-{key}"),
+                    ),
                     node,
                     format!("{} のプリセット", item.name),
                     BrowserHit::Disclose(i),
@@ -1080,6 +1085,7 @@ fn preset_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             }
             BRow::Preset {
                 device,
+                track_key,
                 name,
                 selected,
                 ..
@@ -1094,7 +1100,10 @@ fn preset_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     .map(|e| e.device_name.as_str())
                     .unwrap_or_else(|| xirius_params::find(device).map_or(*device, |d| d.name));
                 (
-                    format!("preset-{device}-{name}"),
+                    track_key.as_ref().map_or_else(
+                        || format!("preset-{device}-{name}"),
+                        |key| format!("track-browser-{key}"),
+                    ),
                     node,
                     format!("{device_name} のプリセット {name}"),
                     BrowserHit::Preset(i),

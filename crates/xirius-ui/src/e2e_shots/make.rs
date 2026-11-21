@@ -503,7 +503,7 @@ fn drag_file(s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
         check(g.lanes.contains(x, y), "no room under the tracks")?;
         Ok::<_, String>((from, (x, y)))
     })?;
-    drag(from, to, w, cx);
+    crate::shot::with_drop_target(crate::independent::Over::Main, || drag(from, to, w, cx));
     check(
         s.borrow().browser.file_drag.is_none(),
         "the drag did not end",

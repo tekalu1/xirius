@@ -630,7 +630,8 @@ impl Screen {
         // The release lands where the frontmost window under the pointer takes it
         // (UI-353): the drag's window keeps its events, so this asks again.
         if studio.browser.file_drag.is_some() || studio.browser.drag.is_some() {
-            studio.over = self.device_windows.over(window, (x, y), cx);
+            studio.over = crate::shot::take_drop_target()
+                .unwrap_or_else(|| self.device_windows.over(window, (x, y), cx));
         }
         if studio.window_released(&g, x, y, mods(ev.modifiers)) {
             cx.notify();
