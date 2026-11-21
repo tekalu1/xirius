@@ -629,10 +629,11 @@ impl Windows {
                 )
             };
             let source = bounds([r.left, r.top, r.right, r.bottom]);
-            Some((
-                beside_bounds(source, bounds(screen.work), extent, minimum),
-                screen.id,
-            ))
+            // Leave room for the native resize border outside the client area.
+            let border = (8.0 * screen.scale).ceil() as i32;
+            let [left, top, right, bottom] = screen.work;
+            let work = bounds([left + border, top + border, right - border, bottom - border]);
+            Some((beside_bounds(source, work, extent, minimum), screen.id))
         }
         #[cfg(not(windows))]
         {

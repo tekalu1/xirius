@@ -286,6 +286,10 @@ def main():
 
                     # Keep both external frames outside the browser-to-column path.
                     move_right(first)
+                    if u.GetForegroundWindow() != main_hwnd:
+                        click_main(main_hwnd)
+                        wait(lambda: u.GetForegroundWindow() == main_hwnd,
+                             "main window did not come to the foreground")
                     drag(main_hwnd, info["drag_from"], info["seam"])
                     original = info["root"]
                     index = info["before_index"]
@@ -320,11 +324,11 @@ def main():
                     channel = wait(lambda: u.FindWindowExW(0, 0, None, "Xirius · Channel Editor"),
                                    "channel editor did not open")
                     r = rect(first)
-                    bounds = rect(channel)
                     monitor = MonitorInfo()
                     monitor.size = c.sizeof(monitor)
                     assert u.GetMonitorInfoW(u.MonitorFromWindow(first, 2), c.byref(monitor))
                     work = monitor.work
+                    bounds = rect(channel)
                     assert (work.left <= bounds.left < bounds.right <= work.right
                             and work.top <= bounds.top < bounds.bottom <= work.bottom), (
                                 "channel did not fit within the working area",

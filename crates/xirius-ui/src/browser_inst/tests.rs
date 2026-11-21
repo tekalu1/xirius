@@ -245,6 +245,7 @@ fn a_drop_between_folder_children_uses_the_reorder_boundary() {
     s.fold_all(&g, false);
     let child = track(&s, "Two");
     let row = *s.tree().row_of(RowKind::Track(child)).unwrap();
+    s.scroll.1 = (row.y - g.column.h / 2.0).max(0.0);
     let at = (g.column.x + 30.0, g.column.y + row.y - s.scroll.1 + 1.0);
     let Drop::Insert(insertion) = s.instrument_drop_at(&g, at.0, at.1) else {
         panic!("a folder seam is highlighted");
