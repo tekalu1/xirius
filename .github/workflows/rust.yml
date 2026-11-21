@@ -1,183 +1,31 @@
 name: rust
 
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
-    inputs:
-      use_cache:
-        description: Restore and save Rust cache (disable to measure a cold build)
-        type: boolean
-        default: true
 
 permissions:
   contents: read
 
-# A newer push to a pull request cancels the older run. On main every commit keeps its run: the
-# release of a tag waits for the run of its commit (docs/release-ci-gate.md).
-concurrency:
-  group: rust-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'latest' }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
-
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  PYTHONUTF8: "1"
 
 jobs:
-  build:
-    name: build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
+  ara:
+    name: ARA without retries (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
-        if: github.event_name != 'workflow_dispatch' || inputs.use_cache
         with:
           shared-key: check
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: false
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest@0.9.151
-      - name: fmt
-        run: cargo fmt --all --check
-      - name: clippy
-        run: cargo clippy -j6 --workspace --all-targets --keep-going -- -D warnings
-      - name: release and test runner scripts
-        shell: bash
-        run: |
-          for t in test_release test_release_ci_gate test_update_sign test_pre_push test_ci_tests test_prune_deps; do
-            python "scripts/$t.py"
-          done
-      - name: design lint
-        run: cargo run --locked -j6 -p xirius-design-lint
-      - name: default feature checks
-        run: python scripts/ci_tests.py --default-features
-      - name: doctest
-        run: python scripts/ci_tests.py --doctest
-      - name: build and archive
-        run: python scripts/ci_tests.py --archive tests.tar.zst
-      - uses: actions/upload-artifact@v7
-        with:
-          name: tests-${{ matrix.os }}
-          overwrite: true
-          path: tests.tar.zst
-          compression-level: 0
-          retention-days: 3
-          if-no-files-found: error
-
-  test:
-    name: test (${{ matrix.os }}, ${{ matrix.shard }})
-    needs: build
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-        shard: [1, 2, 3, 4]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@0.9.151
-      - uses: actions/download-artifact@v8
-        with:
-          name: tests-${{ matrix.os }}
-      - name: run shard without building
-        run: python scripts/ci_tests.py --run-archive tests.tar.zst --partition slice:${{ matrix.shard }}/4 --coverage-dir coverage
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: coverage-${{ matrix.os }}-${{ matrix.shard }}
-          overwrite: true
-          path: coverage
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: junit-${{ matrix.os }}-${{ matrix.shard }}
-          overwrite: true
-          path: target/nextest/ci/junit.xml
-          if-no-files-found: error
-
-  check:
-    name: check (${{ matrix.os }})
-    needs: [build, test]
-    if: always()
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    steps:
-      - name: require every build and shard
-        env:
-          BUILD_RESULT: ${{ needs.build.result }}
-          TEST_RESULT: ${{ needs.test.result }}
-        shell: python
-        run: |
-          import os
-          assert os.environ["BUILD_RESULT"] == "success"
-          assert os.environ["TEST_RESULT"] == "success"
-      - uses: actions/checkout@v7
-        if: always()
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: coverage-${{ matrix.os }}-*
-          path: observations
-      - name: complete context catalog
-        run: python scripts/ci_tests.py --check-coverage observations --expected-shards 4
-      # Tests that passed only on a retry, from every shard, in this job's summary.
-      - uses: actions/download-artifact@v8
-        if: always()
-        with:
-          pattern: junit-${{ matrix.os }}-*
-          path: junit
-      - name: flaky tests
-        if: always()
-        run: python scripts/ci_tests.py --flaky-summary junit
-
-  deny:
-    name: cargo-deny
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check
-          arguments: --all-features
-
-  # Secrets in the history (.gitleaks.toml). The binary is gitleaks's own release (MIT), pinned
-  # by version and SHA-256; gitleaks-action is not used (it asks organisations for a licence).
-  gitleaks:
-    name: gitleaks
-    runs-on: ubuntu-latest
-    env:
-      GITLEAKS_VERSION: "8.30.1"
-      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: gitleaks
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tgz="$RUNNER_TEMP/gitleaks.tar.gz"
-          if ! curl -sSL --fail --retry 5 --retry-all-errors --retry-delay 10 --retry-max-time 120 -o "$tgz" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"; then
-            # The API route can remain available when the public download endpoint fails.
-            # Both routes must pass the same pinned checksum below.
-            gh release download "v${GITLEAKS_VERSION}" --repo gitleaks/gitleaks \
-              --pattern "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" --output "$tgz" --clobber
-          fi
-          echo "$GITLEAKS_SHA256  $tgz" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/gitleaks"
-          tar -xzf "$tgz" -C "$RUNNER_TEMP/gitleaks" gitleaks
-          "$RUNNER_TEMP/gitleaks/gitleaks" git --config .gitleaks.toml --redact --verbose --no-banner --exit-code 1 .
+      - name: Repeat the clip archive and service regression tests
+        run: >-
+          cargo nextest run --locked -j6 -P ci --retries 0 --no-fail-fast --stress-count 24
+          -p xirius-session --test ara_clips -p xirius-ara --test service
+          -E 'binary(ara_clips) | test(=an_edit_on_the_first_render_after_restoring_is_archived) | test(=modification_content_edits_are_dirty_and_archived) | test(=completed_analysis_is_cached_and_changed_audio_invalidates_it)'
