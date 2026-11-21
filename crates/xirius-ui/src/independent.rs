@@ -232,9 +232,9 @@ pub(crate) fn open<V: Render + 'static>(
             }
             set_owner(&title);
             show(&title);
-            if cfg!(windows) && spec_key == Some(Key::Channel) {
+            if cfg!(windows) {
                 // The native move and resize can finish before GPUI registers the window.
-                // Read the resulting client size before laying out the first channel frame.
+                // Read the resulting client size before the first layout and hit test.
                 window.bounds_changed(cx);
             }
             view

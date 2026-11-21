@@ -9,9 +9,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    FindWindowExW, GetWindowThreadProcessId, IsWindowVisible,
+};
 use xirius_core::id::{Node, PluginId, TrackId};
 use xirius_core::model::{Plugin, PluginIsolation, PluginKind, Project, Track, TrackKind};
-use xirius_engine::server::{PluginLink, PluginServer, find_host};
+use xirius_engine::server::find_host;
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{host::HostConfig, host::SessionHost, plugins::Isolation};
 
@@ -44,19 +47,37 @@ fn track(isolation: PluginIsolation, uid: &str) -> Arc<Track> {
     Arc::new(t)
 }
 
-/// True when the instance that plays has its window open in its host: closing the window
-/// there reads the plugin's state once more, which no other message does here.
-fn window_in_host(server: &PluginServer, link: &PluginLink) -> bool {
-    let seen = link.states_seen();
-    server.close_editor(link);
+/// The matching editor must be visible in the host that now plays the plugin.
+fn wait_for_editor(pid: u32, title: &str) {
+    let class: Vec<_> = "XiriusPluginEditor".encode_utf16().chain(Some(0)).collect();
+    let title: Vec<_> = title.encode_utf16().chain(Some(0)).collect();
     let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        if link.states_seen() > seen {
-            return true;
+    loop {
+        let mut hwnd = std::ptr::null_mut();
+        loop {
+            // SAFETY: the class and title are NUL-terminated strings kept alive here.
+            hwnd = unsafe {
+                FindWindowExW(std::ptr::null_mut(), hwnd, class.as_ptr(), title.as_ptr())
+            };
+            if hwnd.is_null() {
+                break;
+            }
+            let mut owner = 0;
+            // SAFETY: these queries take a window handle and a valid out pointer.
+            if unsafe {
+                GetWindowThreadProcessId(hwnd, &mut owner) != 0
+                    && owner == pid
+                    && IsWindowVisible(hwnd) != 0
+            } {
+                return;
+            }
         }
+        assert!(
+            Instant::now() < deadline,
+            "the editor never opened in the new host"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
-    false
 }
 
 #[test]
@@ -136,8 +157,8 @@ fn the_window_moves_with_the_plugin_to_another_host() {
         "the plugin runs in another host"
     );
     assert!(server.status(&link).editor_open);
-    assert!(
-        window_in_host(&server, &link),
-        "the window is open on the new instance"
+    wait_for_editor(
+        server.pid().expect("the new host runs"),
+        &host.plugins().editor_window_title(PID).unwrap(),
     );
 }
