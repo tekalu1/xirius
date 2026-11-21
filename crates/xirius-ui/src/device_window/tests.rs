@@ -1117,7 +1117,7 @@ fn main_window_events_drop_on_the_pad_under_the_pointer() {
 }
 
 #[test]
-fn escape_closes_the_detached_channel_insert_picker_with_search_text() {
+fn escape_clears_then_closes_the_detached_channel_insert_picker() {
     let mut s = Studio::sample();
     let track = *s
         .project()
@@ -1134,16 +1134,14 @@ fn escape_closes_the_detached_channel_insert_picker_with_search_text() {
     );
     assert!(s.pick_typed(&g, "s", Some("s")));
     assert!(s.popup.is_some());
-    device_key_event(
-        &mut s,
-        &g,
-        &gpui::KeyDownEvent {
-            keystroke: gpui::Keystroke::parse("escape").unwrap(),
-            is_held: false,
-            prefer_character_input: false,
-        },
-        None,
-    );
+    let escape = gpui::KeyDownEvent {
+        keystroke: gpui::Keystroke::parse("escape").unwrap(),
+        is_held: false,
+        prefer_character_input: false,
+    };
+    device_key_event(&mut s, &g, &escape, None);
+    assert!(s.pick_typing().unwrap().field.value.is_empty());
+    device_key_event(&mut s, &g, &escape, None);
     assert!(s.popup.is_none());
     assert_eq!(s.channel.unwrap().track, track);
 }

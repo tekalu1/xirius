@@ -5,7 +5,7 @@ use std::sync::{Arc, Once};
 use windows_sys::Win32::UI::Controls::EM_SETCUEBANNER;
 use windows_sys::Win32::UI::{Input::KeyboardAndMouse::*, Shell::*};
 use windows_sys::Win32::{Foundation::*, Graphics::Gdi::*, UI::WindowsAndMessaging::*};
-use xirius_design::{Font, FontSize, Layout, Space, Surface, Theme};
+use xirius_design::{Font, FontSize, Layout, Pair, Space, Surface, Theme, ink, surface};
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain([0]).collect()
@@ -468,11 +468,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                         Surface::Paper
                     };
                     let pair = if row.enabled {
-                        face.strong_text()
+                        face.strong_text().resolve(s.theme)
                     } else {
-                        face.text()
-                    }
-                    .resolve(s.theme);
+                        Pair::<surface::Paper, ink::Disabled>::new().resolve(s.theme)
+                    };
                     let mut rect = RECT {
                         left: s.px(Layout::POPUP_PAD),
                         top: y,

@@ -1401,8 +1401,10 @@ fn device_key_event(
             Some(crate::popup::PopupKind::Insert(_))
         )
     {
-        s.popup = None;
-        s.close_wheel_group();
+        if !s.pick_typed(g, &k.key, None) {
+            s.popup = None;
+            s.close_wheel_group();
+        }
         return;
     }
     if s.popup.is_none() && s.field_keys(g, &k.key, k.key_char.as_deref(), m) {

@@ -10,7 +10,7 @@
 
 use xirius_core::id::{FolderId, PluginId, TrackId};
 use xirius_core::model::PluginIsolation;
-use xirius_design::{FontSize, Layout, Radius, Space, TrackColor, Weight};
+use xirius_design::{FontSize, Layout, Pair, Radius, Space, TrackColor, Weight, ink, surface};
 
 use crate::browser::{View, text_width};
 use crate::draw::{Align, Pen};
@@ -544,8 +544,7 @@ pub struct Cell {
     pub cursor: bool,
     /// Under the list: the query never filters it (UI-320's footer).
     pub foot: bool,
-    /// A list's row that cannot run now: a lock at its right says so, its
-    /// name in the body ink, not fainter (UI-338).
+    /// A list's row that cannot run now: a lock at its right says so (UI-338).
     pub locked: bool,
     pub enabled: bool,
     pub action: Option<Action>,
@@ -1601,7 +1600,16 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
     let r = cell.rect;
     let pad = Space::X2.px();
     let hot = hot && cell.live();
-    let strong = if cell.enabled { c.ink_strong } else { c.ink };
+    let strong = if cell.enabled {
+        c.ink_strong
+    } else if cell.foot && cell.locked {
+        let ink = Pair::<surface::Paper, ink::Disabled>::new()
+            .resolve(c.theme)
+            .ink;
+        crate::theme::paint(ink)
+    } else {
+        c.ink
+    };
     let soft = c.ink;
     match &cell.look {
         Look::ContextResult(path) => {

@@ -31,7 +31,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True, help="temporary data parent")
     parser.add_argument("--out", type=Path, required=True, help="screenshots and result.json")
-    parser.add_argument("--case", choices=["A", "E", "F", "G"], help="run one follow-up scenario")
+    parser.add_argument("--case", choices=["A", "E", "F", "G", "cold"], help="run one scenario")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("this test requires Windows")
@@ -52,6 +52,7 @@ def main():
         "WindowFromPoint": (w.HWND, [w.POINT]),
         "GetAncestor": (w.HWND, [w.HWND, w.UINT]),
         "GetClassNameW": (c.c_int, [w.HWND, w.LPWSTR, c.c_int]),
+        "GetWindowTextW": (c.c_int, [w.HWND, w.LPWSTR, c.c_int]),
         "GetDlgItem": (w.HWND, [w.HWND, c.c_int]),
         "GetWindow": (w.HWND, [w.HWND, w.UINT]),
         "GetTopWindow": (w.HWND, [w.HWND]),
@@ -109,6 +110,11 @@ def main():
     def hit_root(x, y):
         return u.GetAncestor(u.WindowFromPoint(w.POINT(x, y)), 2)
 
+    def window_title(hwnd):
+        title = c.create_unicode_buffer(256)
+        u.GetWindowTextW(hwnd, title, len(title))
+        return title.value
+
     def click_window(hwnd, x, y):
         assert hit_root(x, y) == hwnd, f"window {hwnd} is covered at {(x, y)}"
         click(x, y)
@@ -146,8 +152,9 @@ def main():
         child = u.GetDlgItem(hwnd, control)
         r = rect(child)
         x, y = (r.left+r.right)//2, (r.top+r.bottom)//2
-        hit = u.WindowFromPoint(w.POINT(x, y))
-        assert hit == child, f"button {control} is covered: expected {child}, found {hit} at {(x, y)}"
+        wait(lambda: u.WindowFromPoint(w.POINT(x, y)) == child,
+             f"button {control} is covered at {(x, y)}", seconds=3,
+             detail=lambda: window_title(hit_root(x, y)))
         click(x, y)
 
     def control_text(hwnd):
@@ -200,6 +207,31 @@ def main():
             if h not in known and u.IsWindowVisible(h):
                 return h
 
+    def loading_frame(pid, name):
+        hwnd = u.GetTopWindow(0)
+        while hwnd:
+            if u.IsWindowVisible(hwnd) and window_title(hwnd).startswith(f"Xirius · {name} · "):
+                process = w.DWORD()
+                u.GetWindowThreadProcessId(hwnd, c.byref(process))
+                if process.value == pid:
+                    return hwnd
+            hwnd = u.GetWindow(hwnd, 2)
+
+    def fixture_label_control(frame):
+        viewport = u.FindWindowExW(frame, 0, "STATIC", None)
+        view = u.FindWindowExW(viewport, 0, "XiriusTestVst3View", None) if viewport else None
+        return u.FindWindowExW(view, 0, "STATIC", None) if view else None
+
+    def fixture_label(frame):
+        label = fixture_label_control(frame)
+        if label and u.IsWindowVisible(label):
+            try:
+                return control_text(label)
+            except AssertionError:
+                # The newly attached editor's GUI thread may still be busy.
+                pass
+        return ""
+
     def screenshot(name):
         width, height = u.GetSystemMetrics(0), u.GetSystemMetrics(1)
         for fn, result, params in [
@@ -247,6 +279,8 @@ def main():
         env.pop("XIRIUS_PRESET_INPUT_BUILTIN", None)
         if args.case == "G":
             env["XIRIUS_PRESET_INPUT_BUILTIN"] = "1"
+        if args.case == "cold":
+            env.setdefault("XIRIUS_TEST_VST3_EDITOR_OPEN_MS", "2000")
         # The fixture accepts both roles, but scans as an effect. Seed the isolated
         # cache before the app starts so the song owner's index lists it as an instrument.
         probe = Path(temp) / "fixture.json"
@@ -260,14 +294,51 @@ def main():
         for name in ("input-ready.json", "input-done", "input-state-request", "input-state.json"):
             (out/name).unlink(missing_ok=True)
         with (out/"app.log").open("w", encoding="utf-8") as log:
+            script = "preset-input-cold" if args.case == "cold" else "preset-input"
             app = subprocess.Popen([str(executable), "--silent", "--at", "10,10",
-                                    "--size", "1040,640", "--shot", str(out), "--script", "preset-input"],
+                                    "--size", "1040,640", "--shot", str(out), "--script", script],
                                    cwd=temp, env=env, stdout=log, stderr=log)
             def run_checks():
                 wait(lambda: (out/"input-ready.json").exists() or app.poll() is not None, "fixture setup", 90)
                 assert (out/"input-ready.json").exists(), "fixture app exited during setup; read app.log"
                 info = json.loads((out/"input-ready.json").read_text(encoding="utf-8"))
-                main_hwnd, (first, second) = info["main"], info["frames"]
+                main_hwnd = info["main"]
+                if args.case == "cold":
+                    hosts = subprocess.run(
+                        ["powershell", "-NoProfile", "-Command",
+                         "Get-CimInstance Win32_Process -Filter \"Name = 'xirius-plugin-host.exe'\" | Select-Object -ExpandProperty ProcessId"],
+                        capture_output=True, text=True, check=True, timeout=20,
+                    ).stdout.strip()
+                    assert not hosts, f"plugin host was already running before the drag: {hosts}"
+                    assert not new_frame(set()), "a native editor opened before the drag"
+                    click_main(main_hwnd)
+                    wait(lambda: u.GetForegroundWindow() == main_hwnd, "main window did not activate")
+                    started = time.monotonic()
+                    drag(main_hwnd, info["drag_from"], info["drag_to"])
+                    editor = wait(lambda: new_frame(set()),
+                                  "cold drop did not open a native editor", seconds=45)
+                    opened_blank = not fixture_label_control(editor)
+                    if opened_blank:
+                        screenshot("cold-blank-frame")
+                    process = w.DWORD()
+                    u.GetWindowThreadProcessId(editor, c.byref(process))
+                    assert process.value and process.value != app.pid
+                    label = wait(lambda: (label if (label := fixture_label(editor)).startswith("delay ")
+                                          and f" pid {process.value} " in label else None),
+                                 "cold editor had no fixture content")
+                    wait(lambda: u.GetForegroundWindow() == editor
+                         and order([editor, main_hwnd]) == [editor, main_hwnd],
+                         "cold editor with content did not come to the foreground",
+                         detail=lambda: (u.GetForegroundWindow(), order([editor, main_hwnd])))
+                    wait(lambda: not loading_frame(app.pid, entries[0]["name"]),
+                         "cold editor's loading window stayed visible")
+                    elapsed = round(time.monotonic() - started, 2)
+                    assert not opened_blank, ("native editor became visible before its view attached; "
+                                              f"content and foreground followed after {elapsed}s")
+                    passed("cold-first-drop")
+                    checks[-1].update(seconds=elapsed, label=label)
+                    return
+                first, second = info["frames"]
                 move_frame(first, 640, 180)
                 move_right(second)
                 wait(lambda: order([main_hwnd, first, second]) == [second, first, main_hwnd],
@@ -290,6 +361,11 @@ def main():
                         click_main(main_hwnd)
                         wait(lambda: u.GetForegroundWindow() == main_hwnd,
                              "main window did not come to the foreground")
+                    wait(lambda: all(hit_root(*point) == main_hwnd
+                                     for point in (info["drag_from"], info["seam"])),
+                         "insertion path is covered", seconds=3,
+                         detail=lambda: [window_title(hit_root(*point))
+                                         for point in (info["drag_from"], info["seam"])])
                     drag(main_hwnd, info["drag_from"], info["seam"])
                     original = info["root"]
                     index = info["before_index"]

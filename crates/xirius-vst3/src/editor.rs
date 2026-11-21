@@ -466,7 +466,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 &bar,
                 st.chrome_caption.get(),
                 st.chrome_scale.get(),
-                Some(item.CtlID as usize),
+                Some((
+                    item.CtlID as usize,
+                    item.itemState & windows_sys::Win32::UI::Controls::ODS_DISABLED == 0,
+                )),
             );
             return 1;
         }
@@ -997,21 +1000,6 @@ impl Plugin {
         });
         // SAFETY: our window; the editor clears this before the box is freed.
         unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, &*state as *const WindowState as isize) };
-        // Shown without activation: above the other windows when asked for, otherwise at the
-        // bottom of the z-order, behind the user's windows.
-        let z = if place.top { HWND_TOP } else { HWND_BOTTOM };
-        // SAFETY: `hwnd` was just created.
-        unsafe {
-            SetWindowPos(
-                hwnd,
-                z,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            )
-        };
         let Some(keys) = crate::editor_keys::Keys::install(hwnd, place.top) else {
             // SAFETY: this is our unattached window.
             unsafe {
@@ -1059,7 +1047,6 @@ impl Plugin {
             editor.state.size.set(now);
         }
         editor.state.live.set(true);
-        editor.state.touched(hwnd);
         // SAFETY: a plain query on our window (96 in a process that is not DPI aware).
         let dpi = unsafe { GetDpiForWindow(hwnd) };
         editor.state.set_scale(dpi.max(96) as f32 / 96.0);
@@ -1104,6 +1091,22 @@ impl Plugin {
         editor
             .state
             .layout(now.right - now.left, now.bottom - now.top);
+        // Keep the native frame hidden until its view is attached and laid out. The
+        // studio can show a loading window while the plug-in blocks in attached().
+        let z = if place.top { HWND_TOP } else { HWND_BOTTOM };
+        // SAFETY: the frame and its attached view belong to this GUI thread.
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                z,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            )
+        };
+        editor.state.touched(hwnd);
         // A GUI's own loop runs the messages; pumping here would run its handlers inside the
         // caller's.
         if pump {

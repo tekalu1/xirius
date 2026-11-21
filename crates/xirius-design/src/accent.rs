@@ -10,6 +10,9 @@ use crate::color::Color;
 use crate::palette::Palette;
 use crate::theme::Theme;
 
+/// プリセットの前後ボタンを操作できないときのアルファ（40%）。
+pub const PRESET_STEP_DISABLED_ALPHA: u8 = 102;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Accent {
     /// キーボードのフォーカスの輪。

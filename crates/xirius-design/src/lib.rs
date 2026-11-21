@@ -37,7 +37,7 @@ mod toggle;
 mod track;
 mod wave;
 
-pub use accent::{Accent, Overlay, PianoKey};
+pub use accent::{Accent, Overlay, PRESET_STEP_DISABLED_ALPHA, PianoKey};
 pub use category::Category;
 pub use color::{Color, MIN_GRAPHIC_CONTRAST, MIN_TEXT_CONTRAST, contrast_ratio};
 pub use elevation::FloatShadow;

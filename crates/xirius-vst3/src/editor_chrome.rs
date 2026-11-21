@@ -118,7 +118,11 @@ impl Controls {
             // SAFETY: these controls are children of our frame on this thread.
             unsafe {
                 if matches!(id, PREVIOUS | NEXT) {
-                    EnableWindow(hwnd, i32::from(can_step(id, bar)));
+                    let enabled = can_step(id, bar);
+                    let was_enabled = EnableWindow(hwnd, i32::from(enabled)) == 0;
+                    if was_enabled != enabled {
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
+                    }
                 }
                 if id == PRESET {
                     SetWindowTextW(hwnd, wide(&bar.preset).as_ptr());
@@ -177,7 +181,7 @@ pub(crate) fn paint(
     bar: &EditorBar,
     caption: Option<Caption>,
     scale: f32,
-    control: Option<usize>,
+    control: Option<(usize, bool)>,
 ) {
     static FONTS: Once = Once::new();
     FONTS.call_once(|| {
@@ -204,6 +208,8 @@ pub(crate) fn paint(
     } else {
         Theme::Light
     };
+    let enabled = control.is_none_or(|(_, enabled)| enabled);
+    let control = control.map(|(id, _)| id);
     let pair = Surface::S1.strong_text().resolve(theme);
     let fill = color(pair.surface.to_rgb_u32());
     let ink = color(pair.ink.to_rgb_u32());
@@ -370,9 +376,11 @@ pub(crate) fn paint(
             );
         } else if let Some(id) = control {
             let lit = id == POWER && bar.powered;
-            let ink = if (matches!(id, PREVIOUS | NEXT) && !can_step(id, bar))
-                || (id == POWER && !bar.powered)
-            {
+            let ink = if matches!(id, PREVIOUS | NEXT) && !enabled {
+                let mut step = Surface::S1.text().ink_color(theme);
+                step.a = xirius_design::PRESET_STEP_DISABLED_ALPHA;
+                color(step.over(pair.surface).to_rgb_u32())
+            } else if id == POWER && !bar.powered {
                 color(
                     xirius_design::StructureLine::color(xirius_design::LineState::Rest, theme)
                         .to_rgb_u32(),

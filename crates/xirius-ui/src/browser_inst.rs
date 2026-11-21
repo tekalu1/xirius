@@ -239,22 +239,25 @@ impl Studio {
         x: f32,
         y: f32,
     ) -> Option<Insertion> {
-        const SEAM: f32 = 5.0;
         if !g.column.contains(x, y) && !g.lanes.contains(x, y) {
             return None;
         }
+        let tree = self.tree();
+        let ty = y - g.column.y + self.scroll.1;
+        let next = || tree.rows.iter().find(|row| row.y > ty);
+        let row = tree.row_at(ty).or_else(next).or_else(|| tree.rows.last())?;
+        // Keep at least the middle half of short rows available for replacement.
+        let reach = 8.0_f32.min(row.h / 4.0);
         let (parent, index, mark) = self.drop_at(g, y, &[]).or_else(|| {
-            let ty = y - g.column.y + self.scroll.1;
-            let tree = self.tree();
-            let row = tree.rows.iter().find(|row| row.y > ty)?;
-            (row.y - ty <= SEAM).then_some(())?;
-            self.drop_at(g, g.column.y + row.y - self.scroll.1 + 0.01, &[])
+            // In the gap between blocks, use the leading edge of the next row.
+            let next = next()?;
+            self.drop_at(g, g.column.y + next.y - self.scroll.1 + 0.01, &[])
         })?;
         let DropMark::Line { y: edge, .. } = mark else {
             return None;
         };
         let edge = g.column.y + edge - self.scroll.1;
-        (edge >= g.column.y && edge <= g.column.bottom() && (y - edge).abs() <= SEAM).then_some(
+        (edge >= g.column.y && edge <= g.column.bottom() && (y - edge).abs() <= reach).then_some(
             Insertion {
                 parent,
                 index,

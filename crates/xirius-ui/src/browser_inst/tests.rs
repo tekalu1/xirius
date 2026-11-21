@@ -227,6 +227,42 @@ fn dropping_on_the_first_middle_and_last_seams_inserts_in_one_step() {
 }
 
 #[test]
+fn insertion_takes_eight_logical_pixels_on_each_side_and_leaves_replace_in_the_middle() {
+    let mut s = Studio::new(crate::song::Song::empty());
+    for name in ["One", "Two"] {
+        assert!(s.run_command(
+            "track.add.with-instrument",
+            json!({"name":name, "instrument":"Sampler"})
+        ));
+    }
+    let g = s.geometry(1600.0, 1000.0);
+    let tree = s.tree();
+    let [first, second] = tree.rows.as_slice() else {
+        panic!("two track rows");
+    };
+    let RowKind::Track(first_id) = first.kind else {
+        panic!("instrument row");
+    };
+    let RowKind::Track(second_id) = second.kind else {
+        panic!("instrument row");
+    };
+    let x = g.column.x + 30.0;
+    for (edge, delta, track) in [(first.bottom(), -8.0, first_id), (second.y, 8.0, second_id)] {
+        let y = g.column.y + edge - s.scroll.1;
+        let Some(insertion) = s.browser_track_insertion(&g, x, y + delta) else {
+            panic!("eight pixels from the boundary");
+        };
+        assert_eq!((insertion.parent, insertion.index), (Parent::Root, 1));
+        let (parent, index, _) = s.drop_at(&g, y + delta, &[]).unwrap();
+        assert_eq!((parent, index), (Parent::Root, 1));
+        assert_eq!(
+            s.instrument_drop_at(&g, x, y + delta * 1.125),
+            Drop::Replace(track)
+        );
+    }
+}
+
+#[test]
 fn a_drop_between_folder_children_uses_the_reorder_boundary() {
     use xirius_core::id::Node;
     let (mut s, g) = studio();
