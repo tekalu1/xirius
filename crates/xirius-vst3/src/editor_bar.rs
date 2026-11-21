@@ -16,6 +16,11 @@ pub struct EditorBar {
     pub sidechain: bool,
 }
 
+/// Whether the list can move backward or forward from its current preset.
+pub fn preset_steps(count: usize, known: bool) -> (bool, bool) {
+    (known && count > 1, count > 0 && (!known || count > 1))
+}
+
 /// A song-owned choice; the GUI host never interprets its key.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PresetRow {

@@ -1964,6 +1964,7 @@ impl Studio {
         // A built-in instrument has its window here (UI-098).
         if crate::instrument::window::is_built_in(plugin) {
             self.show_instrument(t, id);
+            self.instruments.activate_device = Some((id, foreground_from));
             return true;
         }
         let title = format!("{} · {}", plugin.name, track.shown_name());

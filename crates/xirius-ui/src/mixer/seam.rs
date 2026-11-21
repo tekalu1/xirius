@@ -492,11 +492,29 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow) {
         return;
     };
     let Some(p) = place(flow, &seam) else { return };
-    let c = pen.c;
     let left = p.left + look.off.0;
     let y = p.y + look.off.1;
-    let mid = (left + p.right) / 2.0;
     let len = (p.right - left) * look.grow;
+    let mid = (left + p.right) / 2.0;
+    let plus = if look.plus && look.grow > 0.0 {
+        let (d, icon) = plus_size(flow.coarse());
+        let sink = if s.mixer.seam.pressed { PRESSED } else { 1.0 };
+        let k = (PLUS_FROM + (1.0 - PLUS_FROM) * look.grow) * sink;
+        Some(((d * k).round(), (icon * k).round(), look.grow))
+    } else {
+        None
+    };
+    paint_line_plus(pen, mid, y, len, plus);
+}
+
+pub(crate) fn paint_line_plus(
+    pen: &mut Pen,
+    mid: f32,
+    y: f32,
+    len: f32,
+    plus: Option<(f32, f32, f32)>,
+) {
+    let c = pen.c;
     if len > 0.5 {
         pen.round(
             Rect::new(mid - len / 2.0, y - LINE_W / 2.0, len, LINE_W),
@@ -504,17 +522,13 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow) {
             Radius::Pill,
         );
     }
-    if look.plus && look.grow > 0.0 {
-        let (d, icon) = plus_size(flow.coarse());
-        let sink = if s.mixer.seam.pressed { PRESSED } else { 1.0 };
-        let k = (PLUS_FROM + (1.0 - PLUS_FROM) * look.grow) * sink;
-        let (d, icon) = ((d * k).round(), (icon * k).round());
+    if let Some((d, icon, opacity)) = plus {
         let r = Rect::new(mid - d / 2.0, y - d / 2.0, d, d);
-        pen.round(r, c.primary.0.opacity(look.grow), Radius::Pill);
+        pen.round(r, c.primary.0.opacity(opacity), Radius::Pill);
         pen.icon(
             "plus",
             Rect::new(r.x + (d - icon) / 2.0, r.y + (d - icon) / 2.0, icon, icon),
-            c.primary.1.opacity(look.grow),
+            c.primary.1.opacity(opacity),
         );
     }
 }

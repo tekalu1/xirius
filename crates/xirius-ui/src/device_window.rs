@@ -241,14 +241,8 @@ impl Windows {
 
     pub(crate) fn sync(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
         self.sync_save(studio, main, cx);
-        let old_channel = self.channel.is_some();
-        let old_macros = self.macros.is_some();
         self.sync_channel(studio, main, cx);
         self.sync_macros(studio, main, cx);
-        let mut opened = self
-            .macros
-            .filter(|_| !old_macros)
-            .or(self.channel.filter(|_| !old_channel));
         let wanted: Vec<_> = {
             let s = studio.borrow();
             s.instruments
@@ -332,7 +326,6 @@ impl Windows {
             match result {
                 Ok(handle) => {
                     self.open.insert(id, handle);
-                    opened = Some(handle);
                 }
                 Err(error) => {
                     let mut s = studio.borrow_mut();
@@ -341,17 +334,17 @@ impl Windows {
                 }
             }
         }
-        #[cfg(windows)]
-        if let Some(handle) = opened {
-            let studio = studio.clone();
+        let activate = studio.borrow_mut().instruments.activate_device.take();
+        if let Some((id, source)) = activate
+            && let Some(&handle) = self.open.get(&id)
+            && std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_none()
+        {
             cx.defer(move |cx| {
-                if let Ok(hwnd) = handle.update(cx, |_, window, _| hwnd_of(window)) {
-                    studio.borrow_mut().raise_editors_over(hwnd as u64);
+                if !cfg!(windows) || (source != 0 && Studio::editor_foreground() == source) {
+                    let _ = handle.update(cx, |_, window, _| window.activate_window());
                 }
             });
         }
-        #[cfg(not(windows))]
-        let _ = opened;
     }
 
     /// Saving keeps the shared library form (folders and instrument effects), separate
@@ -531,17 +524,28 @@ impl Windows {
                 .unwrap_or((crate::channel::MIN_W, None))
         };
         let natural = natural.unwrap_or((800.0, 600.0));
+        let beside = studio.borrow().channel.as_ref().and_then(|w| w.beside);
+        let remembered = positions.borrow().get(&Key::Channel).map(|b| b.size);
+        let beside = beside.and_then(|id| {
+            let extent = remembered.unwrap_or_else(|| size(px(natural.0), px(natural.1)));
+            self.channel_placement(studio, cx, id, extent, size(px(least), px(CHANNEL_MIN_H)))
+        });
         let spec = Spec {
             kind: Kind::Channel,
             title: "Xirius · Channel Editor".into(),
-            initial: Bounds::new(
-                point(origin.x + px(60.0), origin.y + px(80.0)),
-                size(px(natural.0), px(natural.1)),
+            initial: beside.map_or_else(
+                || {
+                    Bounds::new(
+                        point(origin.x + px(60.0), origin.y + px(80.0)),
+                        size(px(natural.0), px(natural.1)),
+                    )
+                },
+                |(bounds, _)| bounds,
             ),
-            display: None,
+            display: beside.map(|(_, display)| display),
             min_size: Some(size(px(least), px(CHANNEL_MIN_H))),
             resizable: true,
-            positions: Some(positions.clone()),
+            positions: beside.is_none().then(|| positions.clone()),
         };
         let result = crate::independent::open(cx, main, spec, move |window, cx| {
             let closing = shared.clone();
@@ -574,6 +578,121 @@ impl Windows {
             }
         }
     }
+
+    fn channel_placement(
+        &self,
+        studio: &Rc<RefCell<Studio>>,
+        cx: &mut App,
+        id: PluginId,
+        extent: gpui::Size<gpui::Pixels>,
+        minimum: gpui::Size<gpui::Pixels>,
+    ) -> Option<(Bounds<gpui::Pixels>, gpui::DisplayId)> {
+        if std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_some() {
+            return None;
+        }
+        if let Some(handle) = self.open.get(&id) {
+            return handle
+                .update(cx, |_, window, cx| {
+                    let display = window.display(cx)?;
+                    Some((
+                        beside_bounds(window.bounds(), display.visible_bounds(), extent, minimum),
+                        display.id(),
+                    ))
+                })
+                .ok()
+                .flatten();
+        }
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Foundation::RECT;
+            use windows_sys::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MonitorFromWindow};
+            use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+            let hwnd = studio.borrow().mixer.editor_hwnd(id)? as _;
+            let mut r = RECT::default();
+            // SAFETY: read-only position and display queries for a reported editor handle.
+            let screen = unsafe {
+                if GetWindowRect(hwnd, &mut r) == 0 {
+                    return None;
+                }
+                let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                crate::independent::screens(cx)
+                    .into_iter()
+                    .find(|screen| u64::from(screen.id) as usize == monitor as usize)?
+            };
+            let bounds = |[l, t, r, b]: [i32; 4]| {
+                Bounds::new(
+                    point(px(l as f32 / screen.scale), px(t as f32 / screen.scale)),
+                    size(
+                        px((r - l) as f32 / screen.scale),
+                        px((b - t) as f32 / screen.scale),
+                    ),
+                )
+            };
+            let source = bounds([r.left, r.top, r.right, r.bottom]);
+            Some((
+                beside_bounds(source, bounds(screen.work), extent, minimum),
+                screen.id,
+            ))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = studio;
+            None
+        }
+    }
+}
+
+fn beside_bounds(
+    source: Bounds<gpui::Pixels>,
+    work: Bounds<gpui::Pixels>,
+    extent: gpui::Size<gpui::Pixels>,
+    minimum: gpui::Size<gpui::Pixels>,
+) -> Bounds<gpui::Pixels> {
+    let gap = px(8.0);
+    let right = (source.right() + gap).max(work.left());
+    let left = (source.left() - gap).min(work.right());
+    let below = (source.bottom() + gap).max(work.top());
+    let above = (source.top() - gap).min(work.bottom());
+    let clear = [
+        Bounds::new(
+            point(right, work.top()),
+            size(work.right() - right, work.size.height),
+        ),
+        Bounds::new(work.origin, size(left - work.left(), work.size.height)),
+        Bounds::new(
+            point(work.left(), below),
+            size(work.size.width, work.bottom() - below),
+        ),
+        Bounds::new(work.origin, size(work.size.width, above - work.top())),
+    ];
+    let options = [
+        point(right, source.top()),
+        point(left - extent.width, source.top()),
+        point(source.left(), below),
+        point(source.left(), above - extent.height),
+    ];
+    // Preserve the desired size whenever it fits. A smaller clear side is preferable
+    // to covering the editor, as long as the channel's controls still fit.
+    for required in [extent, minimum] {
+        for (origin, area) in options.into_iter().zip(clear) {
+            if area.size.width >= required.width && area.size.height >= required.height {
+                return crate::independent::fit_bounds(Bounds::new(origin, extent), area);
+            }
+        }
+    }
+    let mut best = None;
+    for origin in options {
+        let fitted = crate::independent::fit_bounds(Bounds::new(origin, extent), work);
+        let width =
+            (source.right().min(fitted.right()) - source.left().max(fitted.left())).max(px(0.0));
+        let height =
+            (source.bottom().min(fitted.bottom()) - source.top().max(fitted.top())).max(px(0.0));
+        let overlap = f32::from(width) * f32::from(height);
+        if best.is_none_or(|(_, area)| overlap < area) {
+            best = Some((fitted, overlap));
+        }
+    }
+    best.expect("four candidate sides").0
 }
 
 /// The Channel Editor's least height (the toolbar and a little of the flow under the bar).
@@ -1274,6 +1393,17 @@ fn device_key_event(
 ) {
     let k = &event.keystroke;
     let m = modifiers(k.modifiers);
+    if k.key == "escape"
+        && s.instruments.detached_channel
+        && matches!(
+            s.popup.as_ref().map(|p| p.kind),
+            Some(crate::popup::PopupKind::Insert(_))
+        )
+    {
+        s.popup = None;
+        s.close_wheel_group();
+        return;
+    }
     if s.popup.is_none() && s.field_keys(g, &k.key, k.key_char.as_deref(), m) {
         return;
     }

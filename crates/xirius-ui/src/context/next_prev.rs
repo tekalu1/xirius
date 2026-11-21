@@ -86,12 +86,13 @@ impl Studio {
         );
         let now = presets.origin(plugin);
         let n = list.len();
-        if n == 0 {
+        let current = list.iter().position(|x| Some(x) == now.as_ref());
+        let (previous, next) = xirius_vst3::preset_steps(n, current.is_some());
+        if !(if forward { next } else { previous }) {
             return false;
         }
-        let i = match (list.iter().position(|x| Some(x) == now.as_ref()), forward) {
-            (None, true) => 0,
-            (None, false) => n - 1,
+        let i = match (current, forward) {
+            (None, _) => 0,
             (Some(i), true) => (i + 1) % n,
             (Some(i), false) => (i + n - 1) % n,
         };

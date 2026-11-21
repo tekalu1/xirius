@@ -344,6 +344,7 @@ pub struct Windows {
     /// A detached view still owns the same Win and PluginId; only its surface changes.
     pub(crate) detached: std::collections::HashSet<PluginId>,
     pub(crate) detached_target: Option<PluginId>,
+    pub(crate) activate_device: Option<(PluginId, u64)>,
     pub(crate) detached_channel: bool,
     /// The Macro Controls' own window is the surface now (UI-337).
     pub(crate) detached_macros: bool,
@@ -895,11 +896,12 @@ impl Windows {
             let (track, plugin, def) = live(p, &w)?;
             if y < r.y + title_bar::BAR_H {
                 let b = bar(r, p, track, plugin, def);
+                let (previous, next) = self.presets.steps(plugin, def);
                 let part = [
                     (b.power, Part::Power),
-                    (b.prev, Part::PrevPreset),
+                    (b.prev.filter(|_| previous), Part::PrevPreset),
                     (Some(b.tag), Part::Preset),
-                    (b.next, Part::NextPreset),
+                    (b.next.filter(|_| next), Part::NextPreset),
                     (b.sidechain_on, Part::Sidechain),
                     (b.sidechain_list, Part::Sources),
                     (b.channel, Part::Channel),
@@ -1893,7 +1895,7 @@ impl Studio {
                     }
                 }
             }
-            Part::Channel => self.open_channel(w.track),
+            Part::Channel => self.open_channel_beside(w.track, w.plugin),
             Part::Graph(_) | Part::Body => {}
         }
         true
@@ -2583,7 +2585,7 @@ fn paint_window(
                 powered: plugin.runs(),
                 preset: &preset,
                 modified,
-                steps: (true, true),
+                steps: studio.instruments.presets.steps(plugin, def),
                 pinned: w.pinned,
                 keyed: if plugin.takes_notes() {
                     plugin.note_source.as_ref().is_some_and(|s| s.on)

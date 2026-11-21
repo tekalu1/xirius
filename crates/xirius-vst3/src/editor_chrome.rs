@@ -445,9 +445,10 @@ pub(crate) fn command(hwnd: HWND, id: usize, bar: &EditorBar) -> Option<EditorAc
 
 fn can_step(id: usize, bar: &EditorBar) -> bool {
     let known = bar.presets.iter().any(|name| name == &bar.preset);
+    let (previous, next) = crate::preset_steps(bar.presets.len(), known);
     match id {
-        PREVIOUS => known && bar.presets.len() > 1,
-        NEXT => !bar.presets.is_empty() && (!known || bar.presets.len() > 1),
+        PREVIOUS => previous,
+        NEXT => next,
         _ => false,
     }
 }

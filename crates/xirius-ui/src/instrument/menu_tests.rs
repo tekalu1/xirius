@@ -3,6 +3,7 @@
 use xirius_core::auto::AutoTarget;
 
 use super::*;
+use crate::instrument::menu::{Menu, SHOW, view};
 use crate::mixer::MixerHit;
 use crate::popup::{Action, PopupKind};
 use crate::studio::{DrawerTab, Geometry};
@@ -275,4 +276,34 @@ fn an_external_instrument_opens_the_effective_process_choices_from_its_row() {
     self::pick(&mut s, &g, "process");
     assert_eq!(s.popup.as_ref().unwrap().kind, PopupKind::Context);
     assert!(s.context_rows().iter().any(|r| r.label == "専用" && r.on));
+}
+
+#[test]
+fn show_in_browser_is_disabled_in_the_external_preset_menu() {
+    let (mut s, _, track, builtin) = studio();
+    let show = |s: &Studio, id| {
+        view(
+            &s.project(),
+            &s.instruments.presets,
+            Menu::Preset(track, id),
+        )
+        .0
+        .into_iter()
+        .find(|row| row.label == "ブラウザーに表示")
+        .unwrap()
+        .to
+    };
+    assert_eq!(show(&s, builtin), SHOW);
+    assert!(s.set_instrument(
+        track,
+        &Pick {
+            name: "Fixture".into(),
+            format: "vst3".into(),
+            uid: "00112233445566778899AABBCCDDEEFF".into(),
+        }
+    ));
+    assert_eq!(
+        show(&s, current(&s.project().tracks[&track]).unwrap().id),
+        "off:@show"
+    );
 }

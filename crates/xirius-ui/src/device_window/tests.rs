@@ -1115,3 +1115,55 @@ fn main_window_events_drop_on_the_pad_under_the_pointer() {
         assert!(s.browser.file_drag.is_none());
     }
 }
+
+#[test]
+fn escape_closes_the_detached_channel_insert_picker_with_search_text() {
+    let mut s = Studio::sample();
+    let track = *s
+        .project()
+        .tracks
+        .keys()
+        .find(|&&id| id != xirius_core::id::TrackId::MASTER)
+        .unwrap();
+    s.open_channel(track);
+    s.instruments.detached_channel = true;
+    let g = surface_geometry(&s, 640.0, 480.0);
+    s.open_popup(
+        crate::popup::PopupKind::Insert(track),
+        crate::studio::Rect::new(20.0, 50.0, 30.0, 20.0),
+    );
+    assert!(s.pick_typed(&g, "s", Some("s")));
+    assert!(s.popup.is_some());
+    device_key_event(
+        &mut s,
+        &g,
+        &gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke::parse("escape").unwrap(),
+            is_held: false,
+            prefer_character_input: false,
+        },
+        None,
+    );
+    assert!(s.popup.is_none());
+    assert_eq!(s.channel.unwrap().track, track);
+}
+
+#[test]
+fn channel_placement_prefers_clear_sides_of_the_editor() {
+    let rect = |x, y, w, h| Bounds::new(point(px(x), px(y)), size(px(w), px(h)));
+    let work = rect(0.0, 0.0, 1000.0, 800.0);
+    let extent = size(px(300.0), px(250.0));
+    let minimum = size(px(120.0), px(120.0));
+    assert_eq!(
+        beside_bounds(rect(200.0, 100.0, 250.0, 200.0), work, extent, minimum),
+        rect(458.0, 100.0, 300.0, 250.0)
+    );
+    assert_eq!(
+        beside_bounds(rect(600.0, 100.0, 250.0, 200.0), work, extent, minimum),
+        rect(292.0, 100.0, 300.0, 250.0)
+    );
+    assert_eq!(
+        beside_bounds(rect(250.0, 100.0, 500.0, 200.0), work, extent, minimum),
+        rect(250.0, 308.0, 300.0, 250.0)
+    );
+}

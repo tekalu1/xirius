@@ -13,6 +13,39 @@ fn id_of(r: &RunResult) -> String {
     r.data["id"].as_str().expect("id").to_string()
 }
 
+#[test]
+fn add_with_instrument_can_insert_before_a_track_inside_a_folder() {
+    use xirius_core::id::Node;
+    use xirius_core::model::Parent;
+
+    let mut s = Session::new("insert");
+    let folder = id_of(&run(&mut s, "folder.add", json!({"name":"Group"})));
+    let parent = Parent::Folder(folder.parse().unwrap());
+    let before = id_of(&run(
+        &mut s,
+        "track.add.audio",
+        json!({"name":"Anchor","into":folder}),
+    ));
+    let new = id_of(&run(
+        &mut s,
+        "track.add.with-instrument",
+        json!({"instrument":"Sampler","before":before}),
+    ));
+    let added = Node::Track(new.parse().unwrap());
+    let anchor = Node::Track(before.parse().unwrap());
+    assert_eq!(s.project().children(parent), &[added, anchor]);
+    assert!(
+        s.run_value(
+            "track.add.with-instrument",
+            json!({"instrument":"Sampler","before":before,"index":0}),
+            &RunOptions::human()
+        )
+        .is_err()
+    );
+    run(&mut s, "history.undo", json!({}));
+    assert_eq!(s.project().children(parent), &[anchor]);
+}
+
 fn names(s: &Session, track: &str) -> Vec<(String, PluginKind)> {
     let t = s
         .project()

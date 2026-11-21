@@ -1,5 +1,5 @@
 use super::menu::Menu;
-use super::window::{Part, preset_of, preset_values, presets, text, values};
+use super::window::{Part, live, preset_of, preset_values, presets, text, values};
 use super::*;
 use crate::mixer::MixerHit;
 use crate::popup::{Action, PopupKind};
@@ -48,6 +48,24 @@ fn press_keys(s: &mut Studio, g: &Geometry, t: TrackId) -> bool {
 fn at(s: &mut Studio, g: &Geometry, id: PluginId, part: Part) -> (f32, f32) {
     s.instruments.detached_target = Some(id);
     s.instrument_center(g, id, part).expect("in sight")
+}
+
+#[test]
+fn arrows_have_no_hit_when_the_only_preset_is_already_selected() {
+    let (mut s, g, track, id) = studio();
+    s.show_instrument(track, id);
+    s.instruments.detached_target = Some(id);
+    let p = s.project();
+    let (_, plugin, def) = live(&p, &s.instruments.open[0]).unwrap();
+    s.instruments.presets.saved = Some(Default::default());
+    assert_eq!(s.instruments.presets.steps(plugin, def), (false, false));
+    let g = s.geometry(g.size.0.max(720.0), g.size.1);
+    for part in [Part::PrevPreset, Part::NextPreset] {
+        let (x, y) = s
+            .instrument_center(&g, id, part)
+            .expect("arrow remains visible");
+        assert_eq!(s.instruments.at(&p, &g, x, y), Some((0, Part::Head)));
+    }
 }
 
 #[test]

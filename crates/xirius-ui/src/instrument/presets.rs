@@ -58,6 +58,15 @@ fn at(def: &BuiltinDef, plugin: &Plugin, v: &[f64]) -> bool {
 }
 
 impl Presets {
+    pub fn steps(&self, plugin: &Plugin, def: &BuiltinDef) -> (bool, bool) {
+        let names = self.names(def);
+        let current = self.origin(plugin);
+        xirius_vst3::preset_steps(
+            names.len(),
+            current.is_some_and(|name| names.contains(&name)),
+        )
+    }
+
     /// The device's list: its `Default`, then its preset files by name.
     pub fn names(&self, def: &BuiltinDef) -> Vec<String> {
         match &self.saved {

@@ -800,15 +800,7 @@ pub fn overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
                 }
                 match mark {
                     super::DropMark::Line { y, depth } => {
-                        let y = g.column.y + y - studio.scroll.1;
-                        let x = g.column.x
-                            + Space::X2.px()
-                            + (*depth).min(Layout::INDENT_MAX_DEPTH) as f32 * Layout::INDENT;
-                        pen.round(
-                            Rect::new(x, y - 1.5, column.right() - Space::X2.px() - x, 3.0),
-                            c.fill,
-                            Radius::Pill,
-                        );
+                        paint_track_seam(pen, studio, g, *y, *depth);
                     }
                     super::DropMark::Into(f) => {
                         if let Some(row) = tree.row_of(RowKind::Folder(*f)) {
@@ -840,6 +832,28 @@ pub fn overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
 /// The transform frame round the range (AUT-010): a line along its top and down both sides, with
 /// the handle that scales on the top edge and the one that tilts on the corner, as the velocity
 /// lane's frame has them. It follows the values while a handle is dragged.
+pub(crate) fn paint_track_seam(
+    pen: &mut Pen,
+    studio: &Studio,
+    g: &Geometry,
+    edge: f32,
+    depth: usize,
+) {
+    let y = g.column.y + edge - studio.scroll.1;
+    let left = g.column.x + 2.0 + depth.min(Layout::INDENT_MAX_DEPTH) as f32 * Layout::INDENT;
+    let right = g.column.right() - 2.0;
+    let (diameter, icon) = crate::mixer::seam::plus_size(false);
+    pen.mask(g.column, |pen| {
+        crate::mixer::seam::paint_line_plus(
+            pen,
+            (left + right) / 2.0,
+            y,
+            right - left,
+            Some((diameter, icon, 1.0)),
+        );
+    });
+}
+
 fn range_frame(pen: &mut Pen, studio: &Studio, g: &Geometry, lanes_region: Rect) {
     let how = studio
         .arrange

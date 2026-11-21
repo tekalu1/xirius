@@ -253,6 +253,11 @@ pub(crate) fn run(
             .find(|i| i.entry.id == a.opt_str("entry").unwrap_or_default())
             .ok_or_else(|| CmdError::not_found("プリセットが見つかりません"))?;
         let target = a.opt_str("target").unwrap_or("track");
+        if target != "new" && (a.opt_str("into").is_some() || a.opt_i64("index").is_some()) {
+            return Err(CmdError::invalid(
+                "--into・--index は --target new で指定してください",
+            ));
+        }
         let effect = item.entry.category.tab() == "effects";
         if (target == "instrument" && (effect || item.entry.category == Category::Track))
             || (matches!(target, "insert" | "effect") && !effect)
@@ -281,6 +286,12 @@ pub(crate) fn run(
         let edit = if target == "new" {
             let preset = as_track(&value)?;
             args["preset"] = json!(preset.to_value().to_string());
+            if let Some(parent) = a.opt_str("into") {
+                args["into"] = json!(parent);
+            }
+            if let Some(index) = a.opt_i64("index") {
+                args["index"] = json!(index);
+            }
             "track.preset.make"
         } else if item.entry.category == Category::Track {
             args["ids"] = json!([a.str("track")?]);
