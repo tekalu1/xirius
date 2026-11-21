@@ -56,6 +56,7 @@ def main():
         "GetWindow": (w.HWND, [w.HWND, w.UINT]),
         "GetTopWindow": (w.HWND, [w.HWND]),
         "GetWindowRect": (w.BOOL, [w.HWND, c.POINTER(w.RECT)]),
+        "MonitorFromWindow": (w.HANDLE, [w.HWND, w.DWORD]),
         "IsWindowVisible": (w.BOOL, [w.HWND]),
         "GetWindowThreadProcessId": (w.DWORD, [w.HWND, c.POINTER(w.DWORD)]),
         "FindWindowExW": (w.HWND, [w.HWND, w.HWND, w.LPCWSTR, w.LPCWSTR]),
@@ -78,7 +79,10 @@ def main():
         _fields_ = [("mouse", Mouse), ("key", Keyboard)]
     class Input(c.Structure):
         _fields_ = [("kind", w.DWORD), ("payload", Payload)]
+    class MonitorInfo(c.Structure):
+        _fields_ = [("size", w.DWORD), ("monitor", w.RECT), ("work", w.RECT), ("flags", w.DWORD)]
     u.SendInput.argtypes = [w.UINT, c.POINTER(Input), c.c_int]
+    u.GetMonitorInfoW.argtypes = [w.HANDLE, c.POINTER(MonitorInfo)]
 
     def wait(test, label, seconds=15, detail=None):
         deadline = time.monotonic() + seconds
@@ -111,7 +115,11 @@ def main():
 
     def drag(hwnd, start, end):
         for x, y in (start, end):
-            assert hit_root(x, y) == hwnd, f"drag point is covered at {(x, y)}"
+            hit = hit_root(x, y)
+            if hit != hwnd:
+                name = c.create_unicode_buffer(64)
+                u.GetClassNameW(hit, name, len(name))
+                raise AssertionError(f"drag point {(x, y)} expected {hwnd}, found {hit} ({name.value})")
         send([mouse(*start, 0xC001), mouse(*start, 0x0002)])
         send([mouse(*end, 0xC001)])
         send([mouse(*end, 0x0004)])
@@ -276,7 +284,8 @@ def main():
                         wait(lambda: not request.exists(), "fixture did not report the track order")
                         return json.loads(reply.read_text(encoding="utf-8"))
 
-                    click_main(main_hwnd)
+                    # Keep both external frames outside the browser-to-column path.
+                    move_right(first)
                     drag(main_hwnd, info["drag_from"], info["seam"])
                     original = info["root"]
                     index = info["before_index"]
@@ -312,6 +321,15 @@ def main():
                                    "channel editor did not open")
                     r = rect(first)
                     bounds = rect(channel)
+                    monitor = MonitorInfo()
+                    monitor.size = c.sizeof(monitor)
+                    assert u.GetMonitorInfoW(u.MonitorFromWindow(first, 2), c.byref(monitor))
+                    work = monitor.work
+                    assert (work.left <= bounds.left < bounds.right <= work.right
+                            and work.top <= bounds.top < bounds.bottom <= work.bottom), (
+                                "channel did not fit within the working area",
+                                (bounds.left, bounds.top, bounds.right, bounds.bottom),
+                                (work.left, work.top, work.right, work.bottom))
                     assert (bounds.right <= r.left or bounds.left >= r.right
                             or bounds.bottom <= r.top or bounds.top >= r.bottom), (
                                 "channel did not open beside the external editor",
@@ -384,6 +402,7 @@ def main():
                      "built-in editor did not open in front of the pinned editors")
                 assert u.IsWindowVisible(first) and u.IsWindowVisible(second)
                 passed("07-builtin-pinned")
+                move_frame(builtin, 35, u.GetSystemMetrics(1) - 185)
                 button(first, 6)
                 channel = wait(lambda: u.FindWindowExW(0, 0, None, "Xirius · Channel Editor"), "channel editor did not open")
                 assert u.IsWindowVisible(first) and u.IsWindowVisible(second)

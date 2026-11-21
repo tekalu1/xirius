@@ -60,11 +60,13 @@ fn arrows_have_no_hit_when_the_only_preset_is_already_selected() {
     s.instruments.presets.saved = Some(Default::default());
     assert_eq!(s.instruments.presets.steps(plugin, def), (false, false));
     let g = s.geometry(g.size.0.max(720.0), g.size.1);
-    for part in [Part::PrevPreset, Part::NextPreset] {
-        let (x, y) = s
-            .instrument_center(&g, id, part)
-            .expect("arrow remains visible");
-        assert_eq!(s.instruments.at(&p, &g, x, y), Some((0, Part::Head)));
+    let (_, _, bar) = s.instruments.surface_bar(&p, &g).unwrap();
+    for arrow in [bar.prev, bar.next] {
+        let r = arrow.expect("arrow remains visible");
+        assert_eq!(
+            s.instruments.at(&p, &g, r.x + r.w / 2.0, r.y + r.h / 2.0),
+            Some((0, Part::Body)),
+        );
     }
 }
 

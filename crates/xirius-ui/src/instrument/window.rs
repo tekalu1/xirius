@@ -899,9 +899,16 @@ impl Windows {
                 let (previous, next) = self.presets.steps(plugin, def);
                 let part = [
                     (b.power, Part::Power),
-                    (b.prev.filter(|_| previous), Part::PrevPreset),
+                    (
+                        b.prev,
+                        if previous {
+                            Part::PrevPreset
+                        } else {
+                            Part::Body
+                        },
+                    ),
                     (Some(b.tag), Part::Preset),
-                    (b.next.filter(|_| next), Part::NextPreset),
+                    (b.next, if next { Part::NextPreset } else { Part::Body }),
                     (b.sidechain_on, Part::Sidechain),
                     (b.sidechain_list, Part::Sources),
                     (b.channel, Part::Channel),
