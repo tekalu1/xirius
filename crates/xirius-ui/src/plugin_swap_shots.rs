@@ -325,7 +325,9 @@ fn stage(s: &mut Studio, n: u8) {
         }
         7 => closed(s, "swap07-closed-dedicated", "dedicated"),
         8 => {
-            let seen = follow(s, "swap08-reopened", Instant::now(), |w| w.pid != app);
+            let seen = follow(s, "swap08-reopened", Instant::now(), |w| {
+                w.pid != app && (real || w.label.is_some_and(|l| l.delay == 128))
+            });
             check("swap08-reopened", "opened", &seen);
         }
         9 => closed(s, "swap09-closed-default", "default"),
