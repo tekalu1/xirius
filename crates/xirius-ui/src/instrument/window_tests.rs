@@ -379,9 +379,8 @@ fn added(s: &Studio, t: TrackId, name: &str) -> PluginId {
 
 #[test]
 fn the_bars_parts_are_in_sight_at_1280_and_360() {
-    // UI-322: every seat of the shared bar sits inside the window at both
-    // screen sizes, a press on it landing on its part. The Sampler's window
-    // is wider than the bar's narrow width: ‹ › show.
+    // UI-322: the shared bar keeps its controls inside the window at both
+    // screen sizes, including the disabled preset arrows.
     let (mut s, _, t, id) = studio();
     s.show_instrument(t, id);
     s.instruments.detached_target = Some(id);
@@ -400,15 +399,14 @@ fn the_bars_parts_are_in_sight_at_1280_and_360() {
                 "{part:?} at {w}"
             );
         }
-        // ‹ ›, and no side-chain seat on an instrument.
-        assert!(
-            s.instrument_center(&g, id, Part::PrevPreset).is_some(),
-            "at {w}"
-        );
-        assert!(
-            s.instrument_center(&g, id, Part::NextPreset).is_some(),
-            "at {w}"
-        );
+        let project = s.project();
+        let (_, frame, bar) = s.instruments.surface_bar(&project, &g).unwrap();
+        for arrow in [bar.prev.unwrap(), bar.next.unwrap()] {
+            assert!(
+                arrow.x >= frame.x && arrow.right() <= frame.right(),
+                "at {w}"
+            );
+        }
         assert!(
             s.instrument_center(&g, id, Part::Sidechain).is_none(),
             "at {w}"

@@ -217,12 +217,13 @@ pub(crate) fn open<V: Render + 'static>(
                 // GPUI applies its initial placement, which only an activation does, and
                 // these windows are shown without one (a parked window is never activated
                 // either). Place and size it now, so it opens as asked.
-                window.resize(initial.size);
-                place(
+                if !place(
                     &title,
-                    initial.origin,
+                    initial,
                     scale.unwrap_or_else(|| window.scale_factor()),
-                );
+                ) {
+                    window.resize(initial.size);
+                }
                 if let Some((key, positions)) = spec_key.zip(positions.as_ref()) {
                     // Remember it from the start, so a reopen finds it though it was never
                     // moved (and the Macro Controls find where the Channel Editor is).
@@ -236,18 +237,17 @@ pub(crate) fn open<V: Render + 'static>(
     )
 }
 
-/// Puts the client area of the window at `origin` (logical px of the display it goes to, whose
-/// scale is `scale`). Windows only: elsewhere the platform places the window at the initial
-/// bounds it is created with.
-fn place(title: &str, origin: gpui::Point<Pixels>, scale: f32) {
+/// Applies the client bounds in logical pixels of the destination display before showing the
+/// window. Elsewhere the platform places the window at the initial bounds it is created with.
+fn place(title: &str, bounds: Bounds<Pixels>, scale: f32) -> bool {
     #[cfg(not(windows))]
-    let _ = (title, origin, scale);
+    let _ = (title, bounds, scale);
     #[cfg(windows)]
     if let Some(hwnd) = crate::park::own_handle(title) {
         use windows_sys::Win32::Foundation::{POINT, RECT};
         use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            GetWindowRect, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos,
+            GetClientRect, GetWindowRect, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos,
         };
         let mut at = POINT { x: 0, y: 0 };
         let mut frame = RECT {
@@ -256,26 +256,32 @@ fn place(title: &str, origin: gpui::Point<Pixels>, scale: f32) {
             right: 0,
             bottom: 0,
         };
-        // SAFETY: this process's window on the GUI thread; the out-pointers are valid for
-        // the calls. Only its position changes (no size, no activation).
+        let mut client = RECT::default();
+        // SAFETY: this process's window on the GUI thread. All out-pointers are valid.
         unsafe {
-            if ClientToScreen(hwnd as _, &mut at) == 0 || GetWindowRect(hwnd as _, &mut frame) == 0
+            if ClientToScreen(hwnd as _, &mut at) == 0
+                || GetWindowRect(hwnd as _, &mut frame) == 0
+                || GetClientRect(hwnd as _, &mut client) == 0
             {
-                return;
+                return false;
             }
-            let want_x = (f32::from(origin.x) * scale).round() as i32;
-            let want_y = (f32::from(origin.y) * scale).round() as i32;
-            SetWindowPos(
+            let physical = |px| (f32::from(px) * scale).round() as i32;
+            let want_x = physical(bounds.origin.x);
+            let want_y = physical(bounds.origin.y);
+            let border_width = frame.right - frame.left - client.right;
+            let border_height = frame.bottom - frame.top - client.bottom;
+            return SetWindowPos(
                 hwnd as _,
                 std::ptr::null_mut(),
                 frame.left + want_x - at.x,
                 frame.top + want_y - at.y,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-            );
+                physical(bounds.size.width) + border_width,
+                physical(bounds.size.height) + border_height,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            ) != 0;
         }
     }
+    false
 }
 
 /// Makes the main window the owner: the window is always in front of it, and goes with it

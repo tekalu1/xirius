@@ -190,6 +190,9 @@ fixture は完了を待ってから画面を検査する。集計の `run` 1件�
 `every_session_command_the_screen_sends_reaches_the_owner` と共通索引・保存・
 適用の試験で入口を確認し、`ui-io-audit.tsv` を更新した。
 
+UI-370 では、トラックプリセットを落とす処理を `arrange_run` に通す。
+境目に落とした位置とプリセットを一つのコマンドで渡し、Undo 一回で取り消せる。
+
 ### 設定の移行読み込みと独立窓のプリセット境界（BRW-001 / UI-337、2026-11-09）
 
 `places::load` は移行を含む `places::load_migrated` に変わり、呼び名を監査名へ

@@ -26,7 +26,7 @@ fn add_with_instrument_can_insert_before_a_track_inside_a_folder() {
         "track.add.audio",
         json!({"name":"Anchor","into":folder}),
     ));
-    let original = s.project().children(parent).to_vec();
+    let original = s.project().children(parent).clone();
     let new = id_of(&run(
         &mut s,
         "track.add.with-instrument",
@@ -39,7 +39,7 @@ fn add_with_instrument_can_insert_before_a_track_inside_a_folder() {
         original.iter().position(|&node| node == anchor).unwrap(),
         added,
     );
-    assert_eq!(s.project().children(parent), expected);
+    assert_eq!(s.project().children(parent), &expected);
     assert!(
         s.run_value(
             "track.add.with-instrument",
@@ -49,7 +49,7 @@ fn add_with_instrument_can_insert_before_a_track_inside_a_folder() {
         .is_err()
     );
     run(&mut s, "history.undo", json!({}));
-    assert_eq!(s.project().children(parent), original);
+    assert_eq!(s.project().children(parent), &original);
 }
 
 fn names(s: &Session, track: &str) -> Vec<(String, PluginKind)> {

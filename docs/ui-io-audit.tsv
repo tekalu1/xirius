@@ -71,7 +71,8 @@ crates/xirius-ui/src/browser_prefs_save.rs	lock	5
 crates/xirius-ui/src/browser_prefs_save.rs	places :: load_migrated	1
 crates/xirius-ui/src/browser_prefs_save.rs	places :: save	1
 crates/xirius-ui/src/browser_prefs_save.rs	wait	1
-crates/xirius-ui/src/browser_presets.rs	run_command	4
+crates/xirius-ui/src/browser_presets.rs	arrange_run	1
+crates/xirius-ui/src/browser_presets.rs	run_command	3
 crates/xirius-ui/src/channel/mod.rs	run_command	9
 crates/xirius-ui/src/channel/preset.rs	run	1
 crates/xirius-ui/src/channel/preset.rs	run_command	4
