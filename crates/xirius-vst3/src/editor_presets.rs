@@ -71,14 +71,7 @@ impl State {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .stack_base;
-            // SAFETY: grant only the song process the right to show a requested file dialog.
-            // The editor remains unowned by that process and no synchronous message is sent.
-            unsafe {
-                let mut process = 0;
-                if GetWindowThreadProcessId(base as HWND, &mut process) != 0 {
-                    AllowSetForegroundWindow(process);
-                }
-            }
+            crate::editor::allow_song_foreground(base);
             let mut actions = self
                 .shared
                 .editor_actions

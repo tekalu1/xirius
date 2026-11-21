@@ -370,6 +370,20 @@ mod tests {
         frames_loaded(&mut s, t, id);
     }
 
+    #[test]
+    fn an_editor_requested_by_a_drop_opens_without_main_window_frames() {
+        let mut s = apart();
+        let t = track(&s, "Vocal");
+        let id = put_in(&mut s, t);
+        s.idle();
+        assert!(asked(&s).is_empty());
+        loaded(&mut s, id);
+        assert!(s.idle().changed, "the loading window needs to be retired");
+        s.idle();
+        assert_eq!(asked(&s), vec![(t, id)]);
+        assert_eq!(s.mixer.open_later, None);
+    }
+
     /// The same in a splitter's branch and in a layer of a multi-instrument (MIX-042).
     #[test]
     fn a_plugin_put_in_a_branch_or_a_layer_opens_the_same() {

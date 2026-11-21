@@ -55,7 +55,12 @@ impl Studio {
                 went_down: false,
             };
         }
+        // A pending editor needs the live graph and the host's reply even when
+        // the main window is not drawing frames.
+        let editor_requested =
+            self.mixer.open_later.is_some() && (self.poll_swap() | self.poll_open_later());
         let changed = continued
+            | editor_requested
             | self.poll_finished_take()
             | self.poll_recent_keep()
             | self.poll_plugins()

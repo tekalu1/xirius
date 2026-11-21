@@ -620,7 +620,11 @@ impl Studio {
                         self.mixer.editor_pins.insert(id);
                     }
                 }
-                EditorAction::Channel => self.open_channel_beside(track, id),
+                EditorAction::Channel => self.open_channel_beside(
+                    track,
+                    id,
+                    self.mixer.editor_hwnd(id).unwrap_or_default() as u64,
+                ),
                 EditorAction::PresetOpen => {
                     self.file_request = Some(crate::studio::FileRequest::PresetOpen(id))
                 }
