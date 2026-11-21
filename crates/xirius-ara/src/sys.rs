@@ -42,6 +42,7 @@ pub const GRADE_APPROVED: ContentGrade = 3;
 pub const UPDATE_EVERYTHING: ContentUpdateFlags = 0;
 pub const UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED: ContentUpdateFlags = 1;
 pub const UPDATE_NOTE_SCOPE_REMAINS_UNCHANGED: ContentUpdateFlags = 1 << 1;
+pub const UPDATE_TIMING_SCOPE_REMAINS_UNCHANGED: ContentUpdateFlags = 1 << 2;
 pub const UPDATE_TUNING_SCOPE_REMAINS_UNCHANGED: ContentUpdateFlags = 1 << 3;
 pub const UPDATE_HARMONIC_SCOPE_REMAINS_UNCHANGED: ContentUpdateFlags = 1 << 4;
 

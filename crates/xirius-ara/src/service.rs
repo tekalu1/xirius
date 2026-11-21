@@ -459,7 +459,7 @@ impl Service {
     /// [`Service::store_later`] only when the plugin changed its document since it was last
     /// asked; the answer is `None` when it did not. The plugin's thread takes its notifications
     /// first, so an edit it has not told of yet (they come a turn later) counts too.
-    /// Explicit save requests also populate [`Service::analysis_archive`] from completed
+    /// Conditional requests also populate [`Service::analysis_archive`] from completed
     /// analysis, even when the reply is `None`; that cache does not mark an edit.
     pub fn store_changed_later(&self) -> Option<Stored> {
         if self
@@ -983,8 +983,10 @@ impl Slot {
                     shared.synced.fetch_max(n, Ordering::AcqRel);
                 }
                 (_, Msg::Sync(..)) => {}
-                (Slot::Open(ara), Msg::Store(tx)) => drop(tx.send(ara.store())),
-                (Slot::Open(ara), Msg::StoreChanged(tx)) => drop(tx.send(ara.store_changed())),
+                (Slot::Open(ara), Msg::Store(tx)) => drop(tx.send(ara.store_requested(false))),
+                (Slot::Open(ara), Msg::StoreChanged(tx)) => {
+                    drop(tx.send(ara.store_requested(true)))
+                }
                 (Slot::Open(ara), Msg::Notes(key, of_mod, tx)) => {
                     drop(tx.send(ara.notes(key, of_mod)))
                 }
@@ -1661,6 +1663,10 @@ impl Ara {
         self.doc.notify_model_updates();
         let here = std::thread::current().id();
         let mut dirty = false;
+        let unchanged =
+            sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED | sys::UPDATE_NOTE_SCOPE_REMAINS_UNCHANGED;
+        // tick records analysis completion after this drain. Check the affected source so
+        // completion cannot look like an edit or hide an edit to another source.
         // A clip the plugin changed shows as rendering at once, so a wait for its sound does
         // not end on the old one.
         let mut restale = false;
@@ -1687,16 +1693,14 @@ impl Ara {
                     }
                 }
                 Notice::SourceContent { source, flags } => {
-                    if flags & sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED != 0 {
+                    let Some((id, source)) = self.sources.iter().find(|(_, s)| s.key == source)
+                    else {
                         continue;
-                    }
-                    let id = self
-                        .sources
-                        .iter()
-                        .find(|(_, s)| s.key == source)
-                        .map(|(id, _)| id.clone());
-                    for c in self.clips.values_mut() {
-                        if Some(&c.spec.source) == id.as_ref() {
+                    };
+                    dirty |=
+                        track_document_changes && flags & unchanged != unchanged && source.analysed;
+                    if flags & sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED == 0 {
+                        for c in self.clips.values_mut().filter(|c| &c.spec.source == id) {
                             c.stale = true;
                             restale = true;
                         }
@@ -1719,12 +1723,14 @@ impl Ara {
                     modification: r,
                     flags,
                 } => {
-                    if flags & sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED != 0 {
-                        continue;
-                    }
                     if let Some(c) = self.clips.values_mut().find(|c| clip_ref(c.spec.key) == r) {
-                        c.stale = true;
-                        restale = true;
+                        dirty |= track_document_changes
+                            && flags & unchanged != unchanged
+                            && self.sources.get(&c.spec.source).is_some_and(|s| s.analysed);
+                        if flags & sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED == 0 {
+                            c.stale = true;
+                            restale = true;
+                        }
                     }
                 }
                 Notice::DocumentData => dirty |= track_document_changes,
@@ -1739,20 +1745,20 @@ impl Ara {
         (dirty, restale)
     }
 
-    /// The archive, when the plugin changed its document since it was last asked: its
-    /// notifications are taken first, so an edit made just before is not missed.
-    fn store_changed(&mut self) -> Option<(Vec<u8>, String)> {
+    /// Bring in edits that the plugin applies on its next model update before taking a snapshot.
+    fn store_requested(&mut self, only_changed: bool) -> Option<(Vec<u8>, String)> {
         if self.take_notices(true).1 {
             self.publish();
         }
-        if !self.shared.dirty.swap(false, Ordering::AcqRel) {
-            // Explicit save/collect requests still capture completed analysis while a
+        let dirty = self.shared.dirty.swap(false, Ordering::AcqRel);
+        if only_changed && !dirty {
+            // Conditional collection still captures completed analysis while a
             // render is pending. This cache does not become an edit archive or set dirty.
             self.cache_analysis();
             return None;
         }
         let archive = self.store();
-        if archive.is_none() {
+        if archive.is_none() && dirty {
             // A failed write must leave the edit available to the next archive request.
             self.shared.dirty.store(true, Ordering::Release);
         }

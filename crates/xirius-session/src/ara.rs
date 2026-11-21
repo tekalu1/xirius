@@ -16,8 +16,8 @@
 //!   otherwise a document of its own, started from the live one's archive. It waits for the
 //!   analysis, at most [`EXPORT_WAIT`] (ENG-025).
 //! - A song keeps each plugin's archive ([`take_archives`], ARC-025, PLG-037). Archives
-//!   of edits follow the plugin's document-change notices. Completed analyses are cached
-//!   separately until an explicit save, so opening and playing never marks an edit.
+//!   of edits follow the plugin's change notices. Explicit saves and exports also ask for a
+//!   fresh archive. Completed analyses are cached separately during ordinary playback.
 //!   The window's thread never waits for it: the plugin's thread writes it
 //!   and a later frame puts it in; writing or leaving the song waits over the frames for the
 //!   one asked, at most [`STORE_WAIT`], and otherwise writes the one it has. A plugin whose
@@ -269,6 +269,14 @@ struct Sound {
 struct Asked {
     answer: Stored,
     edit: bool,
+    again: Option<ArchiveRequest>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArchiveRequest {
+    Notified,
+    Changed,
+    Fresh,
 }
 
 /// The document's service, whether its binary is registered for tests or loaded in the host.
@@ -392,9 +400,6 @@ pub struct Doc {
     restoring: AtomicBool,
     /// The archive asked for and not come yet.
     asked: Mutex<Option<Asked>>,
-    /// The newest archive was asked for while [`Doc::asked`] was on its way: asked again when
-    /// it comes.
-    again: AtomicBool,
     /// No clip of the song uses it any more, and it was asked for its last edits.
     leaving: AtomicBool,
 }
@@ -448,7 +453,6 @@ impl Doc {
             analysis_seen: Mutex::new(None),
             restoring: AtomicBool::new(restoring),
             asked: Mutex::new(None),
-            again: AtomicBool::new(false),
             leaving: AtomicBool::new(false),
         });
         lock(docs()).insert(key, Arc::downgrade(&doc));
@@ -465,11 +469,12 @@ impl Doc {
             ServiceHandle::Local(s) => Some(s.edit_pending()),
             ServiceHandle::Remote(_) => None,
         };
+        let asked = lock(&self.asked);
         format!(
             "asked={} stored={} edit_pending={pending:?} again={} probe={:?}",
-            lock(&self.asked).is_some(),
+            asked.is_some(),
             lock(&self.stored).is_some(),
-            self.again.load(Ordering::Acquire),
+            asked.as_ref().is_some_and(|a| a.again.is_some()),
             self.service.probe(Duration::from_millis(100))
         )
     }
@@ -679,31 +684,32 @@ impl Doc {
         Some(data)
     }
 
-    /// Asks the plugin for its archive, without waiting. Not `fresh`, only when it said it
-    /// changed its document since it was last asked and no answer is on its way. `fresh` (the
-    /// song is written or the clips leave it), when it changed it at all, counting an edit it
-    /// has not told of yet (that comes a turn later): asked again after an answer on its way.
-    fn ask(&self, asked: &mut Option<Asked>, fresh: bool) {
-        if asked.is_some() {
-            if fresh {
-                self.again.store(true, Ordering::Release);
+    /// Asks without waiting. A save or export requests a fresh archive even without a notice.
+    /// A close polls for any edits not yet reported, while an ordinary frame checks the flag.
+    fn ask(&self, asked: &mut Option<Asked>, request: ArchiveRequest) {
+        if let Some(active) = asked {
+            if request != ArchiveRequest::Notified && active.again != Some(ArchiveRequest::Fresh) {
+                active.again = Some(request);
             }
-        } else if fresh {
-            *asked = self.service.store_changed_later().map(|answer| Asked {
-                answer,
-                edit: false,
-            });
-        } else if self.service.take_dirty() {
-            *asked = self
-                .service
-                .store_later()
-                .map(|answer| Asked { answer, edit: true });
-            if asked.is_none()
-                && self.service.crashed().is_none()
-                && self.service.failed().is_none()
-            {
-                self.service.mark_changed();
-            }
+            return;
+        }
+        let edit = request == ArchiveRequest::Notified;
+        let answer = match request {
+            ArchiveRequest::Notified if !self.service.take_dirty() => return,
+            ArchiveRequest::Notified | ArchiveRequest::Fresh => self.service.store_later(),
+            ArchiveRequest::Changed => self.service.store_changed_later(),
+        };
+        *asked = answer.map(|answer| Asked {
+            answer,
+            edit,
+            again: None,
+        });
+        if asked.is_none()
+            && edit
+            && self.service.crashed().is_none()
+            && self.service.failed().is_none()
+        {
+            self.service.mark_changed();
         }
     }
 
@@ -750,26 +756,28 @@ impl Doc {
                     });
                 }
             }
+            let again = request.again;
             *asked = None;
-            if self.again.swap(false, Ordering::AcqRel) {
-                *asked = self.service.store_changed_later().map(|answer| Asked {
-                    answer,
-                    edit: false,
-                });
+            if let Some(again) = again {
+                self.ask(asked, again);
             }
         }
         false
     }
 
     /// The plugin's archive: the one taken last, or the newer one it was asked for when it has
-    /// come. With `wait` (`plugin.collect`, the headless pull), the newest is asked for as when
-    /// the song is written, and waited for at most [`STORE_WAIT`]; without, an edit asks for it
-    /// and a later call takes it.
-    fn archive(&self, wait: bool) -> Option<xirius_core::ara::Archive> {
+    /// come. With `wait` (`plugin.collect`, the headless pull), polls the plugin for changes
+    /// and waits at most [`STORE_WAIT`]; without, a later call takes the result of a request.
+    fn archive(&self, wait: bool, request: ArchiveRequest) -> Option<xirius_core::ara::Archive> {
         let mut asked = archive_lock(&self.asked, wait)?;
         // An edit made while the plugin wrote the archive asks again; a few rounds at most.
         for round in 0..3 {
-            self.ask(&mut asked, wait && round == 0);
+            let request = if round == 0 {
+                request
+            } else {
+                ArchiveRequest::Notified
+            };
+            self.ask(&mut asked, request);
             if asked.is_none() || self.receive(&mut asked, wait) {
                 break;
             }
@@ -947,7 +955,7 @@ impl Held {
                 return true;
             };
             if !d.leaving.swap(true, Ordering::AcqRel) {
-                d.ask(&mut asked, true);
+                d.ask(&mut asked, ArchiveRequest::Changed);
             }
             if d.receive(&mut asked, false) {
                 return true;
@@ -1066,7 +1074,10 @@ impl Held {
             .then(|| existing(&(scope, plugin.to_string(), 0)))
             .flatten();
         let archive = match (live, &left) {
-            (Some(l), _) => l.service.store(STORE_WAIT),
+            (Some(l), _) => l
+                .archive(true, ArchiveRequest::Fresh)
+                .as_ref()
+                .and_then(bytes_of),
             (None, Some(a)) => bytes_of(a),
             (None, None) => archive_of(p, plugin),
         };
@@ -1222,12 +1233,19 @@ impl Held {
         }
     }
 
-    /// Asks, without waiting, the plugins whose documents changed for their archives, so that
-    /// they are ready when the song is written or left: an edit the plugin has not told of yet
-    /// counts too.
+    /// Requests current archives for an explicit save or export, even without change notices.
     pub fn ask_archives(&self, p: &Project) {
+        self.ask_archives_with(p, ArchiveRequest::Fresh);
+    }
+
+    /// Polls for edits before leaving the song, without treating analysis as an edit.
+    pub(crate) fn ask_changed_archives(&self, p: &Project) {
+        self.ask_archives_with(p, ArchiveRequest::Changed);
+    }
+
+    fn ask_archives_with(&self, p: &Project, request: ArchiveRequest) {
         for d in self.kept(p) {
-            d.ask(&mut lock(&d.asked), true);
+            d.ask(&mut lock(&d.asked), request);
         }
     }
 
@@ -1253,11 +1271,16 @@ impl Held {
     /// The archives of the plugins whose documents changed and differ from the song's: those
     /// that have come, or with `wait` also those on their way.
     pub fn archives(&self, p: &Project, wait: bool) -> Vec<xirius_core::ara::Archive> {
+        let request = if wait {
+            ArchiveRequest::Changed
+        } else {
+            ArchiveRequest::Notified
+        };
         let mut out: Vec<_> = self
             .kept_when(p, wait)
             .unwrap_or_default()
             .iter()
-            .filter_map(|d| d.archive(wait))
+            .filter_map(|d| d.archive(wait, request))
             .filter(|a| p.ara.archives.get(&a.plugin) != Some(a))
             .collect();
         out.sort_by(|a, b| a.plugin.cmp(&b.plugin));
@@ -1346,7 +1369,9 @@ mod tests {
             xirius_ara::fake::loader(Default::default()),
             None,
         );
-        while_locked(&doc.asked, || assert!(doc.archive(false).is_none()));
+        while_locked(&doc.asked, || {
+            assert!(doc.archive(false, ArchiveRequest::Notified).is_none());
+        });
         let (reply, rx) = mpsc::channel();
         reply
             .send(Some((vec![1, 2, 3], "test-archive".into())))
@@ -1354,10 +1379,13 @@ mod tests {
         *lock(&doc.asked) = Some(Asked {
             answer: rx,
             edit: false,
+            again: None,
         });
-        while_locked(&doc.stored, || assert!(doc.archive(false).is_none()));
+        while_locked(&doc.stored, || {
+            assert!(doc.archive(false, ArchiveRequest::Notified).is_none());
+        });
         assert!(
-            doc.archive(false).is_some(),
+            doc.archive(false, ArchiveRequest::Notified).is_some(),
             "contention lost the ready reply"
         );
         let held = Held::default();

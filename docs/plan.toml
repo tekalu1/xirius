@@ -4068,6 +4068,8 @@ area = "PLG"
 phase = "v1.1"
 source = "reports/02-audio-plugin-license.md § 3.7"
 done_when = "保存して開き直すと ARA の編集が戻り、修飾を複製できる"
+status = "partial"
+remaining = "実プラグインで、内容変更の通知だけを出す編集が新規の曲と開き直した曲で未保存になり、保存して開き直しても残ることを確認する"
 
 [[item]]
 id = "PLG-038"

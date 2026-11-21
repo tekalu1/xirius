@@ -63,11 +63,14 @@ pub struct Config {
     pub tail: f64,
     /// Microseconds each block of rendering takes, spent spinning.
     pub render_spin_us: u64,
+    /// Restore reports only modification content.
+    #[serde(default)]
+    pub restore_content_only: bool,
 }
 
 thread_local! {
     /// The configuration of the next document made on this thread.
-    static NEXT: Cell<Config> = const { Cell::new(Config { open_reply_ms: 0, stalled_poll_ms: 0, prepare_ms: 0, editor_ms: 0, analysis_ms: 0, fault_on_analysis: false, fault_on_own_thread: false, hang_in_render: false, tail: 0.0, render_spin_us: 0 }) };
+    static NEXT: Cell<Config> = const { Cell::new(Config { open_reply_ms: 0, stalled_poll_ms: 0, prepare_ms: 0, editor_ms: 0, analysis_ms: 0, fault_on_analysis: false, fault_on_own_thread: false, hang_in_render: false, tail: 0.0, render_spin_us: 0, restore_content_only: false }) };
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -76,7 +79,14 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 static VIOLATIONS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static LIVE_DOCUMENTS: AtomicI64 = AtomicI64::new(0);
-static EDITS: Mutex<Vec<(String, f32)>> = Mutex::new(Vec::new());
+static EDITS: Mutex<Vec<(String, f32, EditNotices)>> = Mutex::new(Vec::new());
+
+#[derive(Clone, Copy)]
+pub enum EditNotices {
+    Document,
+    ModificationAndRegion(sys::ContentUpdateFlags),
+    None,
+}
 static WINDOWS: Mutex<Vec<(String, Arc<AtomicBool>)>> = Mutex::new(Vec::new());
 static SELECTION: AtomicU64 = AtomicU64::new(0);
 static STORE_PAUSE_MS: AtomicU64 = AtomicU64::new(0);
@@ -110,7 +120,12 @@ pub fn live_documents() -> i64 {
 /// Sets the gain of the modification with persistent id `modification`, as a user would in
 /// the plugin's window. Applied at the next `notifyModelUpdates`.
 pub fn edit(modification: &str, gain: f32) {
-    lock(&EDITS).push((modification.to_string(), gain));
+    edit_with_notices(modification, gain, EditNotices::Document);
+}
+
+/// Applies the same edit with the specified model notifications.
+pub fn edit_with_notices(modification: &str, gain: f32, notices: EditNotices) {
+    lock(&EDITS).push((modification.to_string(), gain, notices));
 }
 
 /// The titles of the editor windows open, in every document of this process.
@@ -338,9 +353,8 @@ struct Region {
 enum Pending {
     Progress(Ref, i32, f32),
     SourceContent(Ref),
-    ModificationContent(Ref),
-    ModificationMetadata(Ref),
-    RegionContent(Ref),
+    ModificationContent(Ref, sys::ContentUpdateFlags),
+    RegionContent(Ref, sys::ContentUpdateFlags),
     DocumentData,
     Position(f64),
 }
@@ -468,7 +482,7 @@ unsafe extern "C" fn notify_model_updates(r: Ref) {
             pending,
             ..
         } = &mut *s;
-        for src in sources.values_mut() {
+        for (&src_key, src) in sources.iter_mut() {
             let Some(job) = src.job.clone() else { continue };
             if !src.started {
                 src.started = true;
@@ -486,6 +500,9 @@ unsafe extern "C" fn notify_model_updates(r: Ref) {
                 src.job = None;
                 pending.push(Pending::Progress(src.host, sys::ANALYSIS_COMPLETED, 1.0));
                 pending.push(Pending::SourceContent(src.host));
+                for m in modifications.values().filter(|m| m.source == src_key) {
+                    pending.push(Pending::ModificationContent(m.host, sys::UPDATE_EVERYTHING));
+                }
             } else {
                 let value = read as f32 / job.total.max(1) as f32;
                 pending.push(Pending::Progress(src.host, sys::ANALYSIS_UPDATED, value));
@@ -493,17 +510,26 @@ unsafe extern "C" fn notify_model_updates(r: Ref) {
         }
         // Edits made in the plugin's window.
         let mut edits = lock(&EDITS);
-        edits.retain(|(id, gain)| {
+        edits.retain(|(id, gain, notices)| {
             let Some((&key, m)) = modifications.iter_mut().find(|(_, m)| m.id == *id) else {
                 return true;
             };
             m.gain = *gain;
-            pending.push(Pending::ModificationContent(m.host));
+            let flags = match *notices {
+                EditNotices::None => return false,
+                EditNotices::Document => sys::UPDATE_EVERYTHING,
+                EditNotices::ModificationAndRegion(flags) => flags,
+            };
+            pending.push(Pending::ModificationContent(m.host, flags));
             for reg in regions.values().filter(|reg| reg.modification == key) {
-                pending.push(Pending::RegionContent(reg.host));
-                pending.push(Pending::Position(reg.start_in_playback));
+                pending.push(Pending::RegionContent(reg.host, flags));
+                if matches!(notices, EditNotices::Document) {
+                    pending.push(Pending::Position(reg.start_in_playback));
+                }
             }
-            pending.push(Pending::DocumentData);
+            if matches!(notices, EditNotices::Document) {
+                pending.push(Pending::DocumentData);
+            }
             false
         });
         std::mem::take(pending)
@@ -523,25 +549,13 @@ unsafe extern "C" fn notify_model_updates(r: Ref) {
                     std::ptr::null(),
                     sys::UPDATE_EVERYTHING,
                 ),
-                Pending::ModificationContent(m) => (model
+                Pending::ModificationContent(m, flags) => (model
                     .notify_audio_modification_content_changed)(
-                    mref,
-                    m,
-                    std::ptr::null(),
-                    sys::UPDATE_EVERYTHING,
+                    mref, m, std::ptr::null(), flags
                 ),
-                Pending::ModificationMetadata(m) => (model
-                    .notify_audio_modification_content_changed)(
-                    mref,
-                    m,
-                    std::ptr::null(),
-                    sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED,
-                ),
-                Pending::RegionContent(reg) => (model.notify_playback_region_content_changed)(
-                    mref,
-                    reg,
-                    std::ptr::null(),
-                    sys::UPDATE_EVERYTHING,
+                Pending::RegionContent(reg, flags) => (model
+                    .notify_playback_region_content_changed)(
+                    mref, reg, std::ptr::null(), flags
                 ),
                 Pending::DocumentData => (model.notify_document_data_changed)(mref),
                 Pending::Position(t) => (playback.request_set_playback_position)(pref, t),
@@ -642,7 +656,11 @@ unsafe extern "C" fn update_musical_context_content(
             .map(|reg| s.modifications[&reg.modification].host)
             .collect();
         for m in changed {
-            s.pending.push(Pending::ModificationMetadata(m));
+            s.pending.push(Pending::ModificationContent(
+                m,
+                sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED
+                    | sys::UPDATE_NOTE_SCOPE_REMAINS_UNCHANGED,
+            ));
         }
     }
 }
@@ -1270,12 +1288,14 @@ fn read_archive(d: &Dc, reader: Ref) -> Bool {
         for m in modifications.values_mut() {
             if let Some(g) = mods.get(&m.id).and_then(serde_json::Value::as_f64) {
                 m.gain = g as f32;
-                pending.push(Pending::ModificationContent(m.host));
+                pending.push(Pending::ModificationContent(m.host, sys::UPDATE_EVERYTHING));
             }
         }
     }
     // Like many plugins, it says its data changed after a restore.
-    pending.push(Pending::DocumentData);
+    if !d.config.restore_content_only {
+        pending.push(Pending::DocumentData);
+    }
     TRUE
 }
 
