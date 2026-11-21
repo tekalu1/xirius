@@ -763,8 +763,6 @@ struct Ara {
     analysis_archives: u64,
     clips: HashMap<u64, Clip>,
     archive: Option<(Vec<u8>, String)>,
-    /// Notifications of the document's data right after a restore are not edits.
-    quiet: u32,
     ara_thread: Option<ThreadId>,
     notices: u64,
     notices_off_thread: u64,
@@ -1200,7 +1198,6 @@ fn start(
         next_source: 1,
         clips: HashMap::new(),
         archive,
-        quiet: 0,
         ara_thread: Some(std::thread::current().id()),
         notices: 0,
         notices_off_thread: 0,
@@ -1434,7 +1431,8 @@ impl Ara {
             }
         }
 
-        let mut restored = false;
+        let mut restored_archive = false;
+        let mut restored_analysis = false;
         // The archive goes into the objects just made with the same persistent ids; kept while
         // there are none yet (a song whose files are still being read).
         if !self.clips.is_empty()
@@ -1451,13 +1449,13 @@ impl Ara {
             } else if let Some(bytes) = archive_payload(&data, &self.sources)
                 && self.doc.restore(bytes, &id)
             {
-                restored = data.starts_with(ARCHIVE_MAGIC);
-                if !restored {
+                restored_archive = true;
+                restored_analysis = data.starts_with(ARCHIVE_MAGIC);
+                if !restored_analysis {
                     for source in self.sources.values() {
                         self.doc.update_audio_source_content(source.r);
                     }
                 }
-                self.quiet = 3;
                 for c in self.clips.values_mut() {
                     c.stale = true;
                 }
@@ -1468,12 +1466,18 @@ impl Ara {
         }
         self.doc.end_editing();
 
+        if restored_archive {
+            // Drain notifications from the restore before publishing the model or handling
+            // another request. The restore itself does not change the song's archive.
+            self.take_notices(false);
+        }
+
         for id in new_sources {
             if let Some(s) = self.sources.get(&id) {
                 self.doc.enable_samples_access(s.r, true);
                 self.analysis_queries += self.kinds.len() as u64;
                 let incomplete = self.doc.incomplete(s.r, &self.kinds);
-                if !self.kinds.is_empty() && (!restored || !incomplete.is_empty()) {
+                if !self.kinds.is_empty() && (!restored_analysis || !incomplete.is_empty()) {
                     self.doc.request_analysis(s.r, &self.kinds);
                     self.analysis_requests += 1;
                 }
@@ -1583,8 +1587,7 @@ impl Ara {
     /// render is under way.
     fn tick(&mut self) -> bool {
         self.watch_editor();
-        let (dirty, restale) = self.take_notices();
-        self.quiet = self.quiet.saturating_sub(1);
+        let (dirty, restale) = self.take_notices(true);
         let mut changed = dirty || restale;
         for s in self.sources.values_mut() {
             if s.analysed {
@@ -1654,7 +1657,7 @@ impl Ara {
 
     /// The plugin's notifications since the last turn: whether its document changed, and
     /// whether a clip's sound went old.
-    fn take_notices(&mut self) -> (bool, bool) {
+    fn take_notices(&mut self, track_document_changes: bool) -> (bool, bool) {
         self.doc.notify_model_updates();
         let here = std::thread::current().id();
         let mut dirty = false;
@@ -1724,7 +1727,7 @@ impl Ara {
                         restale = true;
                     }
                 }
-                Notice::DocumentData => dirty |= self.quiet == 0,
+                Notice::DocumentData => dirty |= track_document_changes,
             }
         }
         if dirty {
@@ -1739,7 +1742,7 @@ impl Ara {
     /// The archive, when the plugin changed its document since it was last asked: its
     /// notifications are taken first, so an edit made just before is not missed.
     fn store_changed(&mut self) -> Option<(Vec<u8>, String)> {
-        if self.take_notices().1 {
+        if self.take_notices(true).1 {
             self.publish();
         }
         if !self.shared.dirty.swap(false, Ordering::AcqRel) {
