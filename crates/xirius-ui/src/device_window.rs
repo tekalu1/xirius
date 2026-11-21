@@ -492,7 +492,11 @@ impl Windows {
     }
 
     fn sync_channel(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
-        let wanted = studio.borrow().channel.is_some();
+        let (wanted, source) = studio
+            .borrow_mut()
+            .channel
+            .as_mut()
+            .map_or((false, None), |w| (true, w.activate_from.take()));
         if !wanted {
             if let Some(handle) = self.channel.take() {
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
@@ -500,9 +504,7 @@ impl Windows {
             return;
         }
         if let Some(handle) = self.channel {
-            cx.defer(move |cx| {
-                let _ = handle.update(cx, |_, _, cx| cx.notify());
-            });
+            Self::refresh_channel(handle, source, cx);
             return;
         }
         let shared = studio.clone();
@@ -569,7 +571,10 @@ impl Windows {
             })
         });
         match result {
-            Ok(handle) => self.channel = Some(handle),
+            Ok(handle) => {
+                self.channel = Some(handle);
+                Self::refresh_channel(handle, source, cx);
+            }
             Err(error) => {
                 let mut s = studio.borrow_mut();
                 s.channel_note_off();
@@ -577,6 +582,36 @@ impl Windows {
                 s.error = Some(format!("独立ウィンドウを開けません: {error}"));
             }
         }
+    }
+
+    fn refresh_channel(handle: WindowHandle<DeviceWindow>, source: Option<u64>, cx: &mut App) {
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, cx| {
+                cx.notify();
+                if let Some(source) = source
+                    && std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_none()
+                {
+                    #[cfg(windows)]
+                    {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::{
+                            GetForegroundWindow, SetForegroundWindow,
+                        };
+                        // SAFETY: activate our own window while the editor that requested
+                        // it still has the foreground. No window bounds are changed.
+                        unsafe {
+                            if source != 0 && GetForegroundWindow() as u64 == source {
+                                SetForegroundWindow(hwnd_of(window) as _);
+                            }
+                        }
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        let _ = source;
+                        window.activate_window();
+                    }
+                }
+            });
+        });
     }
 
     fn channel_placement(

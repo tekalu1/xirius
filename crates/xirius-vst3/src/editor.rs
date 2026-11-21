@@ -510,6 +510,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 .clone();
             if let Some(action) = crate::editor_chrome::command(hwnd, id, &bar) {
                 st.touched(hwnd);
+                if matches!(action, crate::EditorAction::Channel) {
+                    allow_song_foreground(bar.stack_base);
+                }
                 let mut actions = st
                     .shared
                     .editor_actions
@@ -574,6 +577,21 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     }
     // SAFETY: the default procedure for everything else.
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+}
+
+/// Lets the song process activate a window requested by a click in the native editor.
+pub(crate) fn allow_song_foreground(stack_base: u64) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        AllowSetForegroundWindow, GetWindowThreadProcessId,
+    };
+    // SAFETY: grant the process owning the song window permission, without sending it
+    // a synchronous message or connecting the two processes' input queues.
+    unsafe {
+        let mut process = 0;
+        if GetWindowThreadProcessId(stack_base as HWND, &mut process) != 0 {
+            AllowSetForegroundWindow(process);
+        }
+    }
 }
 
 /// The messages that resize the view: a drag on the border (`WM_SIZING`), the new size

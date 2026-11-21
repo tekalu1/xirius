@@ -1902,7 +1902,7 @@ impl Studio {
                     }
                 }
             }
-            Part::Channel => self.open_channel_beside(w.track, w.plugin),
+            Part::Channel => self.open_channel_beside(w.track, w.plugin, Self::editor_foreground()),
             Part::Graph(_) | Part::Body => {}
         }
         true

@@ -31,7 +31,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True, help="temporary data parent")
     parser.add_argument("--out", type=Path, required=True, help="screenshots and result.json")
-    parser.add_argument("--case", choices=["A", "E", "F", "G", "cold"], help="run one scenario")
+    parser.add_argument("--case", choices=["A", "E", "F", "G", "cold", "cold-idle"],
+                        help="run one scenario")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("this test requires Windows")
@@ -62,6 +63,11 @@ def main():
         "GetWindowThreadProcessId": (w.DWORD, [w.HWND, c.POINTER(w.DWORD)]),
         "FindWindowExW": (w.HWND, [w.HWND, w.HWND, w.LPCWSTR, w.LPCWSTR]),
         "SetWindowPos": (w.BOOL, [w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w.UINT]),
+        "ShowWindowAsync": (w.BOOL, [w.HWND, c.c_int]),
+        "IsIconic": (w.BOOL, [w.HWND]),
+        "GetClientRect": (w.BOOL, [w.HWND, c.POINTER(w.RECT)]),
+        "ClientToScreen": (w.BOOL, [w.HWND, c.POINTER(w.POINT)]),
+        "GetDpiForWindow": (w.UINT, [w.HWND]),
         "SendMessageTimeoutW": (c.c_ssize_t, [w.HWND, w.UINT, c.c_size_t, c.c_ssize_t,
                                                w.UINT, w.UINT, c.POINTER(c.c_size_t)]),
         "GetDC": (w.HDC, [w.HWND]),
@@ -232,7 +238,7 @@ def main():
                 pass
         return ""
 
-    def screenshot(name):
+    def screenshot(name=None):
         width, height = u.GetSystemMetrics(0), u.GetSystemMetrics(1)
         for fn, result, params in [
             ("CreateCompatibleDC", w.HDC, [w.HDC]),
@@ -253,10 +259,38 @@ def main():
         info = c.create_string_buffer(header)
         data = c.create_string_buffer(width*height*4)
         assert g.GetDIBits(memory,bitmap,0,height,data,info,0) == height
-        (out / (name + ".bmp")).write_bytes(struct.pack("<2sIHHI",b"BM",54+len(data),0,0,54)+header+data.raw)
+        pixels = data.raw
+        if name:
+            (out / (name + ".bmp")).write_bytes(
+                struct.pack("<2sIHHI", b"BM", 54+len(data), 0, 0, 54) + header + pixels)
         g.DeleteObject(bitmap)
         g.DeleteDC(memory)
         u.ReleaseDC(0,dc)
+        return width, pixels
+
+    def channel_painted(hwnd):
+        client = w.RECT()
+        origin = w.POINT()
+        assert u.GetClientRect(hwnd, c.byref(client))
+        assert u.ClientToScreen(hwnd, c.byref(origin))
+        scale = u.GetDpiForWindow(hwnd) / 96
+        stride, pixels = screenshot()
+
+        def has_ink(left, top, right, bottom):
+            dark = light = False
+            for y in range(origin.y + round(top * scale), origin.y + round(bottom * scale)):
+                for x in range(origin.x + round(left * scale), origin.x + round(right * scale)):
+                    at = 4 * (y * stride + x)
+                    color = pixels[at:at+3]
+                    dark |= max(color) <= 75
+                    light |= min(color) >= 180
+                    if dark and light:
+                        return True
+            return False
+
+        # The title-bar glyph and toolbar labels contrast with their surfaces in both themes.
+        right = client.right / scale
+        return has_ink(right - 25, 11, right - 10, 25) and has_ink(15, 43, min(420, right), 68)
 
     checks = []
     def passed(name):
@@ -279,8 +313,11 @@ def main():
         env.pop("XIRIUS_PRESET_INPUT_BUILTIN", None)
         if args.case == "G":
             env["XIRIUS_PRESET_INPUT_BUILTIN"] = "1"
-        if args.case == "cold":
+        cold = args.case in ("cold", "cold-idle")
+        if cold:
             env.setdefault("XIRIUS_TEST_VST3_EDITOR_OPEN_MS", "2000")
+        if args.case == "cold-idle":
+            env["XIRIUS_TEST_VST3_OPEN_MS"] = "3500"
         # The fixture accepts both roles, but scans as an effect. Seed the isolated
         # cache before the app starts so the song owner's index lists it as an instrument.
         probe = Path(temp) / "fixture.json"
@@ -294,7 +331,7 @@ def main():
         for name in ("input-ready.json", "input-done", "input-state-request", "input-state.json"):
             (out/name).unlink(missing_ok=True)
         with (out/"app.log").open("w", encoding="utf-8") as log:
-            script = "preset-input-cold" if args.case == "cold" else "preset-input"
+            script = "preset-input-cold" if cold else "preset-input"
             app = subprocess.Popen([str(executable), "--silent", "--at", "10,10",
                                     "--size", "1040,640", "--shot", str(out), "--script", script],
                                    cwd=temp, env=env, stdout=log, stderr=log)
@@ -303,7 +340,7 @@ def main():
                 assert (out/"input-ready.json").exists(), "fixture app exited during setup; read app.log"
                 info = json.loads((out/"input-ready.json").read_text(encoding="utf-8"))
                 main_hwnd = info["main"]
-                if args.case == "cold":
+                if cold:
                     hosts = subprocess.run(
                         ["powershell", "-NoProfile", "-Command",
                          "Get-CimInstance Win32_Process -Filter \"Name = 'xirius-plugin-host.exe'\" | Select-Object -ExpandProperty ProcessId"],
@@ -311,12 +348,18 @@ def main():
                     ).stdout.strip()
                     assert not hosts, f"plugin host was already running before the drag: {hosts}"
                     assert not new_frame(set()), "a native editor opened before the drag"
-                    click_main(main_hwnd)
-                    wait(lambda: u.GetForegroundWindow() == main_hwnd, "main window did not activate")
                     started = time.monotonic()
                     drag(main_hwnd, info["drag_from"], info["drag_to"])
+                    if args.case == "cold-idle":
+                        wait(lambda: loading_frame(app.pid, entries[0]["name"]),
+                             "cold drop did not show a loading window", seconds=3)
+                        # Stop main-window frames while the first plugin instance is still
+                        # opening. There is no further input to restart the editor request.
+                        assert u.ShowWindowAsync(main_hwnd, 6)  # SW_MINIMIZE
+                        wait(lambda: u.IsIconic(main_hwnd), "main window did not minimize")
                     editor = wait(lambda: new_frame(set()),
-                                  "cold drop did not open a native editor", seconds=45)
+                                  "cold drop did not open a native editor",
+                                  seconds=10 if args.case == "cold-idle" else 45)
                     opened_blank = not fixture_label_control(editor)
                     if opened_blank:
                         screenshot("cold-blank-frame")
@@ -326,10 +369,14 @@ def main():
                     label = wait(lambda: (label if (label := fixture_label(editor)).startswith("delay ")
                                           and f" pid {process.value} " in label else None),
                                  "cold editor had no fixture content")
-                    wait(lambda: u.GetForegroundWindow() == editor
-                         and order([editor, main_hwnd]) == [editor, main_hwnd],
-                         "cold editor with content did not come to the foreground",
-                         detail=lambda: (u.GetForegroundWindow(), order([editor, main_hwnd])))
+                    if args.case == "cold-idle":
+                        assert u.IsIconic(main_hwnd), "editor restored the main window"
+                        assert u.ShowWindowAsync(main_hwnd, 4)  # SW_SHOWNOACTIVATE
+                    else:
+                        wait(lambda: u.GetForegroundWindow() == editor
+                             and order([editor, main_hwnd]) == [editor, main_hwnd],
+                             "cold editor with content did not come to the foreground",
+                             detail=lambda: (u.GetForegroundWindow(), order([editor, main_hwnd])))
                     wait(lambda: not loading_frame(app.pid, entries[0]["name"]),
                          "cold editor's loading window stayed visible")
                     elapsed = round(time.monotonic() - started, 2)
@@ -424,6 +471,30 @@ def main():
                                     if hit_root(x, y) == channel), None)
                     assert exposed, "the channel edge did not become visible"
                     windows = {first:"external", main_hwnd:"main", channel:"channel"}
+                    failures = []
+                    for label, check in [
+                        ("channel did not draw its close button and tools before hover",
+                         lambda: channel_painted(channel)),
+                        ("new channel did not take the foreground",
+                         lambda: u.GetForegroundWindow() == channel),
+                    ]:
+                        try:
+                            wait(check, label, seconds=2)
+                        except AssertionError as error:
+                            failures.append(str(error))
+                    screenshot("channel-first-open")
+                    click_window(first, r.left + 40, r.top + 110)
+                    wait(lambda: u.GetForegroundWindow() == first, "external editor is not foreground")
+                    button(first, 6)
+                    try:
+                        wait(lambda: u.GetForegroundWindow() == channel
+                             and order(windows) == [channel, first, main_hwnd],
+                             "reopening the channel did not raise and activate it", seconds=2)
+                    except AssertionError as error:
+                        failures.append(str(error))
+                    assert bytes(rect(channel)) == bytes(bounds), "reopening moved or resized the channel"
+                    assert not failures, "; ".join(failures)
+                    passed("channel-band-open-and-raise")
                     for hold in (0.12, 0, 0.08, 0):
                         r = rect(first)
                         click_window(first, r.left + 40, r.top + 110)

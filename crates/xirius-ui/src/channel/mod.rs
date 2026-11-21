@@ -185,6 +185,7 @@ pub(crate) enum Grab {
 pub struct ChannelWin {
     pub track: TrackId,
     pub(crate) beside: Option<PluginId>,
+    pub(crate) activate_from: Option<u64>,
     /// The pin is down: another track's editor does not take its place.
     pub pinned: bool,
     /// The macro column shows (MIX-041).
@@ -216,6 +217,7 @@ impl ChannelWin {
         ChannelWin {
             track,
             beside: None,
+            activate_from: None,
             pinned: false,
             macros: false,
             scroll: (0.0, 0.0),
@@ -982,11 +984,14 @@ impl Studio {
         }
     }
 
-    pub(crate) fn open_channel_beside(&mut self, t: TrackId, plugin: PluginId) {
+    pub(crate) fn open_channel_beside(&mut self, t: TrackId, plugin: PluginId, source: u64) {
         let opening = self.channel.is_none();
         self.open_channel(t);
-        if opening && let Some(channel) = &mut self.channel {
-            channel.beside = Some(plugin);
+        if let Some(channel) = &mut self.channel {
+            if opening {
+                channel.beside = Some(plugin);
+            }
+            channel.activate_from = Some(source);
         }
     }
 
