@@ -7647,6 +7647,29 @@ Key
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
+## `track.add.with-effect`
+
+エフェクト付きオーディオトラックを追加
+
+先頭のインサートにエフェクトを入れたオーディオトラックを追加します（1 回の操作として元に戻せます）
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `wave`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `before` | — | `{"type":"string"}` | このトラックの直前（into・index と併用不可）（track の ID） |
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `effect` | 必須 | `{"type":"string"}` | エフェクトの名前 |
+| `format` | — | `{"default":"builtin","type":"string"}` | vst3・clap・builtin など |
+| `index` | — | `{"type":"integer"}` | フォルダー内の位置（0 が先頭。省略時は末尾） |
+| `into` | — | `{"type":"string"}` | 追加先のフォルダーの ID（root または省略時は最上位） |
+| `name` | — | `{"type":"string"}` | トラック名（省略時は通常のオーディオトラックと同じ） |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `uid` | — | `{"type":"string"}` | 形式ごとの固有 ID（省略時は名前） |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
 ## `track.add.with-instrument`
 
 インストゥルメント付きトラックを追加

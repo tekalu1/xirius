@@ -56,6 +56,12 @@ impl Insertion {
         });
         args["index"] = json!(self.index);
     }
+
+    pub(crate) fn paint(self, pen: &mut Pen, studio: &Studio, g: &Geometry) {
+        if let DropMark::Line { y, depth } = self.mark {
+            crate::arrange::paint::paint_track_seam(pen, studio, g, y, depth);
+        }
+    }
 }
 
 /// What a double click and a drop off the tracks do (the first row of S38).
@@ -350,9 +356,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             NEW_LABEL.to_string()
         }
         Drop::Insert(insert) => {
-            if let DropMark::Line { y, depth } = insert.mark {
-                crate::arrange::paint::paint_track_seam(pen, studio, g, y, depth);
-            }
+            insert.paint(pen, studio, g);
             NEW_LABEL.to_string()
         }
         Drop::Nothing => String::new(),

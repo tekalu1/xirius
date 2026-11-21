@@ -217,6 +217,34 @@ fn seven_mvp_commands_have_the_same_cli_and_mcp_editing_contract() {
 }
 
 #[test]
+fn audio_track_with_an_effect_can_be_positioned_from_cli_and_mcp() {
+    for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
+        let folder = endpoint.run("folder.add", json!({"name":"Group"}))["data"]["id"].clone();
+        let anchor = endpoint.run("track.add.audio", json!({"into":folder}))["data"]["id"].clone();
+        let list = || endpoint.run("track.list", json!({}))["data"].clone();
+        let original = list();
+        for position in [json!({"before":anchor}), json!({"into":folder,"index":0})] {
+            let mut args = position;
+            args["effect"] = json!("EQ");
+            let added = endpoint.run("track.add.with-effect", args)["data"].clone();
+            let current = list();
+            let rows = current.as_array().unwrap();
+            let index = rows
+                .iter()
+                .position(|row| row["id"] == added["id"])
+                .unwrap();
+            assert_eq!(rows[index + 1]["id"], anchor);
+            assert_eq!(rows[index]["parent"], folder);
+            assert_eq!(rows[index]["kind"], "audio");
+            assert_eq!(rows[index]["inserts"], 1);
+            assert!(added["plugin"].as_str().is_some());
+            endpoint.run("history.undo", json!({}));
+            assert_eq!(list(), original);
+        }
+    }
+}
+
+#[test]
 fn note_source_commands_have_the_same_cli_and_mcp_contract() {
     for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
         let source =

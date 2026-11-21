@@ -16,7 +16,7 @@ pub fn icon(name: &str) -> &'static str {
         "export.stems" => "layers",
         "export.midi" => "midi",
         "export.dawproject" => "file",
-        "track.add.audio" => "wave",
+        "track.add.audio" | "track.add.with-effect" => "wave",
         "track.add.instrument" => "instrument",
         "track.add.bus" | "send.add.bus" => "bus",
         "track.mute" | "clip.mute" | "note.mute" => "mute",

@@ -31,7 +31,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True, help="temporary data parent")
     parser.add_argument("--out", type=Path, required=True, help="screenshots and result.json")
-    parser.add_argument("--case", choices=["A", "E", "F", "G", "cold", "cold-idle"],
+    parser.add_argument("--case", choices=["A", "E", "F", "G", "cold", "cold-idle", "effect-seam"],
                         help="run one scenario")
     args = parser.parse_args()
     if os.name != "nt":
@@ -311,8 +311,12 @@ def main():
                     "XIRIUS_VIEW_FILE":temp+"/view.json", "XIRIUS_DESKTOP_INPUT":"1"})
         env.pop("XIRIUS_EDITOR_OFFSCREEN", None)
         env.pop("XIRIUS_PRESET_INPUT_BUILTIN", None)
+        env.pop("XIRIUS_PRESET_INPUT_EFFECT", None)
         if args.case == "G":
             env["XIRIUS_PRESET_INPUT_BUILTIN"] = "1"
+        effect_seam = args.case == "effect-seam"
+        if effect_seam:
+            env["XIRIUS_PRESET_INPUT_EFFECT"] = "1"
         cold = args.case in ("cold", "cold-idle")
         if cold:
             env.setdefault("XIRIUS_TEST_VST3_EDITOR_OPEN_MS", "2000")
@@ -324,22 +328,54 @@ def main():
         subprocess.run([str(executable), "__scan-plugin", "--bundle", str(fixture),
                         "--out", str(probe)], env=env, check=True, timeout=20)
         entries = json.loads(probe.read_text(encoding="utf-8"))["entries"]
-        entries[0]["kind"] = "instrument"
+        if not effect_seam:
+            entries[0]["kind"] = "instrument"
         Path(env["XIRIUS_PLUGIN_CACHE"]).write_text(json.dumps({"version": 2, "bundles": [
             {"path": str(fixture), "fingerprint": "", "entries": entries}]
         }), encoding="utf-8")
         for name in ("input-ready.json", "input-done", "input-state-request", "input-state.json"):
             (out/name).unlink(missing_ok=True)
         with (out/"app.log").open("w", encoding="utf-8") as log:
-            script = "preset-input-cold" if cold else "preset-input"
+            script = "preset-input-cold" if cold or effect_seam else "preset-input"
             app = subprocess.Popen([str(executable), "--silent", "--at", "10,10",
                                     "--size", "1040,640", "--shot", str(out), "--script", script],
                                    cwd=temp, env=env, stdout=log, stderr=log)
+
+            def state():
+                request = out / "input-state-request"
+                reply = out / "input-state.json"
+                reply.unlink(missing_ok=True)
+                request.touch()
+                wait(lambda: not request.exists(), "fixture did not report the track state")
+                return json.loads(reply.read_text(encoding="utf-8"))
+
             def run_checks():
                 wait(lambda: (out/"input-ready.json").exists() or app.poll() is not None, "fixture setup", 90)
                 assert (out/"input-ready.json").exists(), "fixture app exited during setup; read app.log"
                 info = json.loads((out/"input-ready.json").read_text(encoding="utf-8"))
                 main_hwnd = info["main"]
+                if effect_seam:
+                    assert not new_frame(set()), "a native editor opened before the drag"
+                    drag(main_hwnd, info["drag_from"], info["drag_to"])
+                    original, index = info["root"], info["before_index"]
+                    inserted = wait(lambda: current if (current := state())["root"] != original else None,
+                                    "effect drop did not create a track")
+                    actual = inserted["root"]
+                    assert len(actual) == len(original) + 1, actual
+                    assert actual[:index] + actual[index + 1:] == original, actual
+                    inserts = inserted["inserts"]
+                    assert inserts.pop(actual[index]) == {"kind":"audio", "plugins":[entries[0]["uid"]]}
+                    assert inserts == info["inserts"], "an existing track's inserts changed"
+                    editor = wait(lambda: new_frame(set()), "the inserted effect's editor did not open")
+                    wait(lambda: fixture_label_control(editor) and u.GetForegroundWindow() == editor,
+                         "the inserted effect's view did not come to the foreground")
+                    passed("effect-insertion")
+                    click_main(main_hwnd)
+                    key(ord("Z"), 0x11)
+                    wait(lambda: (current := state())["root"] == original
+                         and current["inserts"] == info["inserts"], "undo did not restore tracks and inserts")
+                    passed("effect-insertion-undo")
+                    return
                 if cold:
                     hosts = subprocess.run(
                         ["powershell", "-NoProfile", "-Command",
@@ -393,15 +429,6 @@ def main():
                      detail=lambda: (order([main_hwnd, first, second]), info, u.GetForegroundWindow()))
                 screenshot("00-desktop")
                 if args.case == "G":
-                    request = out / "input-state-request"
-                    reply = out / "input-state.json"
-
-                    def state():
-                        reply.unlink(missing_ok=True)
-                        request.touch()
-                        wait(lambda: not request.exists(), "fixture did not report the track order")
-                        return json.loads(reply.read_text(encoding="utf-8"))
-
                     # Keep both external frames outside the browser-to-column path.
                     move_right(first)
                     if u.GetForegroundWindow() != main_hwnd:

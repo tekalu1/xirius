@@ -1,5 +1,6 @@
 //! Shared insert rows for the mixer and expanded track headers.
 use crate::browser::{BRow, BrowserHit};
+use crate::browser_inst::Insertion;
 use crate::draw::{Align, Pen};
 use crate::instrument::Pick;
 use crate::mixer::flow::Pick as Choose;
@@ -28,6 +29,17 @@ pub struct Drag {
     pub at: (f32, f32),
     pub moved: bool,
     pub click: Option<(PopupKind, String)>,
+}
+
+impl Drag {
+    fn track_insertion(&self, studio: &Studio, g: &Geometry, x: f32, y: f32) -> Option<Insertion> {
+        // An effect picker also starts a drag, carrying its click action.
+        if matches!(self.source, Source::Effect(_)) && self.click.is_none() {
+            studio.browser_track_insertion(g, x, y)
+        } else {
+            None
+        }
+    }
 }
 
 /// Where an insert's name is written: from the bypass dot to the end of the row, whether or not
@@ -397,11 +409,6 @@ impl Studio {
         let Some(data) = self.arrange_run("plugin.add", args) else {
             return false;
         };
-        self.mixer
-            .recent
-            .retain(|p| p.format != pick.format || p.uid != pick.uid);
-        self.mixer.recent.insert(0, pick.clone());
-        self.mixer.recent.truncate(8);
         if after.is_none() {
             self.reveal_last(t, List::Inserts);
         }
@@ -409,10 +416,34 @@ impl Studio {
             if after.is_some() {
                 self.mixer.chosen = Some((t, Choose::Plugin(id)));
             }
-            self.begin_loading(&pick.name, &pick.format, id);
-            self.open_when_loaded(t, id);
+            self.open_added_effect(t, id, pick);
         }
         true
+    }
+
+    fn open_added_effect(&mut self, t: TrackId, id: PluginId, pick: &Pick) {
+        self.mixer
+            .recent
+            .retain(|p| p.format != pick.format || p.uid != pick.uid);
+        self.mixer.recent.insert(0, pick.clone());
+        self.mixer.recent.truncate(8);
+        self.begin_loading(&pick.name, &pick.format, id);
+        self.open_when_loaded(t, id);
+    }
+
+    fn add_effect_track(&mut self, insertion: Insertion, pick: &Pick) {
+        let mut args = json!({"effect":pick.name,"format":pick.format,"uid":pick.uid});
+        insertion.set_args(&mut args);
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+        if let Some(data) = self.arrange_run("track.add.with-effect", args)
+            && let (Some(t), Some(id)) = (
+                data["id"].as_str().and_then(|s| s.parse().ok()),
+                data["plugin"].as_str().and_then(|s| s.parse().ok()),
+            )
+        {
+            self.select_row(Some(RowKind::Track(t)));
+            self.open_added_effect(t, id, pick);
+        }
     }
     pub fn recent_effects(&self) -> Vec<Choice> {
         self.mixer
@@ -623,6 +654,12 @@ impl Studio {
             }
             return true;
         }
+        if let Some(insertion) = d.track_insertion(self, g, x, y)
+            && let Source::Effect(pick) = &d.source
+        {
+            self.add_effect_track(insertion, pick);
+            return true;
+        }
         let Some((t, mut index)) = self.fx_target(g, x, y) else {
             return true;
         };
@@ -670,6 +707,9 @@ pub fn paint_drag(pen: &mut Pen, s: &Studio, g: &Geometry) {
     let Some(d) = s.mixer.fx_drag.as_ref().filter(|d| d.moved) else {
         return;
     };
+    if let Some(insertion) = d.track_insertion(s, g, d.at.0, d.at.1) {
+        insertion.paint(pen, s, g);
+    }
     let name = match &d.source {
         Source::Effect(p) => p.name.clone(),
         Source::Insert(t, id) => s.project().tracks[t]

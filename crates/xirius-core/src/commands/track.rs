@@ -35,6 +35,20 @@ pub(super) fn defs() -> Vec<CommandDef> {
             |p, _, a| add_track(p, a, TrackKind::Audio),
         ),
         edit(
+            "track.add.with-effect",
+            "先頭のインサートにエフェクトを入れたオーディオトラックを追加します（1 回の操作として元に戻せます）",
+            vec![
+                ArgDef::text("name", "トラック名（省略時は通常のオーディオトラックと同じ）"),
+                ArgDef::text("into", "追加先のフォルダーの ID（root または省略時は最上位）"),
+                ArgDef::int("index", "フォルダー内の位置（0 が先頭。省略時は末尾）"),
+                ArgDef::id("before", IdKind::Track, "このトラックの直前（into・index と併用不可）"),
+                ArgDef::text("effect", "エフェクトの名前").req(),
+                ArgDef::text("format", "vst3・clap・builtin など").default(json!("builtin")),
+                ArgDef::text("uid", "形式ごとの固有 ID（省略時は名前）"),
+            ],
+            add_with_effect,
+        ),
+        edit(
             "track.add.instrument",
             "インストゥルメント（MIDI）トラックを追加します",
             where_args(),
@@ -979,6 +993,17 @@ fn set_flag(
 
 pub(super) fn add_track(p: &mut Project, a: &Args, kind: TrackKind) -> CmdResult<Output> {
     let parent = parent_arg(p, a, "into")?;
+    let id = insert_track(p, a, kind, parent, a.opt_i64("index"))?;
+    Ok(created(&format!("トラック「{}」", p.track(id)?.name), id))
+}
+
+fn insert_track(
+    p: &mut Project,
+    a: &Args,
+    kind: TrackKind,
+    parent: Parent,
+    index: Option<i64>,
+) -> CmdResult<TrackId> {
     let name = match a.opt_str("name").map(str::trim).filter(|n| !n.is_empty()) {
         Some(n) => n.to_string(),
         None => unique_name(
@@ -991,11 +1016,32 @@ pub(super) fn add_track(p: &mut Project, a: &Args, kind: TrackKind) -> CmdResult
         ),
     };
     let id = TrackId(p.alloc());
-    let mut track = Track::new(id, kind, name.clone());
+    let mut track = Track::new(id, kind, name);
     track.color = Some(p.next_track_color());
     p.tracks.insert(id, Arc::new(track));
-    insert_at(p, parent, a.opt_i64("index"), Node::Track(id))?;
-    Ok(created(&format!("トラック「{name}」"), id))
+    insert_at(p, parent, index, Node::Track(id))?;
+    Ok(id)
+}
+
+fn add_with_effect(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
+    let effect = a.str("effect")?.trim();
+    if effect.is_empty() {
+        return Err(CmdError::invalid("エフェクトの名前を入力してください"));
+    }
+    let (parent, index) = new_track_position(p, a)?;
+    let track = insert_track(p, a, TrackKind::Audio, parent, index)?;
+    let plugin = place_new_plugin(
+        p,
+        track,
+        PluginKind::Effect,
+        effect,
+        a.str("format")?,
+        a.opt_str("uid"),
+        Some(0),
+    )?;
+    let mut out = created(&format!("トラック「{}」", p.track(track)?.name), track);
+    out.data["plugin"] = json!(plugin);
+    Ok(out)
 }
 
 fn delete_tracks(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
