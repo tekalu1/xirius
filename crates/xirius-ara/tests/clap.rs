@@ -22,7 +22,7 @@ use xirius_ara::clap::{
     ARA_EXTENSION, ARA_FACTORY, ClapBinary, clap_ara_factory, clap_ara_plugin_extension,
 };
 use xirius_ara::fake::{self, Config};
-use xirius_ara::service::{Binary, Instance, Loader, source_id};
+use xirius_ara::service::{Binary, Instance, Loader};
 use xirius_ara::sys::{self, Ref, RoleFlags};
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
@@ -261,7 +261,7 @@ fn a_clap_plugin_binds_to_the_document_and_plays_the_region() {
             regions: Vec::new(),
             key: 1,
             clone_of: None,
-            source: source_id("clap.wav"),
+            source: "clap.wav".into(),
             name: "clip".into(),
             audio,
             start: 0.0,

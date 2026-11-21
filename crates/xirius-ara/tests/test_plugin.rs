@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use xirius_ara::service::{Loader, source_id};
+use xirius_ara::service::Loader;
 use xirius_ara::vst3::Vst3Binary;
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
@@ -53,7 +53,7 @@ fn clip(key: u64, audio: &Arc<SourceAudio>, start: f64, offset: f64, duration: f
         regions: Vec::new(),
         key,
         clone_of: None,
-        source: source_id("bursts.wav"),
+        source: "bursts.wav".into(),
         name: "bursts".into(),
         audio: audio.clone(),
         start,
@@ -177,7 +177,7 @@ fn the_ara_test_plugin_passes_every_step() {
     // (PLG-047): the song's rate is the caller's to convert to.
     let slow = bursts(44100.0, 4.0);
     let mut c3 = clip(3, &slow, 6.0, 0.5, 3.0);
-    c3.source = source_id("bursts-44100.wav");
+    c3.source = "bursts-44100.wav".into();
     s.sync(&song(vec![clip(1, &audio, 2.0, 0.5, 3.0), c3]));
     let at_own = ready(&s, 3);
     assert_eq!(at_own.rate, 44100.0);
@@ -188,7 +188,7 @@ fn the_ara_test_plugin_passes_every_step() {
     // 6. An export waits for the analysis of a new clip (ENG-025).
     let other = bursts(rate, 8.0);
     let mut c2 = clip(2, &other, 6.0, 0.0, 8.0);
-    c2.source = source_id("bursts-2.wav");
+    c2.source = "bursts-2.wav".into();
     s.sync(&song(vec![clip(1, &audio, 2.0, 0.5, 3.0), c2]));
     let begun = Instant::now();
     assert!(s.wait_idle(begun + Duration::from_secs(10)));

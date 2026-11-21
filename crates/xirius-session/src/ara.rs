@@ -35,8 +35,9 @@ use std::time::{Duration, Instant, SystemTime};
 pub use xirius_ara::Phase;
 use xirius_ara::remote_client::RemoteService;
 pub use xirius_ara::service::Loader;
-use xirius_ara::service::{Binary, Caption, Placement, Rendered, Stored, source_id};
+use xirius_ara::service::{Binary, Caption, Placement, Rendered, Stored};
 use xirius_ara::{ClipSpec, Service, Song, SourceAudio};
+use xirius_core::ara::source_id;
 use xirius_core::model::{Clip, ClipBody, Project, TrackKind};
 use xirius_engine::AudioData;
 use xirius_plugins::Catalog;
@@ -548,9 +549,7 @@ impl Doc {
                     regions,
                     key: c.id.0,
                     clone_of: row.clone_of.map(|c| c.0),
-                    // The file as the song names it, so the plugin's archive still fits when the
-                    // song's folder moves.
-                    source: source_id(file),
+                    source: row.source_id.clone().unwrap_or_else(|| source_id(file)),
                     name: if c.name.is_empty() {
                         file.clone()
                     } else {
@@ -596,20 +595,42 @@ impl Doc {
         self.hand_over();
     }
 
-    /// Hands the plugin the wanted song's clips whose files are read.
+    /// Hands the plugin the wanted clips, keeping live sources during a pending read.
     fn hand_over(&self) {
         let mut wanted = lock(&self.wanted);
         let Some(w) = wanted.as_mut() else {
             return;
         };
         let none = unread();
-        for (c, path) in w.song.clips.iter_mut().zip(&w.files) {
-            if Arc::ptr_eq(&c.audio, &none)
-                && let Some(Ok(a)) = source(path, false)
-            {
-                c.audio = a;
-            }
-        }
+        let mut last = lock(&self.song);
+        let clips = w
+            .song
+            .clips
+            .iter_mut()
+            .zip(&w.files)
+            .filter_map(|(clip, path)| {
+                if !Arc::ptr_eq(&clip.audio, &none) {
+                    return Some(clip.clone());
+                }
+                match source(path, false) {
+                    Some(Ok(audio)) => {
+                        clip.audio = audio;
+                        Some(clip.clone())
+                    }
+                    Some(Err(_)) => None,
+                    // Keep the modification alive while a relocated file is being decoded.
+                    None => last
+                        .as_ref()?
+                        .clips
+                        .iter()
+                        .find(|old| old.key == clip.key && old.source == clip.source)
+                        .map(|old| ClipSpec {
+                            audio: old.audio.clone(),
+                            ..clip.clone()
+                        }),
+                }
+            })
+            .collect();
         // Validate every original source fingerprint before restoring a document. Otherwise
         // a fast first file could restore an archive before a changed second file is decoded.
         if self.restoring.load(Ordering::Acquire) {
@@ -624,18 +645,12 @@ impl Doc {
             bpm: w.song.bpm,
             numerator: w.song.numerator,
             denominator: w.song.denominator,
-            clips: w
-                .song
-                .clips
-                .iter()
-                .filter(|c| !Arc::ptr_eq(&c.audio, &none))
-                .cloned()
-                .collect(),
+            clips,
         };
         self.service.sync(&song);
         let keys: BTreeSet<u64> = song.clips.iter().map(|c| c.key).collect();
         lock(&self.sounds).retain(|k, _| keys.contains(k));
-        *lock(&self.song) = Some(song);
+        *last = Some(song);
     }
 
     /// The samples of the clip's file, once read.
@@ -789,10 +804,7 @@ impl Doc {
 
 impl Drop for Doc {
     fn drop(&mut self) {
-        let mut map = lock(docs());
-        if map.get(&self.key).is_some_and(|w| w.strong_count() == 0) {
-            map.remove(&self.key);
-        }
+        lock(docs()).retain(|_, registered| !std::ptr::eq(registered.as_ptr(), self));
     }
 }
 
@@ -917,6 +929,23 @@ impl Default for Held {
 }
 
 impl Held {
+    /// The same live documents now belong to the saved folder.
+    pub(crate) fn relocate(&self, from: Option<&Path>, to: Option<&Path>) {
+        if !self.live || from == to {
+            return;
+        }
+        let held = lock(&self.docs);
+        let mut registered = lock(docs());
+        for (plugin, doc) in held.iter() {
+            let old = (from.map(Path::to_path_buf), plugin.clone(), 0);
+            let current = Arc::downgrade(doc);
+            if registered.get(&old).is_some_and(|d| d.ptr_eq(&current)) {
+                registered.remove(&old);
+                registered.insert((to.map(Path::to_path_buf), plugin.clone(), 0), current);
+            }
+        }
+    }
+
     pub fn set_live(&mut self, live: bool) {
         self.live = live;
     }

@@ -9,9 +9,11 @@ use std::time::{Duration, Instant};
 use serde_json::{Map, Value, json};
 use xirius_ara::fake::{self, Config};
 use xirius_ara::service::{Placement, modification_id};
+use xirius_ara::sys;
 use xirius_core::id::ClipId;
 use xirius_core::model::{Clip, Project};
 use xirius_core::session::{RunOptions, RunResult, Session};
+use xirius_core::store::Store;
 use xirius_plugins::Catalog;
 use xirius_session::build::Builder;
 use xirius_session::commands::{self, shared_registry};
@@ -578,4 +580,84 @@ fn explicit_save_keeps_an_ara_edit_without_notices() {
     player.sync_ara(p, &TempoMap::from_project(p), &mut Vec::new());
     until("the restored render", || through(&player, p, &id));
     assert!((peak(&mut player, p) - 0.375).abs() < 1e-3);
+}
+
+#[test]
+fn first_save_as_keeps_the_live_and_reopened_ara_edit() {
+    let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
+    xirius_session::ara::register(
+        PLUGIN,
+        "Fake ARA",
+        Arc::new(|| fake::loader(Config::default())),
+    );
+    let dir = Dir::new();
+    let file = dir.0.join("a.wav");
+    let samples = vec![0.5; RATE as usize];
+    write_wav(&file, &samples, &samples, RATE, 32).unwrap();
+    let mut s = session(Project::new("song"));
+    let track = id_of(&run(&mut s, "track.add.audio", json!({})));
+    let id = id_of(&run(
+        &mut s,
+        "clip.add.audio",
+        json!({"track": track, "at": 0, "length": 1920, "file": file}),
+    ));
+    run(
+        &mut s,
+        "clip.ara.attach",
+        json!({"ids": [id], "plugin": PLUGIN}),
+    );
+    let key = id.parse::<ClipId>().unwrap().0;
+    let mut player = Builder::new(RATE, None);
+    player.set_ara_live(true);
+    let p = s.project();
+    player.sync_ara(p, &TempoMap::from_project(p), &mut Vec::new());
+    until("the analysis", || through(&player, p, &id));
+    player
+        .ara()
+        .open_editor(PLUGIN, "Fake ARA", Placement::default(), &[key])
+        .unwrap();
+    until("the fixture editor", || player.ara().editing() == [PLUGIN]);
+    fake::edit_with_notices(
+        &modification_id(key),
+        0.5,
+        fake::EditNotices::ModificationAndRegion(
+            sys::UPDATE_TIMING_SCOPE_REMAINS_UNCHANGED
+                | sys::UPDATE_TUNING_SCOPE_REMAINS_UNCHANGED
+                | sys::UPDATE_HARMONIC_SCOPE_REMAINS_UNCHANGED,
+        ),
+    );
+    player.ara().ask_archives(s.project());
+    until("the save archive", || !pending(&player, s.project()));
+    assert!(take(&mut s, &player));
+    assert!((peak(&mut player, s.project()) - 0.25).abs() < 1e-3);
+
+    let archive = s.project().ara.archives[PLUGIN].clone();
+    let folder = dir.0.join("saved");
+    s.save_as_cancellable(&folder, Default::default()).unwrap();
+    let xirius_core::model::ClipBody::Audio { file, .. } = clip(s.project(), &id).body else {
+        panic!("not audio");
+    };
+    assert!(Path::new(&file).is_relative() && folder.join(&file).is_file());
+    assert_eq!(
+        Store::new(&folder).read_project().unwrap().ara.archives[PLUGIN],
+        archive
+    );
+    player.set_dir(Some(folder.clone()));
+    let p = s.project();
+    player.sync_ara(p, &TempoMap::from_project(p), &mut Vec::new());
+    until("the relocated render", || through(&player, p, &id));
+    let live_peak = peak(&mut player, p);
+    assert_eq!(player.ara().editing(), [PLUGIN]);
+    drop((player, s));
+
+    let reopened = Session::open_with(&folder, shared_registry()).unwrap();
+    let p = reopened.project();
+    let mut player = live(RATE, &folder);
+    player.sync_ara(p, &TempoMap::from_project(p), &mut Vec::new());
+    until("the reopened render", || through(&player, p, &id));
+    let reopened_peak = peak(&mut player, p);
+    assert!(
+        (live_peak - 0.25).abs() < 1e-3 && (reopened_peak - 0.25).abs() < 1e-3,
+        "Save As lost the plugin edit: live={live_peak}, reopened={reopened_peak}"
+    );
 }

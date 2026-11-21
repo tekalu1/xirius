@@ -16,9 +16,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use xirius_ara::remote_client::RemoteService;
-use xirius_ara::service::{Loader, source_id};
+use xirius_ara::service::Loader;
 use xirius_ara::vst3::Vst3Binary;
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
+use xirius_core::ara::source_id;
 use xirius_core::id::ClipId;
 use xirius_core::model::{Clip, ClipBody, Project};
 use xirius_core::session::{RunOptions, RunResult, Session};

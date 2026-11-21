@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use xirius_ara::fake::{self, Config};
 use xirius_ara::host::Request;
-use xirius_ara::service::{BLOCK, Placement, modification_id, source_id};
+use xirius_ara::service::{BLOCK, Placement, modification_id};
 use xirius_ara::sys;
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
@@ -37,7 +37,7 @@ fn clip(
         regions: Vec::new(),
         key,
         clone_of: None,
-        source: source_id(file),
+        source: file.to_string(),
         name: format!("clip {key}"),
         audio: audio.clone(),
         start,
@@ -760,6 +760,17 @@ fn completed_analysis_is_cached_and_changed_audio_invalidates_it() {
     let p = service.probe(WAIT).unwrap();
     assert_eq!(p.analysis_requests, 1);
     assert_eq!(p.analysis_starts, 1);
+    let copied = ClipSpec {
+        audio: tone(48000.0, 1.0, 0.5),
+        ..spec.clone()
+    };
+    service.sync(&song(vec![copied]));
+    assert!(service.wait_idle(Instant::now() + WAIT));
+    assert_eq!(*service.analysis_archive().unwrap(), cached);
+    assert!(Arc::ptr_eq(&ready(&service, 9003), &before));
+    let p = service.probe(WAIT).unwrap();
+    assert_eq!(p.analysis_requests, 1);
+    assert_eq!(p.analysis_starts, 1);
     assert!(service.close(Instant::now() + WAIT));
 
     let service = start(
@@ -850,7 +861,7 @@ fn replacing_the_file_releases_its_old_modification_before_the_source() {
     ready(&service, 9006);
     fake::edit(&modification_id(9006), 0.5);
     until("the edit", || service.take_dirty());
-    spec.source = source_id("replacement.wav");
+    spec.source = "replacement.wav".into();
     spec.audio = Arc::new(SourceAudio::stereo(
         48000.0,
         vec![0.3; 48000],

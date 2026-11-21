@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use xirius_ara::fake::{self, Config};
-use xirius_ara::service::source_id;
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
 fn song(key: u64) -> Song {
@@ -23,7 +22,7 @@ fn song(key: u64) -> Song {
             regions: Vec::new(),
             key,
             clone_of: None,
-            source: source_id("crash.wav"),
+            source: "crash.wav".into(),
             name: "clip".into(),
             audio,
             start: 0.0,

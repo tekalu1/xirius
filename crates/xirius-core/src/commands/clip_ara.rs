@@ -39,13 +39,13 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 let n = ids.len();
                 for id in ids {
                     let keep = p.ara.clips.get(&id).filter(|r| r.plugin == plugin);
-                    let clone_of = keep.and_then(|r| r.clone_of);
                     p.ara.clips.insert(
                         id,
                         AraClip {
                             plugin: plugin.clone(),
                             name: name.clone(),
-                            clone_of,
+                            clone_of: keep.and_then(|r| r.clone_of),
+                            source_id: keep.and_then(|r| r.source_id.clone()),
                         },
                     );
                 }
