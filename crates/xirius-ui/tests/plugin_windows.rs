@@ -52,27 +52,25 @@ fn run_script() -> Run {
     let mut checks: HashMap<String, Vec<HashMap<String, String>>> = HashMap::new();
     for line in err.lines() {
         let mut words = line.split_whitespace();
-        match words.next() {
-            Some("plugin-check") => {
-                let shot = words.next().unwrap_or_default().to_string();
-                // A window's title, last on its line, has spaces.
-                let (line, title) = match line.split_once(" title=") {
-                    Some((l, t)) => (l, Some(t)),
-                    None => (line, None),
-                };
-                let mut pairs: HashMap<String, String> = line
-                    .split_whitespace()
-                    .skip(2)
-                    .filter_map(|w| w.split_once('='))
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-                    .collect();
-                if let Some(t) = title {
-                    pairs.insert("title".into(), t.to_string());
-                }
-                checks.entry(shot).or_default().push(pairs);
-            }
-            _ => {}
+        if words.next() != Some("plugin-check") {
+            continue;
         }
+        let shot = words.next().unwrap_or_default().to_string();
+        // A window's title, last on its line, has spaces.
+        let (line, title) = match line.split_once(" title=") {
+            Some((l, t)) => (l, Some(t)),
+            None => (line, None),
+        };
+        let mut pairs: HashMap<String, String> = line
+            .split_whitespace()
+            .skip(2)
+            .filter_map(|w| w.split_once('='))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        if let Some(t) = title {
+            pairs.insert("title".into(), t.to_string());
+        }
+        checks.entry(shot).or_default().push(pairs);
     }
     Run {
         checks,
