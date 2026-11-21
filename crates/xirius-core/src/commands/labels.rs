@@ -668,6 +668,7 @@ pub fn argument(name: &str) -> &str {
         "after" => "後ろに挿す行",
         "plugin" | "uid" => "プラグイン",
         "instrument" => "インストゥルメント",
+        "effect" => "エフェクト",
         "key" => "キー",
         "context" => "範囲",
         "command" | "commands" => "コマンド",

@@ -122,7 +122,7 @@ crates/xirius-ui/src/export.rs	run	6
 crates/xirius-ui/src/export.rs	run_command	1
 crates/xirius-ui/src/export_files.rs	exists	1
 crates/xirius-ui/src/folder_bus.rs	run_command	2
-crates/xirius-ui/src/fx_chain.rs	arrange_run	2
+crates/xirius-ui/src/fx_chain.rs	arrange_run	3
 crates/xirius-ui/src/fx_chain.rs	run_command	2
 crates/xirius-ui/src/fx_preset.rs	run_command	1
 crates/xirius-ui/src/head_fader.rs	run_command	1

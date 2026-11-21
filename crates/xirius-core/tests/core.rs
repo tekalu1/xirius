@@ -670,6 +670,10 @@ fn every_history_command_undoes_and_redoes() {
         json!({"slot": "instrument", "track": lead, "name": "Sampler"}),
     );
     rig.step("plugin.replace", json!({"id": vst, "name": "Limiter"}));
+    rig.step(
+        "track.add.with-effect",
+        json!({"effect": "Compressor", "before": kick}),
+    );
     let played = rig.step(
         "track.add.with-instrument",
         json!({"instrument": "Sampler", "arm": true,
