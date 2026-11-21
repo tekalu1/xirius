@@ -1607,4 +1607,4 @@ impl gpui::EntityInputHandler for DeviceWindow {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

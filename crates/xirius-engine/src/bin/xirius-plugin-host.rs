@@ -51,7 +51,7 @@ use windows_sys::Win32::UI::HiDpi::{
 };
 use xirius_engine::sandbox::{Event, Header, NOTE_CONTROL, NOTE_PARAM, Ring, SharedRings};
 use xirius_engine::wire::{self, Fault, FromHost, Gesture, OpenSlot, Opened, ToHost};
-use xirius_vst3::{Control, Editor, Module, Note, ParamChange, Plugin};
+use xirius_vst3::{Control, Editor, Module, Note, ParamChange, Plugin, PluginState};
 
 #[path = "plugin_host/formats.rs"]
 mod formats;
@@ -141,6 +141,7 @@ mod relay_tests {
                 plugin,
                 editor: None,
                 editor_origin: None,
+                editor_state: None,
                 audio: None,
                 stop: Arc::new(AtomicBool::new(false)),
                 fault: Arc::new(FaultCtl::default()),
@@ -196,7 +197,7 @@ mod relay_tests {
             generation: 1,
             revision: stamp.revision,
             basis_revision,
-            state: old_state,
+            state: old_state.clone(),
         });
         let (stamp, basis_revision) = parent.command_revision();
         host.handle(ToHost::SetParam {
@@ -223,7 +224,12 @@ mod relay_tests {
         let inst = host.instances.get_mut(&1).unwrap();
         let _held_notifications = inst.gestures(1);
         // Hold DSP completion by its block counter, without waiting on time.
-        inst.capture = Some((2, Instant::now() + Duration::from_secs(3600), 1));
+        inst.capture = Some(Capture {
+            blocks: 2,
+            at: Instant::now() + Duration::from_secs(3600),
+            generation: 1,
+            unchanged: None,
+        });
         inst.pending_latency = true;
         host.handle(ToHost::CaptureState {
             slot: 1,
@@ -288,6 +294,51 @@ mod relay_tests {
         assert!(captured);
         assert!(state_published);
         assert!(latency);
+
+        let before = host.out.stream_position().unwrap();
+        let inst = host.instances.get_mut(&1).unwrap();
+        inst.editor_state = inst.plugin.get_state().ok();
+        inst.capture_editor_close();
+        host.handle(ToHost::CaptureState {
+            slot: 1,
+            request: 8,
+        });
+        host.poll();
+        output.seek(SeekFrom::Start(before)).unwrap();
+        let mut captured = false;
+        while let Some(packet) = wire::recv(&mut output).unwrap() {
+            match FromHost::decode(&packet).unwrap() {
+                FromHost::CapturedState {
+                    request: 8, result, ..
+                } => {
+                    assert!(result.is_ok());
+                    captured = true;
+                }
+                FromHost::State { .. } => panic!("closing an untouched editor sent an edit"),
+                _ => {}
+            }
+        }
+        assert!(captured, "explicit saves still receive the plugin state");
+
+        let before = host.out.stream_position().unwrap();
+        let inst = host.instances.get_mut(&1).unwrap();
+        inst.editor_state = inst.plugin.get_state().ok();
+        inst.plugin.set_state(&old_state).unwrap();
+        inst.plugin.take_changes();
+        inst.capture_editor_close();
+        host.poll();
+        output.seek(SeekFrom::Start(before)).unwrap();
+        let mut published = false;
+        while let Some(packet) = wire::recv(&mut output).unwrap() {
+            if let FromHost::State { state, .. } = FromHost::decode(&packet).unwrap() {
+                assert_eq!(state, old_state);
+                published = true;
+            }
+        }
+        assert!(
+            published,
+            "a close still publishes a state changed without gestures"
+        );
         for (_, instance) in host.instances.drain() {
             instance.close();
         }
@@ -365,19 +416,28 @@ struct FaultCtl {
     at: AtomicU64,
 }
 
+/// A passive snapshot to publish after the processor has caught up.
+struct Capture {
+    blocks: u64,
+    at: Instant,
+    generation: u64,
+    /// An editor close alone publishes only if the saved state changed.
+    unchanged: Option<PluginState>,
+}
+
 struct Instance {
     updates: xirius_engine::plugin_updates::UpdateGate,
     plugin: Loaded,
     editor: Option<Editor>,
     editor_origin: Option<(i32, i32)>,
+    editor_state: Option<PluginState>,
     audio: Option<JoinHandle<Audio>>,
     stop: Arc<AtomicBool>,
     fault: Arc<FaultCtl>,
     rings: Arc<SharedRings>,
     /// The host generation that opened it.
     epoch: u64,
-    /// Read the state once the processor has run to this block, or at this time.
-    capture: Option<(u64, Instant, u64)>,
+    capture: Option<Capture>,
     capture_requests: Vec<u64>,
     pending_latency: bool,
     /// The names of its keys last sent to the engine.
@@ -385,17 +445,32 @@ struct Instance {
 }
 
 impl Instance {
+    fn capture_editor_close(&mut self) {
+        let unchanged = self.editor_state.take();
+        self.capture.get_or_insert_with(|| Capture {
+            blocks: 0,
+            at: Instant::now(),
+            generation: self.updates.stamp().generation,
+            unchanged,
+        });
+    }
+
+    fn capture_editor_change(&self) -> Capture {
+        Capture {
+            blocks: self.blocks() + CAPTURE_BLOCKS,
+            at: Instant::now() + CAPTURE_WAIT,
+            generation: self.updates.stamp().generation,
+            unchanged: None,
+        }
+    }
+
     fn gestures(&mut self, slot: u32) -> Vec<FromHost> {
         let generation = self.updates.stamp().generation;
         let mut out = Vec::new();
         for gesture in self.plugin.take_gestures() {
             let revision = self.updates.next_revision().revision;
             if matches!(gesture, Gesture::End(_)) {
-                self.capture = Some((
-                    self.blocks() + CAPTURE_BLOCKS,
-                    Instant::now() + CAPTURE_WAIT,
-                    generation,
-                ));
+                self.capture = Some(self.capture_editor_change());
             }
             out.push(FromHost::Gesture {
                 slot,
@@ -531,6 +606,8 @@ impl Host {
                     {
                         if let Err(e) = inst.plugin.set_state(&state) {
                             eprintln!("xirius-plugin-host: slot {slot}: {e}");
+                        } else if inst.editor.is_some() {
+                            inst.editor_state = inst.plugin.get_state().ok();
                         }
                         inst.capture = None;
                         inst.plugin.take_gestures();
@@ -599,8 +676,10 @@ impl Host {
                     let opened = if inst.editor.is_some() {
                         Ok(())
                     } else {
+                        let state = inst.plugin.get_state().ok();
                         inst.plugin.open_editor(&title, caption).map(|editor| {
                             inst.editor = Some(editor);
+                            inst.editor_state = state;
                         })
                     };
                     opened
@@ -661,11 +740,7 @@ impl Host {
                 {
                     // Play presses the window took until now still count.
                     keys = editor.take_play_requests();
-                    inst.capture.get_or_insert((
-                        0,
-                        Instant::now(),
-                        inst.updates.stamp().generation,
-                    ));
+                    inst.capture_editor_close();
                     // Shut by the person since the last `poll`, as with `Close`.
                     shut = !editor.is_visible();
                 }
@@ -895,6 +970,7 @@ impl Host {
             plugin,
             editor: None,
             editor_origin: None,
+            editor_state: None,
             audio: Some(thread),
             stop,
             fault,
@@ -915,27 +991,33 @@ impl Host {
             let _in = inst.enter();
             out.extend(inst.gestures(slot));
             let changes = inst.plugin.take_changes();
-            if changes.values && inst.capture.is_none() {
-                inst.capture = Some((
-                    inst.blocks() + CAPTURE_BLOCKS,
-                    Instant::now() + CAPTURE_WAIT,
-                    inst.updates.stamp().generation,
-                ));
+            if changes.values {
+                let later = inst.capture_editor_change();
+                let (blocks, at) = (later.blocks, later.at);
+                let capture = inst.capture.get_or_insert(later);
+                if capture.unchanged.is_some() && capture.blocks == 0 {
+                    capture.blocks = blocks;
+                    capture.at = at;
+                }
             }
             inst.pending_latency |= changes.latency;
             let mut names_changed = changes.note_names;
-            let passive = inst
-                .capture
-                .filter(|(blocks, at, _)| inst.blocks() >= *blocks || Instant::now() >= *at);
+            let ready = inst.capture.as_ref().is_some_and(|capture| {
+                inst.blocks() >= capture.blocks || Instant::now() >= capture.at
+            });
             // A gesture is reported before its queued value necessarily reaches
             // DSP. Neither latency notification nor an explicit capture request
             // may turn that old processor state into a fresh save/build receipt.
-            let settled = inst.capture.is_none() || passive.is_some();
-            if settled && (!inst.capture_requests.is_empty() || passive.is_some()) {
-                if passive.is_some() {
-                    inst.capture = None;
-                }
+            let settled = inst.capture.is_none() || ready;
+            if settled && (!inst.capture_requests.is_empty() || ready) {
+                let passive = inst.capture.take();
                 let result = inst.plugin.get_state();
+                let passive = passive.filter(|capture| {
+                    !capture
+                        .unchanged
+                        .as_ref()
+                        .is_some_and(|state| result.as_ref().is_ok_and(|read| read == state))
+                });
                 let values = if result.is_ok() {
                     inst.plugin.param_values()
                 } else {
@@ -956,7 +1038,7 @@ impl Host {
                         values: values.clone(),
                     });
                 }
-                if let Some((_, _, generation)) = passive {
+                if let Some(Capture { generation, .. }) = passive {
                     match result {
                         Ok(state) => out.push(FromHost::State {
                             slot,
@@ -998,8 +1080,7 @@ impl Host {
             if inst.editor.as_ref().is_some_and(|e| !e.is_visible()) {
                 inst.editor = None;
                 // The patch may have been changed in the window without a word about it.
-                inst.capture
-                    .get_or_insert((0, Instant::now(), inst.updates.stamp().generation));
+                inst.capture_editor_close();
                 out.push(FromHost::EditorClosed { slot });
             }
         }

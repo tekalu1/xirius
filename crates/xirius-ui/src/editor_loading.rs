@@ -63,6 +63,26 @@ impl Windows {
         }
     }
 
+    /// An owned loading window can outlive main-window frames. Retire it and
+    /// release the host's foreground request on the UI thread between frames too.
+    pub(crate) fn sync_after_poll(
+        &mut self,
+        studio: &Rc<RefCell<Studio>>,
+        main: &Window,
+        cx: &mut App,
+    ) {
+        if self.has_pending()
+            || studio
+                .borrow()
+                .mixer
+                .editors
+                .iter()
+                .any(|editor| editor.awaits_placement())
+        {
+            self.sync(studio, main, cx);
+        }
+    }
+
     pub(crate) fn sync(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
         let wanted = {
             let s = studio.borrow();
@@ -127,10 +147,7 @@ impl Windows {
         });
         let mut focus_ready = false;
         for editor in &mut studio.borrow_mut().mixer.editors {
-            if editor.foreground_from != 0
-                && editor.retired_loading.is_none()
-                && matches!(editor.at, Where::Host { opened: true })
-            {
+            if editor.awaits_placement() {
                 editor.retired_loading = Some(
                     retired
                         .iter()
