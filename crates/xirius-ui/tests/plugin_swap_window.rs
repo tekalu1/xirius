@@ -147,4 +147,6 @@ fn the_window_follows_the_plugin_through_each_swap() {
     assert!(at("swap07-closed-dedicated").yes("noticed"));
     let reopened = at("swap08-reopened");
     assert_ne!(reopened.n("pid"), app);
+    assert_eq!(reopened.n("pid"), reopened.n("window-pid"));
+    assert_eq!(reopened.n("delay"), 128, "the value moved in the window");
 }
