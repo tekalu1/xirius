@@ -518,7 +518,14 @@ pub fn paint_with(pen: &mut Pen, r: Rect, bar: &Bar, v: &View<'_>) {
     // ‹ › and the tag: a filled face of s2, the preset's name and the mark
     // when the values moved off it.
     // A step that cannot go is faint, as the mock's disabled button.
-    let step_ink = |on: bool| if on { c.ink } else { c.ink.opacity(0.4) };
+    let step_ink = |on: bool| {
+        if on {
+            c.ink
+        } else {
+            c.ink
+                .opacity(f32::from(xirius_design::PRESET_STEP_DISABLED_ALPHA) / 255.0)
+        }
+    };
     if let Some(b) = bar.prev {
         pen.icon("chevron-left", icon_box(b), step_ink(v.steps.0));
     }

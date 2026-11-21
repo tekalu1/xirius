@@ -490,6 +490,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("live-edit", live_edit_shots::SHOTS),
     #[cfg(windows)]
     ("preset-input", preset_input_shots::SHOTS),
+    #[cfg(windows)]
+    ("preset-input-cold", preset_input_shots::COLD),
     ("quiet", quiet_shots::QUIET),
     ("rail-tips", fixed_screens_shots::RAIL_TIPS),
     ("range-trim", range_trim_shots::SHOTS),

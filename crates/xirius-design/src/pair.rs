@@ -64,6 +64,7 @@ pub enum Surface {
 pub enum Ink {
     Strong,
     Body,
+    Disabled,
     Blue,
     Mark,
     Alert,
@@ -151,9 +152,10 @@ impl Surface {
 }
 
 impl Ink {
-    pub const ALL: [Ink; 8] = [
+    pub const ALL: [Ink; 9] = [
         Ink::Strong,
         Ink::Body,
+        Ink::Disabled,
         Ink::Blue,
         Ink::Mark,
         Ink::Alert,
@@ -168,6 +170,7 @@ impl Ink {
         match self {
             Ink::Strong => p.ink_strong,
             Ink::Body => p.ink_body,
+            Ink::Disabled => p.ink_disabled,
             Ink::Blue => p.ink_blue,
             Ink::Mark => p.ink_mark,
             Ink::Alert => p.ink_alert,
@@ -296,7 +299,7 @@ macro_rules! kinds {
 
 kinds! {
     surface: Paper, S0, S1, S2, S3, Hover, Sel, Field, TextSel, Clip, ClipSel, TrackSel, Fill, FillHover, Danger, DangerHover;
-    ink: Strong, Body, Blue, Mark, Alert, Ai, OnFill, OnTextSel
+    ink: Strong, Body, Disabled, Blue, Mark, Alert, Ai, OnFill, OnTextSel
 }
 
 /// 許された組の一覧。ここが唯一の定義で、型・表・検査が全部ここから出る。
@@ -313,7 +316,7 @@ macro_rules! allowed_pairs {
 }
 
 allowed_pairs! {
-    Paper: [Strong, Body, Blue, Mark, Alert, Ai];
+    Paper: [Strong, Body, Disabled, Blue, Mark, Alert, Ai];
     S0: [Strong, Body, Blue, Mark, Alert, Ai];
     S1: [Strong, Body, Blue, Mark, Alert, Ai];
     S2: [Strong, Body, Blue, Mark, Alert, Ai];

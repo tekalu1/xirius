@@ -45,6 +45,8 @@ macro_rules! palette_tokens {
             // ---- 文字（ink）。`ink-weak` に当たるものは作らない ----
             ink_strong: c(0xf4f6ff), c(0x0f1330);
             ink_body: c(0xdfe3f2), c(0x1c2247);
+            /// 操作できないプリセット一覧の項目。ペーパーの上で 4.5:1 以上（UI-369）。
+            ink_disabled: c(0x9095a8), c(0x616678);
             /// 試聴の未再生の棒と点。点の最小不透明度 60% でも選択の面と 3:1 以上。
             wave_rest: c(0xdfe3f2), c(0x101637);
             ink_blue: c(0x9eabde), c(0x3a499e);

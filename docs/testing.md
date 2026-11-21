@@ -99,6 +99,10 @@ in the foreground. The suite also checks preset selection and the owners of the 
 native file dialog. Use separate results folders for `--case A`, which checks channel placement
 and stacking beside an unpinned editor, and `--case G`, which checks track insertion at a seam,
 opening a built-in editor in the foreground and restoring the original track order with one undo.
+Also run `--case cold` with a separate results folder. It starts without a plugin host and
+drags the fixture from the browser. The fixture delays attaching its view by two seconds so
+the test can detect a prematurely visible native frame. It then checks the editor content,
+foreground window and window order without any further input.
 Check installed-plugin compatibility in a separate manual pass.
 macOS has no external plugin editor (NSView host) yet and is outside this desktop test's scope.
 
