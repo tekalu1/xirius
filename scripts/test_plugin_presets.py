@@ -321,8 +321,12 @@ def main():
                     wait(lambda: not u.IsWindowVisible(second), "second editor did not close")
                     button(first, 4)
                     button(first, 6)
-                    channel = wait(lambda: u.FindWindowExW(0, 0, None, "Xirius · Channel Editor"),
-                                   "channel editor did not open")
+
+                    def shown_channel():
+                        hwnd = u.FindWindowExW(0, 0, None, "Xirius · Channel Editor")
+                        return hwnd if hwnd and u.IsWindowVisible(hwnd) else None
+
+                    channel = wait(shown_channel, "channel editor did not open")
                     r = rect(first)
                     monitor = MonitorInfo()
                     monitor.size = c.sizeof(monitor)

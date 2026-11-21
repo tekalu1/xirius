@@ -94,10 +94,11 @@ without covering their controls. The checks cover foreground activation, search 
 Escape, repeat-button, editor-body and outside-click dismissal, two editors with a list open,
 pinned editors with built-in/channel windows, and most-recently-touched stacking. They check
 that clicking the exposed part of either studio palette keeps its foreground focus and restores
-the external stack. A browser drop creates and selects an instrument track. Shift+F11 opens its
-editor and brings a newly opened external editor to the foreground. The suite also checks preset
-selection and the owners of the save form and native file dialog. Run again with `--case A`
-and a different results folder to check routing with a single unpinned editor dragged aside.
+the external stack. A browser drop creates and selects an instrument track and opens its editor
+in the foreground. The suite also checks preset selection and the owners of the save form and
+native file dialog. Use separate results folders for `--case A`, which checks channel placement
+and stacking beside an unpinned editor, and `--case G`, which checks track insertion at a seam,
+opening a built-in editor in the foreground and restoring the original track order with one undo.
 Check installed-plugin compatibility in a separate manual pass.
 macOS has no external plugin editor (NSView host) yet and is outside this desktop test's scope.
 
