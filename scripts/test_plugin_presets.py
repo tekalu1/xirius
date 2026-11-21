@@ -496,10 +496,16 @@ def main():
                 if args.case == "G":
                     # Keep both external frames outside the browser-to-column path.
                     move_right(first)
+                    # The fixture reports the editor HWNDs before the UI thread
+                    # finishes opening and retiring their owned loading windows.
+                    state()
+                    wait(lambda: not loading_frame(app.pid, entries[0]["name"]),
+                         "fixture did not dismiss the loading windows")
                     if u.GetForegroundWindow() != main_hwnd:
                         click_main(main_hwnd)
                         wait(lambda: u.GetForegroundWindow() == main_hwnd,
-                             "main window did not come to the foreground")
+                             "main window did not come to the foreground before the drag",
+                             detail=lambda: window_title(u.GetForegroundWindow()))
                     wait(lambda: all(hit_root(*point) == main_hwnd
                                      for point in (info["drag_from"], info["seam"])),
                          "insertion path is covered", seconds=3,
@@ -526,6 +532,9 @@ def main():
                          "inserted track's editor did not come to the foreground")
                     passed("17-instrument-insertion")
                     click_main(main_hwnd)
+                    wait(lambda: u.GetForegroundWindow() == main_hwnd,
+                         "main window did not come to the foreground for undo",
+                         detail=lambda: window_title(u.GetForegroundWindow()))
                     key(ord("Z"), 0x11)
                     wait(lambda: state()["root"] == original, "undo did not restore the track order")
                     passed("18-instrument-insertion-undo")
