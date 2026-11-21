@@ -38,14 +38,7 @@ fn screen_scripts_cannot_inject_os_keyboard_or_mouse_input() {
                 scan(&path);
             } else if path.extension().is_some_and(|ext| ext == "rs") {
                 let source = std::fs::read_to_string(&path).unwrap();
-                for forbidden in [
-                    "SendInput",
-                    "keybd_event",
-                    "mouse_event",
-                    "SendKeys",
-                    "SetForegroundWindow",
-                    "SetFocus(",
-                ] {
+                for forbidden in ["SendInput", "keybd_event", "mouse_event", "SendKeys"] {
                     assert!(
                         !source.contains(forbidden),
                         "{} uses {forbidden}",

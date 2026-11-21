@@ -3,10 +3,8 @@
 //! plugin's row in the mixer, for a built-in and a VST3 instrument and effect, and for a VST3
 //! that runs in a plugin host process.
 //!
-//! The VST3s are this PC's (kHs Gain; sforzando, else Vital): a stage says `plugin-skip` when
-//! one is missing. Each stage writes what it saw to stderr as `plugin-check <shot> …` lines,
-//! which `tests/plugin_windows.rs` reads: where a built-in's panel is in the shot, and the
-//! picture of each VST3 window, taken next to the shot as `<shot>-editor.bmp`.
+//! The shipped VST3 fixture is used in both track roles. Each stage logs the window it opened;
+//! each editor is captured in its own bitmap beside the main-window shot.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -14,8 +12,7 @@ use std::time::{Duration, Instant};
 use gpui::{App, Window};
 use serde_json::json;
 use xirius_core::id::TrackId;
-use xirius_design::Layout;
-use xirius_plugins::{Catalog, Entry};
+use xirius_plugins::Catalog;
 
 use crate::instrument::{DEFAULT, Pick, current};
 use crate::shot::{Act, Part, Shot, Target};
@@ -36,12 +33,16 @@ pub const SHOTS: &[Shot] = &[
         name: "p02-keys-built-in",
         acts: &[Reset, Plugin(0), Plugin(1), Press(Keys("Keys")), Plugin(9)],
     },
+    Shot {
+        name: "p02-keys-built-in-window",
+        acts: &[Plugin(10)],
+    },
     // A VST3 instrument's window, from the keys button; its picture on the next shot.
     Shot {
         name: "p03-keys-vst3",
         acts: &[
             Reset,
-            Plugin(3),
+            Plugin(11),
             Plugin(0),
             Plugin(2),
             Press(Keys("Keys")),
@@ -62,6 +63,10 @@ pub const SHOTS: &[Shot] = &[
             Press(Strip(Part::Insert, "Guitar")),
             Plugin(9),
         ],
+    },
+    Shot {
+        name: "p05-mixer-built-in-effect-window",
+        acts: &[Plugin(10)],
     },
     // A VST3 effect's window, from its row in the mixer.
     Shot {
@@ -85,7 +90,7 @@ pub const SHOTS: &[Shot] = &[
         name: "p08-mixer-vst3-instrument",
         acts: &[
             Reset,
-            Plugin(3),
+            Plugin(11),
             Plugin(2),
             Press(Tab(DrawerTab::Mixer)),
             Press(Strip(Part::Insert, "Keys")),
@@ -117,11 +122,6 @@ pub const SHOTS: &[Shot] = &[
     },
 ];
 
-/// The VST3 effect the run opens.
-const EFFECT: &str = "Kilohearts/kHs Gain.vst3";
-/// The VST3 instruments it tries, in order; `XIRIUS_TEST_VST3_INSTRUMENT` names another
-/// bundle in the standard folder.
-const INSTRUMENTS: [&str; 2] = ["sforzando.vst3", "Vital.vst3"];
 /// How long a plugin host process may take to show its window.
 const HOST_WAIT: Duration = Duration::from_secs(5);
 
@@ -130,33 +130,11 @@ fn track_named(s: &Studio, name: &str) -> Option<TrackId> {
     p.tracks.values().find(|t| t.name == name).map(|t| t.id)
 }
 
-fn probe(bundle: &str) -> Option<Vec<Entry>> {
-    let path = xirius_vst3::default_vst3_dir().join(bundle);
-    if !path.exists() {
-        return None;
-    }
-    xirius_plugins::probe(&path).ok()
-}
-
-/// This PC's test plugins, as the insert list and the player's list.
-fn use_test_plugins(s: &mut Studio, shot: &str) {
-    let mut entries = Vec::new();
-    let wanted_effect = std::env::var("XIRIUS_TEST_VST3_EFFECT").unwrap_or_else(|_| EFFECT.into());
-    match probe(&wanted_effect) {
-        Some(e) => entries.extend(e),
-        None => eprintln!("plugin-skip {shot} effect: {wanted_effect} is not on this PC"),
-    }
-    let wanted = std::env::var("XIRIUS_TEST_VST3_INSTRUMENT").ok();
-    let names: Vec<&str> = match &wanted {
-        Some(n) => vec![n.as_str()],
-        None => INSTRUMENTS.to_vec(),
-    };
-    match names.iter().find_map(|n| probe(n)) {
-        Some(e) => entries.extend(e),
-        None => eprintln!(
-            "plugin-skip {shot} instrument: none of {} is on this PC",
-            names.join(", ")
-        ),
+fn use_test_plugins(s: &mut Studio, instrument: bool) {
+    let fixture = crate::plugin_fixture_shots::fixture_path();
+    let mut entries = xirius_plugins::probe(&fixture).expect("scan the VST3 fixture");
+    if instrument {
+        entries[0].kind = xirius_core::model::PluginKind::Instrument;
     }
     s.use_plugins(Catalog {
         entries,
@@ -201,9 +179,9 @@ fn capture_windows(s: &mut Studio, shot: &str, dir: &Path) {
         .mixer
         .editors
         .iter()
-        .map(|e| (e.id, e.title.clone(), e.heard()))
+        .map(|e| (e.id, e.title.clone()))
         .collect();
-    for (id, title, heard) in open {
+    for (id, title) in open {
         #[cfg(not(windows))]
         let _ = id;
         let t = Instant::now();
@@ -223,7 +201,9 @@ fn capture_windows(s: &mut Studio, shot: &str, dir: &Path) {
         let foreground = crate::park::is_foreground(hwnd);
         // Off every screen: right of the desktop, where the run puts plugin windows.
         let edge = xirius_vst3::Placement::offscreen().at.map_or(0, |(x, _)| x);
-        let offscreen = crate::park::origin(hwnd).is_some_and(|(x, _)| x >= edge);
+        let offscreen =
+            crate::park::origin(hwnd).is_some_and(|(x, y)| x >= edge || x <= -30000 || y <= -30000);
+        let in_host = crate::park::own_handle(&title).is_none();
         // The plugin draws at its own pace in the host process.
         let t = Instant::now();
         let mut taken = xirius_vst3::capture_window(hwnd, &path);
@@ -233,7 +213,7 @@ fn capture_windows(s: &mut Studio, shot: &str, dir: &Path) {
         }
         match taken {
             Ok(c) => eprintln!(
-                "plugin-check {shot} editor={} place=host heard={heard} foreground={foreground} offscreen={offscreen} width={} height={} colors={} title={title}",
+                "plugin-check {shot} editor={} in_host={in_host} foreground={foreground} offscreen={offscreen} width={} height={} colors={} title={title}",
                 path.display(),
                 c.width,
                 c.height,
@@ -405,21 +385,29 @@ fn probe_header(s: &mut Studio, id: xirius_core::id::PluginId, shot: &str, dir: 
     );
 }
 
-/// Says what is open, and where each built-in's panel is in the shot (physical pixels).
-fn report(s: &Studio, shot: &str, window: &Window) {
-    let g = crate::screen::geometry(s, window);
-    let scale = window.scale_factor();
-    for (i, w) in s.instruments.open.iter().enumerate() {
-        let r = s.instruments.frame(i, &g);
-        eprintln!(
-            "plugin-check {shot} panel={} x={} y={} w={} h={}",
-            w.plugin,
-            (r.x * scale).round(),
-            ((r.y + Layout::TOP_BAR_H) * scale).round(),
-            (r.w * scale).round(),
-            (r.h * scale).round(),
-        );
-    }
+#[cfg(windows)]
+fn capture_builtin(s: &Studio, shot: &str, dir: &Path, main: &Window) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GW_OWNER, GetWindow, IsWindowVisible};
+    let [device] = s.instruments.open.as_slice() else {
+        panic!("expected one built-in editor for {shot}");
+    };
+    let title = format!("Xirius · {}", device.plugin);
+    let hwnd = crate::park::own_handle(&title).expect("the built-in has its own window");
+    let main = crate::device_window::hwnd_of(main);
+    let owned = unsafe { GetWindow(hwnd as _, GW_OWNER) as isize == main };
+    let visible = unsafe { IsWindowVisible(hwnd as _) != 0 };
+    let foreground = crate::park::is_foreground(hwnd);
+    let offscreen = crate::park::origin(hwnd).is_some_and(|(x, y)| x <= -30000 || y <= -30000);
+    let capture = xirius_vst3::capture_window(hwnd, &dir.join(format!("{shot}-editor.bmp")))
+        .expect("capture the built-in editor");
+    eprintln!(
+        "plugin-check {shot} built_in=true owned={owned} visible={visible} foreground={foreground} offscreen={offscreen} width={} height={} colors={} title={title}",
+        capture.width, capture.height, capture.distinct_colors,
+    );
+}
+
+/// Says what is open in the model.
+fn report(s: &Studio, shot: &str) {
     eprintln!(
         "plugin-check {shot} popup={:?} built-in={} vst3={} error={:?}",
         s.popup.as_ref().map(|p| p.kind),
@@ -466,7 +454,7 @@ pub fn play(
             }
             None => eprintln!("plugin-skip {name} instrument: no VST3 instrument"),
         },
-        3 => use_test_plugins(&mut s, name),
+        3 | 11 => use_test_plugins(&mut s, stage == 11),
         4 => add_effect(&mut s, "Guitar", "EQ", "builtin", "eq"),
         5 => {
             let effect = s
@@ -500,6 +488,10 @@ pub fn play(
             }
         }
         8 => capture_windows(&mut s, name, dir),
+        #[cfg(windows)]
+        10 => capture_builtin(&s, name, dir, window),
+        #[cfg(not(windows))]
+        10 => (),
         _ => {
             let p = s.project();
             let open = p
@@ -508,7 +500,7 @@ pub fn play(
                 .and_then(|x| current(x))
                 .map(|x| s.mixer.is_open(x.id) || s.instruments.is_open(x.id));
             eprintln!("plugin-check {name} keys-open={open:?}");
-            report(&s, name, window);
+            report(&s, name);
         }
     }
     // Fixture edits may start the player or load an insert asynchronously.

@@ -499,6 +499,7 @@ pub enum BRow {
     },
     Item {
         item: LibItem,
+        track_key: Option<String>,
         vendor_text: bool,
         fav: bool,
         selected: bool,
@@ -509,6 +510,7 @@ pub enum BRow {
     Preset {
         /// The device's uid.
         device: &'static str,
+        track_key: Option<String>,
         name: String,
         effect: bool,
         fav: bool,
@@ -989,6 +991,7 @@ impl Browser {
                         selected: self.selected_item == Some(e.name.as_str())
                             && self.is_selected_row(&r),
                         presets: r.branch.then_some(r.open),
+                        track_key: Some(r.key),
                     },
                     Some(ref e) => BRow::Preset {
                         device: intern(&e.id),
@@ -1000,6 +1003,7 @@ impl Browser {
                             .as_ref()
                             .is_some_and(|(d, _)| *d == e.id)
                             && self.is_selected_row(&r),
+                        track_key: Some(r.key),
                     },
                     None => BRow::Group {
                         key: r.key,
@@ -1074,6 +1078,7 @@ impl Browser {
             let shown = self.shown_presets(&item, &q);
             let mut rows = vec![BRow::Item {
                 item,
+                track_key: None,
                 vendor_text: view != View::Vendor,
                 fav: self.is_favourite(item.name),
                 selected: self.selected_item == Some(item.name),
@@ -1083,6 +1088,7 @@ impl Browser {
                 rows.extend(names.into_iter().map(|name| {
                     BRow::Preset {
                         device: uid,
+                        track_key: None,
                         fav: self.is_favourite(&preset_key(uid, &name)),
                         selected: self
                             .selected_preset
@@ -2224,6 +2230,7 @@ fn paint_row(
             fav,
             selected,
             presets,
+            ..
         } => {
             if *selected {
                 pen.round(inner, c.sel, Radius::S);

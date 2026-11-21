@@ -11,18 +11,38 @@
 //! name into a [`Hit`] against the current song, so the list does not depend
 //! on ids and is tested without a window.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui::{App, Window};
 use xirius_core::model::Project;
 
 use crate::browser::{BrowserHit, RailTab};
+use crate::independent::Over;
 use crate::mixer::MixerHit;
 use crate::studio::{DrawerTab, Geometry, Hit, Studio};
 use crate::tools::Tool;
 use crate::topbar::BarButton;
 use crate::tree::RowKind;
+
+thread_local! {
+    static DROP_TARGET: Cell<Option<Over>> = const { Cell::new(None) };
+}
+
+pub(crate) fn take_drop_target() -> Option<Over> {
+    DROP_TARGET.take()
+}
+
+/// A virtual drag can name its receiving window even when all windows are parked.
+pub(crate) fn with_drop_target(target: Over, drag: impl FnOnce()) {
+    DROP_TARGET.set(Some(target));
+    drag();
+    assert_eq!(
+        take_drop_target(),
+        None,
+        "the scripted drag never reached release"
+    );
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Target {

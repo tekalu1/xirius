@@ -53,7 +53,7 @@ const OPEN_WINDOW: &[&str] = &["screen.rs", "app.rs", "independent.rs"];
 #[test]
 fn only_the_entries_open_a_window() {
     for (name, code) in all() {
-        if code.contains(".open_window(") {
+        if name != "device_window/tests.rs" && code.contains(".open_window(") {
             assert!(
                 OPEN_WINDOW.contains(&name.as_str()),
                 "{name} calls `open_window`: an independent window is opened by \

@@ -127,7 +127,9 @@ fn launch(env: Option<(&str, &str)>) -> AppChild {
     if let Some((k, v)) = env {
         cmd.env(k, v);
     } else {
-        cmd.env("XIRIUS_OPEN_SECTION", "sample");
+        // The sample has grown. Give its arranged tracks room above the open drawer.
+        cmd.args(["--size", "1440,1280"])
+            .env("XIRIUS_OPEN_SECTION", "sample");
     }
     AppChild {
         child: cmd.spawn().unwrap(),
@@ -164,6 +166,7 @@ fn tree_of(child: &mut Child, a: &IUIAutomation, want: &str) -> Vec<(String, i32
 // UIA_ControlTypeIds
 const TREE: i32 = 50023;
 const TREE_ITEM: i32 = 50024;
+const LIST_ITEM: i32 = 50007;
 const RADIO_BUTTON: i32 = 50013;
 
 #[test]
@@ -185,6 +188,13 @@ fn the_track_list_is_a_tree_of_named_items_to_uia() {
     for want in ["Keys", "Drums", "Bass"] {
         assert!(names.contains(&want), "{want} missing from {names:?}");
     }
+    assert_eq!(
+        rows.iter()
+            .filter(|(name, ty, _)| name == "Sampler" && *ty == LIST_ITEM)
+            .count(),
+        2,
+        "the favourite and the instrument list both expose Sampler"
+    );
 }
 
 #[test]

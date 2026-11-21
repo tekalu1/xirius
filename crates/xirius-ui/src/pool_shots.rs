@@ -393,7 +393,7 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
                     "選んだトラックに置く",
                     "使っているクリップを選択",
                     "エクスプローラーで表示",
-                    "名前を変更",
+                    "名前を変更…",
                     "ごみ箱へ",
                 ]
             );
@@ -487,7 +487,7 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
             // the row moves up under the pointer, and the drag still holds Kick.wav.
             let from = pool_mid(&s.borrow(), &g, "Kick.wav");
             let to = (g.lanes.x + g.lanes.w * 0.6, g.lanes.bottom() - 30.0);
-            drag(from, to, w, cx);
+            crate::shot::with_drop_target(crate::independent::Over::Main, || drag(from, to, w, cx));
             let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
             while s.borrow().project().tracks.len() == tracks {
                 assert!(std::time::Instant::now() < end, "pool drop did not finish");

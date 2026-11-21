@@ -126,6 +126,29 @@ fn offscreen() -> bool {
     std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_some()
 }
 
+/// Creates the hidden save form. The caller assigns the editor as its owner before showing it.
+pub(crate) fn open_preset_save<V: Render + 'static>(
+    cx: &mut App,
+    initial: Bounds<Pixels>,
+    build: impl FnOnce(&mut Window, &mut App) -> Entity<V> + 'static,
+) -> gpui::Result<WindowHandle<V>> {
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(initial)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Save preset".into()),
+                ..Default::default()
+            }),
+            show: false,
+            focus: false,
+            is_resizable: false,
+            is_minimizable: false,
+            ..Default::default()
+        },
+        build,
+    )
+}
+
 /// Opens an independent window. `build` makes the window's view; it runs inside the new
 /// window, before it is shown (without taking the focus).
 pub(crate) fn open<V: Render + 'static>(
