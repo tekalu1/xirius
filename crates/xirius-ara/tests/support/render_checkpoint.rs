@@ -12,7 +12,7 @@ pub struct Checkpoints {
 }
 
 impl Checkpoints {
-    pub fn new(save_on_first: bool) -> (Self, Loader) {
+    pub fn new(save_on_first: bool, edit_on_first: Option<u64>) -> (Self, Loader) {
         let (tx, replies) = mpsc::channel();
         let (save_tx, saves) = mpsc::channel();
         let service = Arc::new(Mutex::new(Weak::new()));
@@ -24,6 +24,7 @@ impl Checkpoints {
                 tx,
                 save_tx,
                 save_on_first,
+                edit_on_first,
             }))
         });
         (
@@ -47,6 +48,7 @@ struct CheckpointBinary {
     tx: mpsc::Sender<mpsc::Receiver<Probe>>,
     save_tx: mpsc::Sender<Stored>,
     save_on_first: bool,
+    edit_on_first: Option<u64>,
 }
 
 impl Binary for CheckpointBinary {
@@ -66,6 +68,7 @@ impl Binary for CheckpointBinary {
             tx: self.tx.clone(),
             save_tx: self.save_tx.clone(),
             save_on_first: self.save_on_first,
+            edit_on_first: self.edit_on_first,
             frames: 0,
         }))
     }
@@ -77,6 +80,7 @@ struct CheckpointInstance {
     tx: mpsc::Sender<mpsc::Receiver<Probe>>,
     save_tx: mpsc::Sender<Stored>,
     save_on_first: bool,
+    edit_on_first: Option<u64>,
     frames: usize,
 }
 
@@ -104,6 +108,9 @@ impl Instance for CheckpointInstance {
         if self.frames / 48_000 != second {
             let service = self.service.lock().unwrap().upgrade().unwrap();
             if second == 0 && self.save_on_first {
+                if let Some(key) = self.edit_on_first {
+                    fake::edit(&xirius_ara::service::modification_id(key), 0.5);
+                }
                 self.save_tx
                     .send(service.store_changed_later().unwrap())
                     .unwrap();

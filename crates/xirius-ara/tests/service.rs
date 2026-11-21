@@ -289,6 +289,46 @@ fn edits_survive_saving_and_opening_and_a_clone_keeps_them() {
     no_violations();
 }
 
+#[test]
+fn an_edit_on_the_first_render_after_restoring_is_archived() {
+    let key = 3703;
+    let audio = tone(48000.0, 1.0, 0.5);
+    let song = song(vec![clip(key, "restored.wav", &audio, 0.0, 0.0, 1.0)]);
+    let service = start(Config::default(), None);
+    service.sync(&song);
+    until("the analysis archive", || {
+        service.analysis_archive().is_some()
+    });
+    let archive = (*service.analysis_archive().unwrap()).clone();
+    assert!(service.close(Instant::now() + WAIT));
+
+    let (checkpoints, loader) = render_checkpoint::Checkpoints::new(true, Some(key));
+    let service = Arc::new(Service::start(
+        loader,
+        Some(archive.clone()),
+        Arc::new(|| {}),
+    ));
+    checkpoints.attach(&service);
+    service.sync(&song);
+    // Queue the edit and save from inside the first render turn after restoring.
+    let saved = checkpoints
+        .saves
+        .recv_timeout(WAIT)
+        .unwrap()
+        .recv_timeout(WAIT)
+        .unwrap()
+        .expect("the first edit after restore must produce an edit archive");
+    assert_ne!(saved, archive);
+    assert!(service.wait_idle(Instant::now() + WAIT));
+    assert!(
+        Arc::try_unwrap(service)
+            .ok()
+            .unwrap()
+            .close(Instant::now() + WAIT)
+    );
+    no_violations();
+}
+
 /// PLG-047: each clip renders at its source's rate, whatever the song's, so a new song rate
 /// leaves the document and the user's edits alone (the caller converts).
 #[test]
@@ -341,7 +381,7 @@ fn waiting_for_idle_after_a_change_ends_on_the_new_render() {
 #[test]
 fn a_long_render_still_answers() {
     let audio = tone(48000.0, 10.0, 0.5);
-    let (checkpoints, loader) = render_checkpoint::Checkpoints::new(false);
+    let (checkpoints, loader) = render_checkpoint::Checkpoints::new(false, None);
     let s = Arc::new(Service::start(loader, None, Arc::new(|| {})));
     checkpoints.attach(&s);
     s.sync(&song(vec![clip(4901, "long.wav", &audio, 0.0, 0.0, 10.0)]));
@@ -383,7 +423,7 @@ fn a_long_render_still_answers() {
 #[test]
 fn an_explicit_save_collects_analysis_during_rendering_without_an_edit() {
     let audio = tone(48000.0, 10.0, 0.5);
-    let (checkpoints, loader) = render_checkpoint::Checkpoints::new(true);
+    let (checkpoints, loader) = render_checkpoint::Checkpoints::new(true, None);
     let s = Arc::new(Service::start(loader, None, Arc::new(|| {})));
     checkpoints.attach(&s);
     s.sync(&song(vec![clip(
