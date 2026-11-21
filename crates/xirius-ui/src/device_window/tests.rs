@@ -234,7 +234,7 @@ fn independent_ime_does_not_edit_a_main_field_or_another_device() {
     assert_eq!(s.ime_target(), Some(crate::interaction::ImeTarget::Name));
 }
 
-mod headless {
+pub(crate) mod headless {
     use gpui::{
         Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, Bounds, Capslock,
         ClipboardItem, CursorStyle, DispatchEventResult, DisplayId, DummyKeyboardMapper,
@@ -454,7 +454,7 @@ mod headless {
         fn update_ime_position(&self, _: Bounds<Pixels>) {}
     }
 
-    pub(super) struct HeadlessPlatform {
+    pub(crate) struct HeadlessPlatform {
         background: BackgroundExecutor,
         foreground: ForegroundExecutor,
         text_system: Arc<dyn PlatformTextSystem>,
@@ -463,7 +463,7 @@ mod headless {
     }
 
     impl HeadlessPlatform {
-        pub(super) fn new() -> Rc<Self> {
+        pub(crate) fn new() -> Rc<Self> {
             let dispatcher: Arc<dyn PlatformDispatcher> = Arc::new(InlineDispatcher);
             Rc::new(Self {
                 background: BackgroundExecutor::new(dispatcher.clone()),
@@ -623,7 +623,7 @@ mod headless {
     /// The main window the `Windows::sync` call under test stands on. `independent::open`
     /// looks the OS's window of a title up to parent and place, which a headless window
     /// has none of: this is the same `cx.open_window` without that look-up.
-    pub(super) fn open_test<V: gpui::Render + 'static>(
+    pub(crate) fn open_test<V: gpui::Render + 'static>(
         cx: &mut gpui::App,
         bounds: Bounds<Pixels>,
         build: impl FnOnce(&mut gpui::Window, &mut gpui::App) -> gpui::Entity<V> + 'static,

@@ -31,7 +31,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True, help="temporary data parent")
     parser.add_argument("--out", type=Path, required=True, help="screenshots and result.json")
-    parser.add_argument("--case", choices=["A", "E", "F", "G", "cold", "cold-idle", "effect-seam"],
+    parser.add_argument("--case", choices=["A", "E", "F", "G", "cold", "cold-idle",
+                                          "effect-seam", "effect-seam-idle", "effect-seam-close"],
                         help="run one scenario")
     args = parser.parse_args()
     if os.name != "nt":
@@ -59,6 +60,7 @@ def main():
         "GetTopWindow": (w.HWND, [w.HWND]),
         "GetWindowRect": (w.BOOL, [w.HWND, c.POINTER(w.RECT)]),
         "MonitorFromWindow": (w.HANDLE, [w.HWND, w.DWORD]),
+        "IsWindow": (w.BOOL, [w.HWND]),
         "IsWindowVisible": (w.BOOL, [w.HWND]),
         "GetWindowThreadProcessId": (w.DWORD, [w.HWND, c.POINTER(w.DWORD)]),
         "FindWindowExW": (w.HWND, [w.HWND, w.HWND, w.LPCWSTR, w.LPCWSTR]),
@@ -314,11 +316,12 @@ def main():
         env.pop("XIRIUS_PRESET_INPUT_EFFECT", None)
         if args.case == "G":
             env["XIRIUS_PRESET_INPUT_BUILTIN"] = "1"
-        effect_seam = args.case == "effect-seam"
+        effect_seam = args.case in ("effect-seam", "effect-seam-idle", "effect-seam-close")
+        warm_idle = args.case == "effect-seam-idle"
         if effect_seam:
             env["XIRIUS_PRESET_INPUT_EFFECT"] = "1"
         cold = args.case in ("cold", "cold-idle")
-        if cold:
+        if cold or warm_idle:
             env.setdefault("XIRIUS_TEST_VST3_EDITOR_OPEN_MS", "2000")
         if args.case == "cold-idle":
             env["XIRIUS_TEST_VST3_OPEN_MS"] = "3500"
@@ -354,27 +357,89 @@ def main():
                 assert (out/"input-ready.json").exists(), "fixture app exited during setup; read app.log"
                 info = json.loads((out/"input-ready.json").read_text(encoding="utf-8"))
                 main_hwnd = info["main"]
+                # Expose the fixture before input if the shell launched it in the
+                # background. Leave activation to the real input below.
+                if effect_seam and hit_root(*info["drag_from"]) != main_hwnd:
+                    assert u.SetWindowPos(main_hwnd, 0, 0, 0, 0, 0, 0x13)
+                    wait(lambda: hit_root(*info["drag_from"]) == main_hwnd,
+                         "the fixture's browser is covered")
                 if effect_seam:
                     assert not new_frame(set()), "a native editor opened before the drag"
-                    drag(main_hwnd, info["drag_from"], info["drag_to"])
-                    original, index = info["root"], info["before_index"]
-                    inserted = wait(lambda: current if (current := state())["root"] != original else None,
-                                    "effect drop did not create a track")
-                    actual = inserted["root"]
-                    assert len(actual) == len(original) + 1, actual
-                    assert actual[:index] + actual[index + 1:] == original, actual
-                    inserts = inserted["inserts"]
-                    assert inserts.pop(actual[index]) == {"kind":"audio", "plugins":[entries[0]["uid"]]}
-                    assert inserts == info["inserts"], "an existing track's inserts changed"
-                    editor = wait(lambda: new_frame(set()), "the inserted effect's editor did not open")
-                    wait(lambda: fixture_label_control(editor) and u.GetForegroundWindow() == editor,
-                         "the inserted effect's view did not come to the foreground")
-                    passed("effect-insertion")
-                    click_main(main_hwnd)
-                    key(ord("Z"), 0x11)
-                    wait(lambda: (current := state())["root"] == original
-                         and current["inserts"] == info["inserts"], "undo did not restore tracks and inserts")
-                    passed("effect-insertion-undo")
+                    original = {"root": info["root"], "inserts": info["inserts"]}
+                    name = entries[0]["name"]
+                    host_pid = None
+
+                    def drop_at(seam, index, before, known=()):
+                        nonlocal host_pid
+                        started = time.monotonic()
+                        drag(main_hwnd, info["drag_from"], info[seam])
+                        minimize = warm_idle and seam == "top"
+                        if minimize:
+                            loading = wait(lambda: loading_frame(app.pid, name),
+                                           "warm top drop did not show a loading window", seconds=3)
+                            assert u.ShowWindowAsync(main_hwnd, 6)  # SW_MINIMIZE
+                            wait(lambda: u.IsIconic(main_hwnd), "main window did not minimize")
+                        editor = wait(lambda: new_frame(known), f"{seam} editor window was not created")
+                        process = w.DWORD()
+                        u.GetWindowThreadProcessId(editor, c.byref(process))
+                        assert process.value and process.value != app.pid
+                        if host_pid is None:
+                            host_pid = process.value
+                        assert process.value == host_pid, f"{seam} did not reuse the host"
+                        if minimize:
+                            wait(lambda: fixture_label_control(editor), "native fixture content was absent")
+                            wait(lambda: not u.IsWindow(loading), "loading window survived while minimized",
+                                 seconds=5)
+                            assert u.IsIconic(main_hwnd), "the editor restored the main window"
+                            assert u.ShowWindowAsync(main_hwnd, 4)  # SW_SHOWNOACTIVATE
+                        else:
+                            wait(lambda: fixture_label_control(editor) and u.GetForegroundWindow() == editor
+                                 and order([editor, main_hwnd]) == [editor, main_hwnd]
+                                 and not loading_frame(app.pid, name),
+                                 f"{seam} view did not replace its loading window in the foreground",
+                                 detail=lambda: (u.GetForegroundWindow(), editor, loading_frame(app.pid, name)))
+                        print(f"{seam} ready in {time.monotonic() - started:.2f}s", flush=True)
+                        current = state()
+                        root = current["root"]
+                        assert len(root) == len(before["root"]) + 1, root
+                        assert root[:index] + root[index + 1:] == before["root"], root
+                        inserts = current["inserts"].copy()
+                        assert inserts.pop(root[index]) == {"kind": "audio", "plugins": [entries[0]["uid"]]}
+                        assert inserts == before["inserts"], "an existing track's inserts changed"
+                        passed(f"effect-{seam}")
+                        return editor, current
+
+                    def undo(editor, before):
+                        if u.GetForegroundWindow() != main_hwnd:
+                            if u.IsWindowVisible(editor):
+                                move_right(editor)
+                            click_main(main_hwnd)
+                            wait(lambda: u.GetForegroundWindow() == main_hwnd,
+                                 "the studio did not take focus for undo")
+                        key(ord("Z"), 0x11)
+                        wait(lambda: (current := state())["root"] == before["root"]
+                             and current["inserts"] == before["inserts"] and not u.IsWindowVisible(editor),
+                             "one undo did not restore tracks and inserts and retire the editor")
+
+                    bottom, with_bottom = drop_at("bottom", len(original["root"]), original)
+                    if args.case == "effect-seam-close":
+                        button(bottom, 5)
+                        wait(lambda: not u.IsWindowVisible(bottom), "the bottom editor did not close")
+                        time.sleep(1)  # Let the host's close capture reach history before undo.
+                        assert state()["undo"] == with_bottom["undo"], "close added a history entry"
+                        undo(bottom, original)
+                        passed("effect-close-one-undo")
+                        return
+                    if warm_idle:
+                        button(bottom, 4)  # Keep the known editor open while the host stays warm.
+                    move_right(bottom)
+                    middle, _ = drop_at("middle", info["before_index"], with_bottom, (bottom,))
+                    undo(middle, with_bottom)
+                    passed("effect-middle-undo")
+                    top, _ = drop_at("top", 0, with_bottom, (bottom,))
+                    if not warm_idle:
+                        undo(top, with_bottom)
+                        passed("effect-top-undo")
                     return
                 if cold:
                     hosts = subprocess.run(
@@ -697,6 +762,10 @@ def main():
             finally:
                 (out/"result.json").write_text(json.dumps(checks, indent=2), encoding="utf-8")
                 (out/"input-done").write_text("done", encoding="utf-8")
+                if warm_idle and (out/"input-ready.json").exists():
+                    hwnd = json.loads((out/"input-ready.json").read_text(encoding="utf-8"))["main"]
+                    if u.IsIconic(hwnd):
+                        u.ShowWindowAsync(hwnd, 4)  # Let the fixture process its exit request.
                 try:
                     app.wait(timeout=30)
                 except subprocess.TimeoutExpired:

@@ -34,6 +34,12 @@ pub(crate) struct OpenEditor {
 }
 
 impl OpenEditor {
+    pub(crate) fn awaits_placement(&self) -> bool {
+        self.foreground_from != 0
+            && self.retired_loading.is_none()
+            && matches!(self.at, Where::Host { opened: true })
+    }
+
     pub fn param_titles(&self) -> Vec<(u32, String)> {
         Vec::new()
     }
@@ -442,6 +448,10 @@ impl Studio {
     }
 
     fn shown(&self, e: &OpenEditor) -> bool {
+        #[cfg(test)]
+        if let Some(host) = &self.mixer.fake_load {
+            return host.loaded.contains(&e.id);
+        }
         match &e.at {
             Where::Host { opened } => {
                 let status = self.transport.host().and_then(|host| {

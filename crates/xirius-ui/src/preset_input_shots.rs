@@ -184,8 +184,10 @@ fn prepare_cold(s: &mut Studio, window: &Window, dir: PathBuf) {
         let from = browser_item(s, &g, &name);
         let p = s.project();
         let track = p.tracks.values().find(|t| t.name == "Vocal").unwrap().id;
-        let row = s.tree().row_of(crate::tree::RowKind::Track(track)).unwrap();
-        let to = (g.column.x + 50.0, g.column.y + row.y - s.scroll.1 - 2.0);
+        let tree = s.tree();
+        let row = tree.row_of(crate::tree::RowKind::Track(track)).unwrap();
+        let seam = |y| screen_point(main, window, (g.column.x + 50.0, g.column.y + y));
+        assert!(matches!(p.root[0], xirius_core::id::Node::Folder(_)));
         let root = &p.root;
         let before_index = root
             .iter()
@@ -194,7 +196,9 @@ fn prepare_cold(s: &mut Studio, window: &Window, dir: PathBuf) {
             dir,
             &json!({
                 "main":main, "drag_from":screen_point(main, window, from),
-                "drag_to":screen_point(main, window, to), "root":root,
+                "middle":seam(row.y - 2.0), "root":root,
+                "top":seam(tree.rows.first().unwrap().y + 2.0),
+                "bottom":seam(tree.height + 2.0),
                 "before_index":before_index.unwrap(), "inserts":track_inserts(&p)
             }),
         );
@@ -302,11 +306,13 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>) -> bool {
                 })
                 .map(|plugin| format!("Xirius · {}", plugin.id));
             let temp = dir.join("input-state.tmp");
+            let undo = s.song.history().into_iter().find(|row| row.current);
             std::fs::write(
                 &temp,
-                serde_json::to_vec(
-                    &json!({"root":p.root,"editor":editor,"inserts":track_inserts(&p)}),
-                )
+                serde_json::to_vec(&json!({
+                    "root":p.root, "editor":editor, "inserts":track_inserts(&p),
+                    "undo":undo.map(|row| row.n)
+                }))
                 .unwrap(),
             )
             .unwrap();

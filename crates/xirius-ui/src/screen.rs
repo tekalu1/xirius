@@ -1070,6 +1070,89 @@ impl Screen {
     }
 }
 
+#[cfg(test)]
+#[test]
+fn a_warm_top_seam_editor_retires_its_loading_window_without_a_main_frame() {
+    use crate::device_window::tests::headless::{HeadlessPlatform, open_test};
+    use crate::mixer::editors::{OpenEditor, Where};
+    use gpui::{Application, Bounds, point, size};
+    use serde_json::json;
+    use xirius_core::id::{Node, PluginId, TrackId};
+
+    fn add(studio: &mut Studio, index: usize) -> (TrackId, PluginId) {
+        let data = studio
+            .song
+            .run(
+                "track.add.with-effect",
+                json!({"index":index, "effect":"Fixture Effect", "format":"vst3", "uid":"fixture"}),
+            )
+            .unwrap();
+        let track = data["id"].as_str().unwrap().parse().unwrap();
+        let id = data["plugin"].as_str().unwrap().parse().unwrap();
+        studio.open_when_loaded(track, id);
+        (track, id)
+    }
+
+    let platform = HeadlessPlatform::new();
+    let _app = Application::with_platform(platform).run_embedded(move |cx| {
+        let mut studio = Studio::sample();
+        studio.mixer.fake_load = Some(Default::default());
+        let end = studio.project().root.len();
+        let (bottom, bottom_fx) = add(&mut studio, end);
+        studio
+            .mixer
+            .fake_load
+            .as_mut()
+            .unwrap()
+            .loaded
+            .push(bottom_fx);
+        studio.idle();
+        let (middle, middle_fx) = add(&mut studio, 1);
+        assert!(studio.run_command("history.undo", json!({})));
+        let (top, top_fx) = add(&mut studio, 0);
+        assert_ne!(middle_fx, top_fx);
+        let root = &studio.project().root;
+        assert_eq!(root.first(), Some(&Node::Track(top)));
+        assert_eq!(root.last(), Some(&Node::Track(bottom)));
+        assert!(!root.contains(&Node::Track(middle)));
+
+        let studio = Rc::new(RefCell::new(studio));
+        let main = open_test(
+            cx,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(800.0))),
+            move |window, cx| Screen::for_test(studio, window, cx),
+        )
+        .unwrap();
+        main.update(cx, |screen, window, cx| {
+            screen.loading_windows.sync(&screen.studio, window, cx);
+            assert!(screen.loading_windows.has_pending());
+            {
+                let mut studio = screen.studio.borrow_mut();
+                let host = studio.mixer.fake_load.as_mut().unwrap();
+                host.loaded.extend([middle_fx, top_fx]);
+                studio.idle();
+                let host = studio.mixer.fake_load.as_ref().unwrap();
+                assert_eq!(host.asked, [(bottom, bottom_fx), (top, top_fx)]);
+                // Simulate the host reporting the top editor open without another frame.
+                studio.mixer.editors.push(OpenEditor {
+                    id: top_fx,
+                    title: "Fixture Effect".into(),
+                    at: Where::Host { opened: true },
+                    foreground_from: 1,
+                    retired_loading: None,
+                });
+            }
+            screen.poll_idle(window, cx, false);
+            assert!(!screen.loading_windows.has_pending());
+            assert_eq!(
+                screen.studio.borrow().mixer.editors[0].retired_loading,
+                Some(0)
+            );
+        })
+        .unwrap();
+    });
+}
+
 /// Asks for the plugins between frames too, every [`crate::health::POLL`]: a minimized window
 /// draws none (PLG-053, [`crate::idle`]). A plugin that went down blinks the taskbar button
 /// once, unless a script runs the window.
@@ -1077,46 +1160,53 @@ fn watch(window: &Window, cx: &mut Context<Screen>, attention: bool) {
     cx.spawn_in(window, async move |this, cx| {
         loop {
             cx.background_executor().timer(crate::health::POLL).await;
-            let alive = this.update_in(cx, |this, window, cx| {
-                let Ok(mut studio) = this.studio.try_borrow_mut() else {
-                    return;
-                };
-                let mut idle = studio.idle();
-                if !studio.live_midi.assign.commands.is_empty() {
-                    let g = geometry(&studio, window);
-                    idle.changed |= studio.run_midi_commands(&g);
-                }
-                if studio.has_asked() {
-                    idle.changed = true;
-                }
-                idle.changed |= studio.poll_other_change(|s| geometry(s, window));
-                let restart = if std::mem::take(&mut studio.ai.renew_requested) {
-                    let job = crate::ai::serve::renew_window(&mut studio);
-                    if job.is_none() {
-                        studio.ai.renewing = false;
-                        studio.refresh_popup();
-                    }
-                    job
-                } else {
-                    None
-                };
-                drop(studio);
-                if let Some(job) = restart {
-                    Screen::start_server(job, cx);
-                }
-                if idle.went_down && attention {
-                    window.request_attention();
-                }
-                if idle.changed {
-                    cx.notify();
-                }
-            });
+            let alive =
+                this.update_in(cx, |this, window, cx| this.poll_idle(window, cx, attention));
             if alive.is_err() {
                 break;
             }
         }
     })
     .detach();
+}
+
+impl Screen {
+    fn poll_idle(&mut self, window: &mut Window, cx: &mut Context<Self>, attention: bool) {
+        let Ok(mut studio) = self.studio.try_borrow_mut() else {
+            return;
+        };
+        let mut idle = studio.idle();
+        if !studio.live_midi.assign.commands.is_empty() {
+            let g = geometry(&studio, window);
+            idle.changed |= studio.run_midi_commands(&g);
+        }
+        if studio.has_asked() {
+            idle.changed = true;
+        }
+        idle.changed |= studio.poll_other_change(|s| geometry(s, window));
+        let restart = if std::mem::take(&mut studio.ai.renew_requested) {
+            let job = crate::ai::serve::renew_window(&mut studio);
+            if job.is_none() {
+                studio.ai.renewing = false;
+                studio.refresh_popup();
+            }
+            job
+        } else {
+            None
+        };
+        drop(studio);
+        self.loading_windows
+            .sync_after_poll(&self.studio, window, cx);
+        if let Some(job) = restart {
+            Screen::start_server(job, cx);
+        }
+        if idle.went_down && attention {
+            window.request_attention();
+        }
+        if idle.changed {
+            cx.notify();
+        }
+    }
 }
 
 /// The control-pipe reader wakes the screen after it queues editor messages. Register before
@@ -1131,11 +1221,15 @@ fn watch_editor_bar(window: &Window, cx: &mut Context<Screen>) {
         let mut pending = true;
         loop {
             if pending {
-                let alive = this.update_in(cx, |this, _, cx| {
+                let alive = this.update_in(cx, |this, window, cx| {
                     let Ok(mut studio) = this.studio.try_borrow_mut() else {
                         return false;
                     };
-                    if !studio.mixer.editors.is_empty() && studio.poll_editors() {
+                    let changed = !studio.mixer.editors.is_empty() && studio.poll_editors();
+                    drop(studio);
+                    if changed {
+                        this.loading_windows
+                            .sync_after_poll(&this.studio, window, cx);
                         cx.notify();
                     }
                     true
