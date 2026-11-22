@@ -17,6 +17,8 @@ use xirius_core::id::PluginId;
 pub(crate) use crate::independent::Positions;
 use crate::independent::{Key, Kind, Over, Spec};
 
+pub(crate) const CHANNEL_TITLE: &str = "Xirius · Channel Editor";
+
 #[cfg(windows)]
 pub(crate) mod drag_shots;
 pub(crate) mod input_shots;
@@ -243,6 +245,7 @@ impl Windows {
         self.sync_save(studio, main, cx);
         self.sync_channel(studio, main, cx);
         self.sync_macros(studio, main, cx);
+        self.close_retired(studio, cx);
         let wanted: Vec<_> = {
             let s = studio.borrow();
             s.instruments
@@ -252,13 +255,6 @@ impl Windows {
                 .copied()
                 .collect()
         };
-        self.open.retain(|id, handle| {
-            if wanted.iter().any(|w| w.plugin == *id) {
-                return true;
-            }
-            let _ = handle.update(cx, |_, window, _| window.remove_window());
-            false
-        });
         for win in wanted {
             if let Some(handle) = self.open.get(&win.plugin) {
                 let handle = *handle;
@@ -274,21 +270,37 @@ impl Windows {
             let title = format!("Xirius · {id}");
             let origin = main.bounds().origin;
             let positions = studio.borrow().instruments.positions.clone();
-            let initial = Bounds::new(
-                point(
-                    origin.x + px(40.0 + 24.0 * win.seat as f32),
-                    origin.y + px(60.0 + 24.0 * win.seat as f32),
-                ),
-                size(px(win.body.0), px(win.body.1 + crate::title_bar::BAR_H)),
-            );
+            let initial = positions
+                .borrow()
+                .get(&Key::Device(id))
+                .copied()
+                .unwrap_or_else(|| {
+                    Bounds::new(
+                        point(
+                            origin.x + px(40.0 + 24.0 * win.seat as f32),
+                            origin.y + px(60.0 + 24.0 * win.seat as f32),
+                        ),
+                        size(px(win.body.0), px(win.body.1 + crate::title_bar::BAR_H)),
+                    )
+                });
+            let (initial, display) = {
+                let s = studio.borrow();
+                let source = s
+                    .instruments
+                    .activate_device
+                    .filter(|(device, _)| *device == id)
+                    .map_or(0, |(_, source)| source);
+                crate::independent::device_bounds(&s, main, cx, id, initial, source)
+            };
             let spec = Spec {
                 kind: Kind::Device(id),
                 title,
                 initial,
-                display: None,
+                display,
                 min_size: None,
                 resizable: true,
                 positions: Some(positions.clone()),
+                restore: false,
             };
             let result = crate::independent::open(cx, main, spec, move |window, cx| {
                 let closing = shared.clone();
@@ -326,6 +338,8 @@ impl Windows {
             match result {
                 Ok(handle) => {
                     self.open.insert(id, handle);
+                    studio.borrow_mut().finish_device_open(id);
+                    self.close_retired(studio, cx);
                 }
                 Err(error) => {
                     let mut s = studio.borrow_mut();
@@ -345,6 +359,17 @@ impl Windows {
                 }
             });
         }
+    }
+
+    pub(crate) fn close_retired(&mut self, studio: &Rc<RefCell<Studio>>, cx: &mut App) {
+        let studio = studio.borrow();
+        self.open.retain(|id, handle| {
+            if studio.instruments.detached.contains(id) {
+                return true;
+            }
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+            false
+        });
     }
 
     /// Saving keeps the shared library form (folders and instrument effects), separate
@@ -459,6 +484,7 @@ impl Windows {
             min_size: None,
             resizable: false,
             positions: Some(positions.clone()),
+            restore: true,
         };
         let result = crate::independent::open(cx, main, spec, move |window, cx| {
             let closing = shared.clone();
@@ -534,7 +560,7 @@ impl Windows {
         });
         let spec = Spec {
             kind: Kind::Channel,
-            title: "Xirius · Channel Editor".into(),
+            title: CHANNEL_TITLE.into(),
             initial: beside.map_or_else(
                 || {
                     Bounds::new(
@@ -548,6 +574,7 @@ impl Windows {
             min_size: Some(size(px(least), px(CHANNEL_MIN_H))),
             resizable: true,
             positions: beside.is_none().then(|| positions.clone()),
+            restore: true,
         };
         let result = crate::independent::open(cx, main, spec, move |window, cx| {
             let closing = shared.clone();
@@ -1451,6 +1478,14 @@ fn device_key_event(
         && k.key == "escape"
         && s.instruments.detached_channel
         && s.channel_escape()
+    {
+        return;
+    }
+    if s.instruments.detached_channel
+        && s.popup.is_none()
+        && !m.ctrl
+        && !m.alt
+        && s.channel_layer_key(g, &k.key, m.shift)
     {
         return;
     }

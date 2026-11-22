@@ -209,12 +209,11 @@ fn a_vst3_effects_window_opens_in_its_host_and_draws() {
     s.popup_action(&g, Action::Pick(pick));
     let id = s.project().tracks[&t].inserts[0].id;
     assert!(s.mixer.is_open(id), "inserting opens the editor");
-    check_window(&mut s, id, "effect editor", None);
+    let hwnd = check_window(&mut s, id, "effect editor", None);
 
-    // Pressing the row again shuts it.
     assert!(press(&mut s, &g, MixerHit::Open(t, id)));
-    assert_eq!(s.mixer.open_editors(), 0);
-    assert_eq!(s.mixer.editor_hwnd(id), None);
+    assert_eq!(s.mixer.open_editors(), 1);
+    assert_eq!(s.mixer.editor_hwnd(id), Some(hwnd));
 }
 
 #[test]
@@ -256,15 +255,13 @@ fn a_vst3_instruments_window_opens_from_the_keys_button_and_the_mixer() {
     assert!(s.press(&g, Hit::Keys(t)));
     assert_eq!(s.mixer.editor_hwnd(id), Some(hwnd));
 
-    // The instrument's row in the mixer shuts it, and opens it again.
+    // The instrument's row in the mixer also brings the same frame forward.
     s.drawer_open = true;
     s.tab = DrawerTab::Mixer;
     let g = s.geometry(W, H);
     assert!(press(&mut s, &g, MixerHit::Open(t, id)));
-    assert!(!s.mixer.is_open(id));
-    assert!(press(&mut s, &g, MixerHit::Open(t, id)));
-    check_window(&mut s, id, name, Some(hwnd));
-    assert!(crate::park::origin(hwnd).is_none(), "the old frame closed");
+    assert!(s.mixer.is_open(id));
+    assert_eq!(s.mixer.editor_hwnd(id), Some(hwnd));
 }
 
 #[test]

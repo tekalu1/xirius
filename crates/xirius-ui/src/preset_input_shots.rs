@@ -17,6 +17,11 @@ pub const COLD: &[Shot] = &[Shot {
     acts: &[Act::Stage(Play::Window(prepare), 1)],
 }];
 
+pub const DEVICE_KINDS: &[Shot] = &[Shot {
+    name: "device-kinds-input",
+    acts: &[Act::Stage(Play::Window(prepare), 2)],
+}];
+
 thread_local! {
     static WAIT: RefCell<Option<(PathBuf, Instant)>> = const { RefCell::new(None) };
 }
@@ -39,6 +44,10 @@ fn prepare(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut
     }
     if stage == 1 {
         prepare_cold(&mut s, window, dir);
+        return;
+    }
+    if stage == 2 {
+        prepare_device_kinds(&mut s, window, dir);
         return;
     }
     crate::plugin_reload_shots::prepare(&mut s, 0);
@@ -163,6 +172,73 @@ fn prepare(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut
                 *node == xirius_core::id::Node::Track(second_track)
             }).unwrap(),
             "builtin_title":format!("Xirius · {}", s.project().tracks[&keys].inserts[0].id)
+        }),
+    );
+}
+
+fn prepare_device_kinds(s: &mut Studio, window: &Window, dir: PathBuf) {
+    let track = s
+        .project()
+        .tracks
+        .values()
+        .find(|t| t.name == "Keys")
+        .unwrap()
+        .id;
+    let catalog = xirius_plugins::Catalog::load(s.song().plugin_cache());
+    let entry = catalog.entries.first().expect("scanned fixture").clone();
+    s.use_plugins(catalog);
+    for name in ["Sampler", "Drum Kit"] {
+        assert!(s.run_command(
+            "rack.layer.add",
+            json!({"track":track,"name":name,"format":"builtin"}),
+        ));
+    }
+    assert!(s.run_command(
+        "plugin.add",
+        json!({"track":track,"name":entry.name,"uid":entry.uid,"format":"vst3"}),
+    ));
+    assert!(s.run_command("plugin.add", json!({"track":track,"name":"EQ"})));
+    let project = s.project();
+    let track_data = &project.tracks[&track];
+    let layers = crate::channel::keys::layers(track_data);
+    let instruments = [layers[0].instrument, layers[1].instrument];
+    let fx = track_data
+        .inserts
+        .iter()
+        .find(|p| p.uid == entry.uid)
+        .unwrap()
+        .id;
+    let eq = track_data.inserts.last().unwrap().id;
+    s.prepare_song();
+    crate::shot::run_for(s, 20.0, |s| !s.input_blocked() && s.has_loaded(fx));
+    s.drawer_open = true;
+    s.tab = crate::studio::DrawerTab::Mixer;
+    s.drawer_size.mixer = Some(500.0);
+    s.mixer.wide.insert(track);
+    s.mixer.set_insert_offset(track, 0);
+    s.browser.open = false;
+    let viewport = window.viewport_size();
+    let g = s.settled_geometry(
+        viewport.width.into(),
+        f32::from(viewport.height)
+            - xirius_design::Layout::TOP_BAR_H
+            - xirius_design::Layout::BOTTOM_BAR_H,
+    );
+    let main = crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap();
+    let at = |id| {
+        let point = s
+            .mixer_center(&g, crate::mixer::MixerHit::Open(track, id))
+            .unwrap_or_else(|| panic!("mixer row for {id} is not visible"));
+        screen_point(main, window, point)
+    };
+    input_ready(
+        dir,
+        &json!({
+            "main":main, "first":at(instruments[0]), "second":at(instruments[1]),
+            "fx":at(fx), "eq":at(eq), "fixture":entry.name,
+            "first_title":format!("Xirius · {}", instruments[0]),
+            "second_title":format!("Xirius · {}", instruments[1]),
+            "eq_title":format!("Xirius · {eq}"),
         }),
     );
 }

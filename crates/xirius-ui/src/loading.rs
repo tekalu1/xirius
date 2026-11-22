@@ -88,22 +88,33 @@ impl Studio {
     /// window opens a plugin a while after the song has it, so a window asked for before is
     /// asked for once the host has it ([`Studio::poll_open_later`]); the screen does not wait.
     pub(crate) fn open_when_loaded(&mut self, t: TrackId, id: PluginId) {
-        self.mixer.open_later = None;
         let foreground_from = Self::editor_foreground();
-        let built_in = self
-            .project()
+        let project = self.project();
+        let Some(plugin) = project
             .tracks
             .get(&t)
             .and_then(|x| x.inserts.iter().find(|p| p.id == id))
-            .is_some_and(crate::instrument::window::is_built_in);
-        if !built_in && self.loads_apart() && !self.has_loaded(id) {
-            self.mixer.open_later = Some(OpenLater {
-                track: t,
-                id,
-                foreground_from,
-            });
+        else {
+            return;
+        };
+        if !crate::instrument::window::is_built_in(plugin)
+            && !self.mixer.is_open(id)
+            && self.loads_apart()
+            && !self.has_loaded(id)
+        {
+            self.supersede_pending_views(id, plugin.kind);
+            if let Some(wait) = self.mixer.open_later.iter_mut().find(|w| w.id == id) {
+                wait.foreground_from = foreground_from;
+            } else {
+                self.mixer.open_later.push(OpenLater {
+                    track: t,
+                    id,
+                    foreground_from,
+                });
+            }
             return;
         }
+        self.mixer.open_later.retain(|w| w.id != id);
         self.open_plugin_from(t, id, foreground_from);
     }
 
@@ -129,52 +140,38 @@ impl Studio {
             .is_some_and(|h| h.plugins().answered(id))
     }
 
-    /// Once a frame: the window asked for with a plugin just put in opens, once, when the host
-    /// has answered for it; one that failed says so where a window that cannot open does. It
-    /// does not open when the plugin was taken out, another song is open or another window
-    /// was opened. True while it waits, so frames keep coming.
+    /// Open each ready window once, dropping requests whose instance or host has gone.
+    /// True while anything waits, so frames keep coming.
     pub(crate) fn poll_open_later(&mut self) -> bool {
-        let Some(w) = self.mixer.open_later else {
-            return false;
-        };
-        let here = self
-            .project()
-            .tracks
-            .get(&w.track)
-            .is_some_and(|x| x.inserts.iter().any(|p| p.id == w.id));
-        if !here {
-            self.mixer.open_later = None;
-            return false;
-        }
-        if self.transport.start_failed && self.transport.host().is_none() {
-            self.mixer.open_later = None;
-            return false;
-        }
-        if self.transport.host().is_none() && !self.transport.preparing() && {
+        let mut active = false;
+        for w in std::mem::take(&mut self.mixer.open_later) {
+            let here = self
+                .project()
+                .tracks
+                .get(&w.track)
+                .is_some_and(|x| x.inserts.iter().any(|p| p.id == w.id));
+            if !here || (self.transport.start_failed && self.transport.host().is_none()) {
+                continue;
+            }
             #[cfg(test)]
-            {
-                self.mixer.fake_load.is_none()
-            }
+            let fake_host = self.mixer.fake_load.is_some();
             #[cfg(not(test))]
-            {
-                true
+            let fake_host = false;
+            let retry_without_host =
+                self.transport.host().is_none() && !self.transport.preparing() && !fake_host;
+            active = true;
+            if !retry_without_host && self.loads_apart() && !self.has_loaded(w.id) {
+                self.mixer.open_later.push(w);
+                continue;
             }
-        } {
-            self.mixer.open_later = None;
+            #[cfg(test)]
+            if let Some(fake) = &mut self.mixer.fake_load {
+                fake.asked.push((w.track, w.id));
+                continue;
+            }
             self.open_plugin_from(w.track, w.id, w.foreground_from);
-            return true;
         }
-        if self.loads_apart() && !self.has_loaded(w.id) {
-            return true;
-        }
-        self.mixer.open_later = None;
-        #[cfg(test)]
-        if let Some(fake) = &mut self.mixer.fake_load {
-            fake.asked.push((w.track, w.id));
-            return true;
-        }
-        self.open_plugin_from(w.track, w.id, w.foreground_from);
-        true
+        active
     }
 }
 
@@ -317,7 +314,7 @@ mod tests {
             assert!(!s.poll_open_later(), "no frames once it is asked for");
         }
         assert_eq!(asked(s), vec![(t, id)]);
-        assert_eq!(s.mixer.open_later, None);
+        assert!(s.mixer.open_later.is_empty());
     }
 
     /// PLG-050: the window of a plugin just put in is asked for once the plugin host has it,
@@ -327,7 +324,10 @@ mod tests {
         let mut s = apart();
         let t = track(&s, "Vocal");
         let id = put_in(&mut s, t);
-        assert_eq!(s.mixer.open_later.map(|w| (w.track, w.id)), Some((t, id)));
+        assert_eq!(
+            s.mixer.open_later.first().map(|w| (w.track, w.id)),
+            Some((t, id))
+        );
         frames_loading(&mut s, id);
         // Its row pressed while it loads: the window still opens once loaded.
         assert!(s.open_plugin(t, id));
@@ -353,7 +353,7 @@ mod tests {
         for _ in 0..100 {
             assert!(s.poll_open_later());
         }
-        assert_eq!(s.mixer.open_later.map(|w| w.id), Some(id));
+        assert_eq!(s.mixer.open_later.first().map(|w| w.id), Some(id));
         loaded(&mut s, id);
         assert!(s.poll_open_later());
         assert_eq!(asked(&s), vec![(t, id)]);
@@ -366,8 +366,26 @@ mod tests {
         let t = track(&s, "Vocal");
         let id = put_in(&mut s, t);
         frames_loading(&mut s, id);
-        assert_eq!(s.mixer.open_later.map(|w| w.id), Some(id));
+        assert_eq!(s.mixer.open_later.first().map(|w| w.id), Some(id));
         frames_loaded(&mut s, t, id);
+    }
+
+    #[test]
+    fn a_pending_fx_survives_opening_an_instrument() {
+        let mut s = apart();
+        let vocal = track(&s, "Vocal");
+        let fx = put_in(&mut s, vocal);
+        frames_loading(&mut s, fx);
+        let keys = track(&s, "Keys");
+        assert!(s.set_instrument(keys, &Pick::built_in("Sampler")));
+        let instrument = crate::instrument::current(&s.project().tracks[&keys])
+            .unwrap()
+            .id;
+        assert!(s.open_plugin(keys, instrument));
+        assert!(s.instruments.is_open(instrument));
+        frames_loading(&mut s, fx);
+        frames_loaded(&mut s, vocal, fx);
+        assert!(s.instruments.is_open(instrument));
     }
 
     #[test]
@@ -381,7 +399,7 @@ mod tests {
         assert!(s.idle().changed, "the loading window needs to be retired");
         s.idle();
         assert_eq!(asked(&s), vec![(t, id)]);
-        assert_eq!(s.mixer.open_later, None);
+        assert!(s.mixer.open_later.is_empty());
     }
 
     /// The same in a splitter's branch and in a layer of a multi-instrument (MIX-042).
@@ -424,7 +442,7 @@ mod tests {
         assert!(s.run_command("plugin.remove", json!({ "ids": [id.to_string()] })));
         loaded(&mut s, id);
         assert!(!s.poll_open_later());
-        assert_eq!(s.mixer.open_later, None);
+        assert!(s.mixer.open_later.is_empty());
         assert!(asked(&s).is_empty(), "taken out");
 
         let id = put_in(&mut s, t);

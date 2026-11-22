@@ -384,7 +384,7 @@ impl Studio {
             .or_else(|| track.inserts.first())
             .map(|x| x.id);
         match id {
-            Some(id) => self.open_plugin(t, id),
+            Some(id) => self.toggle_device_shortcut(t, id),
             None => false,
         }
     }

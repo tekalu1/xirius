@@ -11,8 +11,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use gpui::Hsla;
-
 use xirius_core::id::{NodeId, PluginId, TrackId};
 use xirius_core::model::{Plugin, Track, TrackKind};
 use xirius_core::rack::{RackNode, Source, SplitMode};
@@ -40,9 +38,7 @@ const DOT_BUTTON: f32 = 16.0;
 const DOT: f32 = 8.0;
 /// Where the name starts, after the indent (past the dot's button and its gap).
 const NAME_X: f32 = 24.0;
-const CHIP: f32 = 10.0;
-/// Room after a layer's colour chip.
-const CHIP_GAP: f32 = 3.0;
+const LABEL_GAP: f32 = 3.0;
 /// The space a row keeps at its right end.
 const END: f32 = 4.0;
 const HEAD_X: f32 = 5.0;
@@ -821,16 +817,13 @@ fn level_part(row: Rect) -> Rect {
     Rect::new(row.x, row.y, row.right() - END - row.x, row.h)
 }
 
-/// Where a plug-in row's name is written: after its dot (and a layer's chip), short of its
+/// Where a plug-in row's name is written: after its dot, short of its
 /// level (`level` wide) and, on a heavy plug-in, of the gauge before the close.
-fn name_part(row: Rect, l: &Line, chip: bool, level: f32, heavy: bool, mute: bool) -> Rect {
-    let mut x = row.x + l.indent() + NAME_X;
-    if chip {
-        x += CHIP + CHIP_GAP;
-    }
+fn name_part(row: Rect, l: &Line, level: f32, heavy: bool, mute: bool) -> Rect {
+    let x = row.x + l.indent() + NAME_X;
     let mut end = row.right() - END;
     if level > 0.0 {
-        end -= level + CHIP_GAP;
+        end -= level + LABEL_GAP;
     }
     if mute {
         end = end.min(mute_part(row, l).x - SUB_PAD);
@@ -1132,7 +1125,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                     // The ＋ is always there at the right end (MIX-044); a narrow strip cuts the
                     // heading, not the ＋.
                     let end = if add {
-                        add_part(row).x - CHIP_GAP
+                        add_part(row).x - LABEL_GAP
                     } else {
                         row.right() - END
                     };
@@ -1198,7 +1191,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                             Rect::new(row.x, row.y, row.right() - END - row.x, row.h),
                             Align::Right,
                         );
-                        end -= w + CHIP_GAP;
+                        end -= w + LABEL_GAP;
                     }
                     let mute = shows_mute(s, t.id, l);
                     if mute {
@@ -1206,7 +1199,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                     }
                     let add = shows_branch_add(s, t, l).then(|| branch_add_part(row, l, mute));
                     if let Some(b) = add {
-                        end = end.min(b.x - CHIP_GAP);
+                        end = end.min(b.x - LABEL_GAP);
                     }
                     let x = row.x + l.indent() + NAME_X;
                     // the device's own name, as its window's title says it: short enough for a
@@ -1276,7 +1269,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         )
                     });
                     if level > 0.0 {
-                        end -= level + CHIP_GAP;
+                        end -= level + LABEL_GAP;
                     }
                     let x = row.x + l.indent() + NAME_X;
                     let w = (end - x).max(0.0);
@@ -1302,13 +1295,8 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                     let Some(p) = t.inserts.iter().find(|p| p.id == id) else {
                         continue;
                     };
-                    let layer = match l.kind {
-                        Kind::Instrument { layer, .. } => layer,
-                        _ => None,
-                    };
-                    let chip = layer.map(|i| c.tracks[i % c.tracks.len()]);
                     let mute = !frozen && shows_mute(s, t.id, l);
-                    plugin_row(pen, s, p, l, row, (hot, chosen, mute), frozen, chip);
+                    plugin_row(pen, s, p, l, row, (hot, chosen, mute), frozen);
                 }
             }
         }
@@ -1453,7 +1441,6 @@ fn plugin_row(
     row: Rect,
     (hot, chosen, mute): (bool, bool, bool),
     frozen: bool,
-    chip: Option<Hsla>,
 ) {
     let c = pen.c;
     let pinged = s.perf.pinged(p.id);
@@ -1483,11 +1470,6 @@ fn plugin_row(
         pen.icon("power", glyph, locked);
     } else {
         pen.power(b, p.bypass, chosen);
-    }
-    if let Some(color) = chip {
-        let x = row.x + l.indent() + NAME_X;
-        let chip = Rect::new(x, row.y + (row.h - CHIP) / 2.0, CHIP, CHIP);
-        pen.round(chip, color, Radius::Clip);
     }
     let it = item(row, l);
     let remove = remove_part(it);
@@ -1520,7 +1502,7 @@ fn plugin_row(
     });
     // The gauge takes the place before the close; the name is cut short of it.
     let heavy = s.perf.heavy.is_heavy(p.id) && !frozen && !p.deactivated;
-    let mut name = name_part(row, l, chip.is_some(), level, heavy, mute);
+    let mut name = name_part(row, l, level, heavy, mute);
     let note_mark = p.note_source.as_ref().map(|s| s.on);
     let key_mark = keyed
         .map(|on| (on, false))
@@ -1528,13 +1510,13 @@ fn plugin_row(
         .map(|(on, notes)| {
             let mut end = lp.right();
             if level > 0.0 {
-                end -= level + CHIP_GAP;
+                end -= level + LABEL_GAP;
             }
             if mute {
                 end = end.min(mute_part(row, l).x - SUB_PAD);
             }
             let r = key_mark_part(row, end);
-            name.w = name.w.min((r.x - CHIP_GAP - name.x).max(0.0));
+            name.w = name.w.min((r.x - LABEL_GAP - name.x).max(0.0));
             (r, on, notes)
         });
     // The blue of an open plug-in falls under 4.5:1 on the ping's tint (light theme): while

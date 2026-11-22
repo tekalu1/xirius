@@ -93,9 +93,7 @@ impl Windows {
                 .filter(|e| matches!(e.at, Where::Host { opened: false }))
                 .map(|e| e.id)
                 .collect();
-            if let Some(later) = s.mixer.open_later {
-                ids.push(later.id);
-            }
+            ids.extend(s.mixer.open_later.iter().map(|w| w.id));
             let project = s.project();
             ids.into_iter()
                 .filter_map(|id| {
@@ -186,15 +184,34 @@ impl Windows {
                 |(x, y)| point(px(x), px(y)),
             );
             let initial = Bounds::new(origin, size(px(dimensions.0), px(dimensions.1)));
+            let (initial, display) = {
+                let s = studio.borrow();
+                let source = s
+                    .mixer
+                    .editors
+                    .iter()
+                    .find(|e| e.id == id)
+                    .map(|e| e.foreground_from)
+                    .or_else(|| {
+                        s.mixer
+                            .open_later
+                            .iter()
+                            .find(|w| w.id == id)
+                            .map(|w| w.foreground_from)
+                    })
+                    .unwrap_or(0);
+                crate::independent::device_bounds(&s, main, cx, id, initial, source)
+            };
             let shared = studio.clone();
             let spec = Spec {
                 kind: Kind::Device(id),
                 title: pending.title.clone(),
                 initial,
-                display: None,
+                display,
                 min_size: None,
                 resizable: false,
                 positions: None,
+                restore: false,
             };
             if let Ok(handle) = crate::independent::open(cx, main, spec, move |window, cx| {
                 let closing = shared.clone();
@@ -216,9 +233,7 @@ impl Windows {
 
 fn cancel(studio: &Rc<RefCell<Studio>>, id: PluginId) {
     let mut s = studio.borrow_mut();
-    if s.mixer.open_later.is_some_and(|w| w.id == id) {
-        s.mixer.open_later = None;
-    }
+    s.mixer.open_later.retain(|w| w.id != id);
     s.close_editor(id);
 }
 
@@ -362,12 +377,16 @@ mod tests {
     #[test]
     fn closing_the_placeholder_cancels_a_waiting_request() {
         let studio = Rc::new(RefCell::new(Studio::sample()));
-        studio.borrow_mut().mixer.open_later = Some(crate::loading::OpenLater {
-            track: xirius_core::id::TrackId(1),
-            id: PluginId(2),
-            foreground_from: 0,
-        });
+        studio
+            .borrow_mut()
+            .mixer
+            .open_later
+            .push(crate::loading::OpenLater {
+                track: xirius_core::id::TrackId(1),
+                id: PluginId(2),
+                foreground_from: 0,
+            });
         cancel(&studio, PluginId(2));
-        assert!(studio.borrow().mixer.open_later.is_none());
+        assert!(studio.borrow().mixer.open_later.is_empty());
     }
 }

@@ -451,9 +451,12 @@ impl ToHost {
                 for n in area.main.into_iter().chain(area.work) {
                     o.u32(n as u32);
                 }
-                o.u8(u8::from(area.restore.is_some()));
                 if let Some((x, y)) = area.restore {
+                    // The position byte was a boolean. Older peers also read 2 as present.
+                    o.u8(if area.replacing { 2 } else { 1 });
                     o.u32(x as u32).u32(y as u32);
+                } else {
+                    o.u8(0);
                 }
             }
             ToHost::SimulateEdit { slot, id, values } => {
@@ -567,29 +570,31 @@ impl ToHost {
                     })?,
                 },
             },
-            12 => ToHost::SetEditorArea {
-                slot: i.u32()?,
-                area: xirius_vst3::EditorArea {
-                    main_window: i.u64()? as isize,
-                    main: [
-                        i.u32()? as i32,
-                        i.u32()? as i32,
-                        i.u32()? as i32,
-                        i.u32()? as i32,
-                    ],
-                    work: [
-                        i.u32()? as i32,
-                        i.u32()? as i32,
-                        i.u32()? as i32,
-                        i.u32()? as i32,
-                    ],
-                    restore: if i.u8()? != 0 {
-                        Some((i.u32()? as i32, i.u32()? as i32))
-                    } else {
-                        None
+            12 => {
+                let slot = i.u32()?;
+                let main_window = i.u64()? as isize;
+                let mut bounds = [0; 8];
+                for n in &mut bounds {
+                    *n = i.u32()? as i32;
+                }
+                let [ml, mt, mr, mb, wl, wt, wr, wb] = bounds;
+                let position = i.u8()?;
+                let restore = if position == 0 {
+                    None
+                } else {
+                    Some((i.u32()? as i32, i.u32()? as i32))
+                };
+                ToHost::SetEditorArea {
+                    slot,
+                    area: xirius_vst3::EditorArea {
+                        main_window,
+                        main: [ml, mt, mr, mb],
+                        work: [wl, wt, wr, wb],
+                        restore,
+                        replacing: position == 2,
                     },
-                },
-            },
+                }
+            }
             7 => ToHost::SimulateEdit {
                 slot: i.u32()?,
                 id: i.u32()?,
@@ -992,6 +997,7 @@ mod tests {
                 slot: 4,
                 area: xirius_vst3::EditorArea {
                     main_window: 0x123456,
+                    replacing: true,
                     main: [-1920, -500, -200, 800],
                     work: [-1920, -600, 0, 1040],
                     restore: Some((-1200, -400)),

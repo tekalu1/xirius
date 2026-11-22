@@ -32,7 +32,8 @@ def main():
     parser.add_argument("--work", type=Path, required=True, help="temporary data parent")
     parser.add_argument("--out", type=Path, required=True, help="screenshots and result.json")
     parser.add_argument("--case", choices=["A", "E", "F", "G", "cold", "cold-idle",
-                                          "effect-seam", "effect-seam-idle", "effect-seam-close"],
+                                          "effect-seam", "effect-seam-idle", "effect-seam-close",
+                                          "device-kinds"],
                         help="run one scenario")
     args = parser.parse_args()
     if os.name != "nt":
@@ -321,7 +322,8 @@ def main():
         if effect_seam:
             env["XIRIUS_PRESET_INPUT_EFFECT"] = "1"
         cold = args.case in ("cold", "cold-idle")
-        if cold or warm_idle:
+        device_kinds = args.case == "device-kinds"
+        if cold or warm_idle or device_kinds:
             env.setdefault("XIRIUS_TEST_VST3_EDITOR_OPEN_MS", "2000")
         if args.case == "cold-idle":
             env["XIRIUS_TEST_VST3_OPEN_MS"] = "3500"
@@ -331,7 +333,7 @@ def main():
         subprocess.run([str(executable), "__scan-plugin", "--bundle", str(fixture),
                         "--out", str(probe)], env=env, check=True, timeout=20)
         entries = json.loads(probe.read_text(encoding="utf-8"))["entries"]
-        if not effect_seam:
+        if not effect_seam and not device_kinds:
             entries[0]["kind"] = "instrument"
         Path(env["XIRIUS_PLUGIN_CACHE"]).write_text(json.dumps({"version": 2, "bundles": [
             {"path": str(fixture), "fingerprint": "", "entries": entries}]
@@ -340,8 +342,12 @@ def main():
             (out/name).unlink(missing_ok=True)
         with (out/"app.log").open("w", encoding="utf-8") as log:
             script = "preset-input-cold" if cold or effect_seam else "preset-input"
+            size = "1040,640"
+            if device_kinds:
+                script = "device-kinds-input"
+                size = "1120,760"
             app = subprocess.Popen([str(executable), "--silent", "--at", "10,10",
-                                    "--size", "1040,640", "--shot", str(out), "--script", script],
+                                    "--size", size, "--shot", str(out), "--script", script],
                                    cwd=temp, env=env, stdout=log, stderr=log)
 
             def state():
@@ -352,11 +358,98 @@ def main():
                 wait(lambda: not request.exists(), "fixture did not report the track state")
                 return json.loads(reply.read_text(encoding="utf-8"))
 
+            def check_device_kinds(info):
+                main = info["main"]
+                frames = set()
+
+                def expose_row(name):
+                    point = info[name]
+                    for _ in frames:
+                        covering = hit_root(*point)
+                        if covering == main:
+                            break
+                        assert covering in frames, f"another window covers mixer row {name}"
+                        bounds = rect(covering)
+                        monitor = MonitorInfo()
+                        monitor.size = c.sizeof(monitor)
+                        assert u.GetMonitorInfoW(u.MonitorFromWindow(main, 2), c.byref(monitor))
+                        work = monitor.work
+                        width, height = bounds.right - bounds.left, bounds.bottom - bounds.top
+                        corners = ((work.left, work.top), (work.right - width, work.top),
+                                   (work.left, work.bottom - height),
+                                   (work.right - width, work.bottom - height))
+                        x, y = next((x, y) for x, y in corners if x >= work.left and y >= work.top
+                                    and x + width <= work.right and y + height <= work.bottom
+                                    and not (x <= point[0] < x + width and y <= point[1] < y + height))
+                        move_frame(covering, x, y)
+                    return point
+
+                def open_row(name):
+                    point = expose_row(name)
+                    click_window(main, *point)
+
+                def builtin(name):
+                    frame = u.FindWindowExW(0, 0, None, info[name + "_title"])
+                    if frame and shown(frame):
+                        frames.add(frame)
+                        return frame
+
+                def origin(frame):
+                    bounds = rect(frame)
+                    return bounds.left, bounds.top
+
+                def shown(frame):
+                    return u.IsWindow(frame) and u.IsWindowVisible(frame)
+
+                open_row("first")
+                first = wait(lambda: builtin("first"), "first instrument")
+                open_row("fx")
+                wait(lambda: loading_frame(app.pid, info["fixture"]), "FX loading window")
+                assert shown(first), "loading FX closed the instrument"
+                fx = wait(lambda: new_frame(set()), "external FX")
+                frames.add(fx)
+                wait(lambda: fixture_label(fx), "external FX content")
+                assert shown(first), "FX closed the instrument"
+                a, b = rect(first), rect(fx)
+                assert a.right <= b.left or b.right <= a.left or a.bottom <= b.top or b.bottom <= a.top
+                assert u.MonitorFromWindow(first, 2) == u.MonitorFromWindow(fx, 2)
+                passed("device-kinds-coexist")
+
+                open_row("fx")
+                wait(lambda: u.GetForegroundWindow() == fx, "repeated FX click did not raise it")
+                assert order([fx, main]) == [fx, main]
+                open_row("first")
+                wait(lambda: u.GetForegroundWindow() == first, "repeated instrument click did not raise it")
+                assert builtin("first") == first and shown(fx)
+                assert order([first, fx, main]) == [first, fx, main]
+                passed("device-kinds-raise")
+
+                second_row = expose_row("second")
+                before = origin(first)
+                click_window(main, *second_row)
+                second = wait(lambda: builtin("second"), "replacement instrument")
+                wait(lambda: not shown(first), "previous instrument still visible")
+                assert origin(second) == before and shown(fx)
+                passed("device-kinds-replace")
+
+                button(fx, 4)
+                open_row("eq")
+                eq = wait(lambda: builtin("eq"), "FX alongside pinned FX")
+                assert shown(fx) and shown(second)
+                passed("device-kinds-pin")
+                button(fx, 4)
+                wait(lambda: not shown(eq), "unpin did not retire the previous normal FX")
+                assert shown(fx) and shown(second)
+                passed("device-kinds-unpin")
+
             def run_checks():
                 wait(lambda: (out/"input-ready.json").exists() or app.poll() is not None, "fixture setup", 90)
                 assert (out/"input-ready.json").exists(), "fixture app exited during setup; read app.log"
                 info = json.loads((out/"input-ready.json").read_text(encoding="utf-8"))
                 main_hwnd = info["main"]
+                if device_kinds:
+                    check_device_kinds(info)
+                    return
                 # Expose the fixture before input if the shell launched it in the
                 # background. Leave activation to the real input below.
                 if effect_seam and hit_root(*info["drag_from"]) != main_hwnd:

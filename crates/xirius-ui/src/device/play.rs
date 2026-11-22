@@ -489,8 +489,12 @@ impl Keyboard {
     }
 
     pub fn paint(&self, pen: &mut Pen, held: &[u8]) {
+        self.paint_range(pen, held, None);
+    }
+
+    pub(crate) fn paint_range(&self, pen: &mut Pen, held: &[u8], preview: Option<(u8, u8)>) {
         pen.mask(self.view, |pen| {
-            paint_held_keys(pen, &self.keys, held, true)
+            paint_held_keys(pen, &self.keys, held, true, preview)
         });
         if self.extent > self.view.w {
             pen.round(self.rail(), pen.c.surface_3, Radius::Xs);
@@ -562,7 +566,7 @@ pub fn pad_name(pitch: u8) -> &'static str {
 
 /// The keyboard, `down` the key held: the white keys' C named while `names` ([`key_names`]).
 pub fn paint_keys(pen: &mut Pen, keys: &[Key], down: Option<u8>, names: bool) {
-    paint_held_keys(pen, keys, &down.into_iter().collect::<Vec<_>>(), names);
+    paint_held_keys(pen, keys, down.as_slice(), names, None);
 }
 
 /// How a key is filled: a held key one way, whatever its size or colour.
@@ -587,7 +591,13 @@ impl Face {
 /// left, over the next keys.
 const NAME_CENTRED_W: f32 = 24.0;
 
-fn paint_held_keys(pen: &mut Pen, keys: &[Key], down: &[u8], names: bool) {
+fn paint_held_keys(
+    pen: &mut Pen,
+    keys: &[Key],
+    down: &[u8],
+    names: bool,
+    preview: Option<(u8, u8)>,
+) {
     let (Some(first), Some(last)) = (keys.first(), keys.iter().rfind(|k| !k.black)) else {
         return;
     };
@@ -606,6 +616,11 @@ fn paint_held_keys(pen: &mut Pen, keys: &[Key], down: &[u8], names: bool) {
             Face::White => c.key_white,
         };
         pen.round(k.r, face, Radius::Xs);
+        if !down.contains(&k.pitch)
+            && preview.is_some_and(|(low, high)| (low..=high).contains(&k.pitch))
+        {
+            pen.round(k.r, c.ring.opacity(0.24), Radius::Xs);
+        }
     };
     // The white keys, then their names (a narrow key's runs over the next), then the black.
     for k in keys.iter().filter(|k| !k.black) {

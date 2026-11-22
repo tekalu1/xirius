@@ -3052,7 +3052,7 @@ impl Studio {
         self.mixer.level_drag = None;
         self.mixer.insert_after = None;
         self.mixer.insert_into = None;
-        self.mixer.open_later = None;
+        self.mixer.open_later.clear();
         self.scan_song_replaced();
         self.mixer.wide.clear();
         self.mixer.folds.clear();

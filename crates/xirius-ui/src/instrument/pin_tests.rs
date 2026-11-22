@@ -44,6 +44,22 @@ fn press(s: &mut Studio, _g: &Geometry, id: PluginId, part: Part) {
 }
 
 #[test]
+fn a_normal_instrument_and_effect_coexist_and_repeat_open_raises() {
+    let (mut s, _, t, [eq, comp, _]) = three();
+    assert!(s.set_instrument(t, &crate::instrument::Pick::built_in("Sampler")));
+    let sampler = crate::instrument::current(&s.project().tracks[&t])
+        .unwrap()
+        .id;
+    assert!(s.open_plugin(t, sampler));
+    assert!(s.open_plugin(t, eq));
+    assert_eq!(shown(&s), [sampler, eq]);
+    assert!(s.open_plugin(t, sampler));
+    assert_eq!(shown(&s), [eq, sampler]);
+    assert!(s.open_plugin(t, comp));
+    assert_eq!(shown(&s), [sampler, comp]);
+}
+
+#[test]
 fn ui_323_an_unpinned_window_takes_the_next_device_in_where_it_was() {
     let (mut s, g, t, [eq, comp, _]) = three();
     s.show_instrument(t, eq);
@@ -94,21 +110,16 @@ fn ui_323_an_open_device_comes_to_the_top_and_lights() {
 }
 
 #[test]
-fn ui_323_of_two_unpinned_windows_the_one_used_last_is_filled() {
+fn unpinning_takes_the_normal_slot_for_that_kind() {
     let (mut s, g, t, [eq, comp, delay]) = three();
     s.show_instrument(t, eq);
     press(&mut s, &g, eq, Part::Pin);
     s.show_instrument(t, comp);
-    // Both unpinned, the EQ used last.
     press(&mut s, &g, eq, Part::Pin);
-    assert!(s.instruments.open.iter().all(|w| !w.pinned));
-    assert_eq!(shown(&s), [comp, eq]);
+    assert_eq!(shown(&s), [eq]);
+    assert!(!s.instruments.open[0].pinned);
     s.show_instrument(t, delay);
-    assert_eq!(shown(&s), [comp, delay]);
-    // Then the Compressor, once a press in it makes it the last used.
-    press(&mut s, &g, comp, Part::Body);
-    s.show_instrument(t, eq);
-    assert_eq!(shown(&s), [delay, eq]);
+    assert_eq!(shown(&s), [delay]);
 }
 
 #[test]

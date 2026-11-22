@@ -106,6 +106,10 @@ Also run `--case cold` with a separate results folder. It starts without a plugi
 drags the fixture from the browser. The fixture delays attaching its view by two seconds so
 the test can detect a prematurely visible native frame. It then checks the editor content,
 foreground window and window order without any further input.
+With `--case device-kinds` and its own results folder, open instruments and FX from
+the mixer. The case checks coexistence during and after loading, non-overlapping
+placement on one monitor, repeat-click foreground and stacking, same-kind replacement
+at the previous position, and the effect of pinning and unpinning.
 Check installed-plugin compatibility in a separate manual pass.
 macOS has no external plugin editor (NSView host) yet and is outside this desktop test's scope.
 
