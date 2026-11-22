@@ -357,6 +357,7 @@ impl Studio {
                 area.work = previous.work;
                 area.restore = Some((previous.main[0], previous.main[1]));
                 area.replacing = true;
+                area.retiring = Some(previous.main_window);
             }
         }
         let project = self.auto_heard(&self.project());

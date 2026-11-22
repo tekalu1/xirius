@@ -1,7 +1,7 @@
 """Exercise the real foreground rules with SendInput on an unused Windows desktop.
 
 Build with `python scripts/ci_tests.py --prepare` first. This is deliberately outside CI.
-No input queues are attached, no button messages are synthesized, and no window is topmost.
+The overlap scenario can also run on an inactive desktop using window-local mouse messages.
 """
 import argparse
 from contextlib import contextmanager
@@ -15,6 +15,10 @@ import struct
 import subprocess
 import tempfile
 import time
+import traceback
+
+
+OVERLAP_ACTIONS = ("replace", "insert", "seam", "external-fx", "external-instrument")
 
 
 @contextmanager
@@ -33,11 +37,25 @@ def main():
     parser.add_argument("--out", type=Path, required=True, help="screenshots and result.json")
     parser.add_argument("--case", choices=["A", "E", "F", "G", "cold", "cold-idle",
                                           "effect-seam", "effect-seam-idle", "effect-seam-close",
-                                          "device-kinds", "device-placement"],
+                                          "device-kinds", "device-placement", "device-overlap"],
                         help="run one scenario")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("this test requires Windows")
+    if args.case in ("device-kinds", "device-overlap"):
+        failures = []
+        for action in OVERLAP_ACTIONS:
+            try:
+                run_case(argparse.Namespace(**(vars(args) | {
+                    "case": "device-overlap", "out": args.out / "overlap" / action,
+                    "overlap_action": action,
+                })))
+            except AssertionError as error:
+                traceback.print_exc()
+                failures.append(f"{action}: {error}")
+        assert not failures, "\n".join(failures)
+    if args.case == "device-overlap":
+        return
     if args.case == "device-kinds":
         run_case(argparse.Namespace(**(vars(args) | {
             "case": "device-placement", "out": args.out / "placement",
@@ -78,6 +96,8 @@ def run_case(args):
         "IsIconic": (w.BOOL, [w.HWND]),
         "GetClientRect": (w.BOOL, [w.HWND, c.POINTER(w.RECT)]),
         "ClientToScreen": (w.BOOL, [w.HWND, c.POINTER(w.POINT)]),
+        "ScreenToClient": (w.BOOL, [w.HWND, c.POINTER(w.POINT)]),
+        "PostMessageW": (w.BOOL, [w.HWND, w.UINT, c.c_size_t, c.c_ssize_t]),
         "GetDpiForWindow": (w.UINT, [w.HWND]),
         "SendMessageTimeoutW": (c.c_ssize_t, [w.HWND, w.UINT, c.c_size_t, c.c_ssize_t,
                                                w.UINT, w.UINT, c.POINTER(c.c_size_t)]),
@@ -333,7 +353,10 @@ def run_case(args):
         if effect_seam:
             env["XIRIUS_PRESET_INPUT_EFFECT"] = "1"
         cold = args.case in ("cold", "cold-idle")
-        placement = args.case == "device-placement"
+        overlap = args.case == "device-overlap"
+        placement = args.case == "device-placement" or overlap
+        if overlap:
+            env["XIRIUS_TEST_DEVICE_OVERLAP"] = "1"
         device_kinds = args.case == "device-kinds"
         if cold or warm_idle or device_kinds:
             env.setdefault("XIRIUS_TEST_VST3_EDITOR_OPEN_MS", "2000")
@@ -356,7 +379,7 @@ def run_case(args):
             script = "preset-input-cold" if cold or effect_seam else "preset-input"
             size = "1040,640"
             if device_kinds or placement:
-                script = f"{args.case}-input"
+                script = "device-placement-input" if placement else "device-kinds-input"
                 size = "1120,900" if device_kinds else "1120,760"
             app = subprocess.Popen([str(executable), "--silent", "--at", "10,10",
                                     "--size", size, "--shot", str(out), "--script", script],
@@ -508,6 +531,216 @@ def run_case(args):
                       and disjoint(limiter_frame, sampler_frame)
                       and disjoint(limiter_frame, edges(channel)),
                       f"Limiter {limiter_frame}, Sampler {sampler_frame}, channel {edges(channel)}")
+                assert not failures, "\n".join(failures)
+
+            def check_device_overlap(info):
+                def visible(title):
+                    hwnd = u.FindWindowExW(0, 0, None, title)
+                    return hwnd if hwnd and u.IsWindowVisible(hwnd) else None
+
+                channel = wait(lambda: visible(info["channel_title"]), "channel editor")
+                dpi = u.GetDpiForWindow(channel)
+                assert dpi == 168, f"overlap requires 175% display scaling, found {dpi} DPI"
+                scale = dpi / 96
+                monitor = MonitorInfo(size=c.sizeof(MonitorInfo))
+                assert u.GetMonitorInfoW(u.MonitorFromWindow(channel, 2), c.byref(monitor))
+                work = monitor.work
+                width, height = work.right - work.left, work.bottom - work.top
+
+                def points():
+                    return state().get("channel") or {}
+
+                def mouse_client(hwnd, x, y, repeat=1):
+                    packed = (round(x) & 0xffff) | ((round(y) & 0xffff) << 16)
+                    result = c.c_size_t()
+                    assert u.SendMessageTimeoutW(hwnd, 0x0006, 1, 0, 2, 1000, c.byref(result))
+                    assert u.PostMessageW(hwnd, 0x0200, 0, packed)
+                    time.sleep(0.15)
+                    for _ in range(repeat):
+                        assert u.PostMessageW(hwnd, 0x0201, 1, packed)
+                        time.sleep(0.08)
+                        assert u.PostMessageW(hwnd, 0x0202, 0, packed)
+                        time.sleep(0.08)
+
+                def hit(key, name=None, repeat=1):
+                    def locate():
+                        data = points()
+                        return (data if name is None else data.get("devices", {}).get(name, {})).get(key)
+                    at = wait(locate, f"channel control {key} {name or ''}")
+                    mouse_client(channel, *(value * scale for value in at), repeat=repeat)
+
+                def built(name):
+                    def opened():
+                        device = points().get("devices", {}).get(name)
+                        return device and visible(device["title"])
+                    return wait(opened, f"{name} opened")
+
+                def frame(hwnd, x, y, width, height):
+                    assert u.SetWindowPos(hwnd, 0, x, y, width, height, 0x14)
+
+                def client_point(hwnd, x, y):
+                    point = w.POINT(x, y)
+                    assert u.ClientToScreen(hwnd, c.byref(point))
+                    return point.x, point.y
+
+                def close_external(hwnd):
+                    result = c.c_size_t()
+                    child = u.GetDlgItem(hwnd, 5)
+                    assert child
+                    assert u.SendMessageTimeoutW(hwnd, 0x0111, 5, child, 2, 1000, c.byref(result))
+                    wait(lambda: not u.IsWindowVisible(hwnd), f"{hwnd} closed")
+
+                def edges(hwnd):
+                    r = rect(hwnd)
+                    return r.left, r.top, r.right, r.bottom
+
+                failures = []
+
+                def exposed(label, windows, require_overlap=True):
+                    front_to_back = order([hwnd for _, hwnd in windows])
+                    hidden = [(name, hwnd, bool(u.IsWindow(hwnd)))
+                              for name, hwnd in windows if not u.IsWindowVisible(hwnd)]
+                    assert not hidden, (label, "hidden windows", hidden)
+                    bounds = {hwnd: edges(hwnd) for _, hwnd in windows}
+                    assert len(front_to_back) == len(windows)
+                    new_hwnd = windows[-1][1]
+                    new = bounds[new_hwnd]
+                    if require_overlap:
+                        assert any(max(old[0], new[0]) < min(old[2], new[2])
+                                   and max(old[1], new[1]) < min(old[3], new[3])
+                                   for hwnd, old in bounds.items() if hwnd != new_hwnd), (label, bounds)
+                    covered = []
+                    for name, hwnd in windows:
+                        client = w.RECT()
+                        assert u.GetClientRect(hwnd, c.byref(client))
+                        mid_y = round(18 * scale)
+                        child = u.GetDlgItem(hwnd, 5) if name.startswith("external") else None
+                        if child:
+                            r = rect(child)
+                            close_point = ((r.left + r.right) // 2, (r.top + r.bottom) // 2)
+                        else:
+                            close_point = client_point(hwnd, client.right - mid_y, mid_y)
+                        probes = [
+                            ("title left", client_point(hwnd, mid_y, mid_y)),
+                            ("title center", client_point(hwnd, client.right // 2, mid_y)),
+                            ("close", close_point),
+                        ]
+                        for part, (x, y) in probes:
+                            assert work.left <= x < work.right and work.top <= y < work.bottom, (
+                                label, name, part, x, y, bounds)
+                            top = next((other for other in front_to_back
+                                        if (b := bounds[other])[0] <= x < b[2]
+                                        and b[1] <= y < b[3]), None)
+                            if top != hwnd:
+                                covered.append((name, part, (x, y), top))
+                    print(f"{label}: {front_to_back}, {bounds}, covered={covered}", flush=True)
+                    if covered:
+                        failures.append(f"{label}: {covered}")
+                    else:
+                        checks.append({"result": "passed", "step": label})
+
+                hit("insert")
+                hit("pick_eq")
+                eq = built("EQ")
+                client = w.RECT()
+                assert u.GetClientRect(eq, c.byref(client))
+                mouse_client(eq, client.right - 48 * scale, 18 * scale)
+                wait(lambda: points().get("eq_pinned"), "EQ pinned")
+                action = args.overlap_action
+                if action in ("insert", "seam"):
+                    # Inserting a device rebuilds the external plugin graph. Use
+                    # the channel itself to remove all free space during that path.
+                    frame(channel, work.left, work.top, width, height)
+                    r = rect(eq)
+                    x, y = work.left + width // 8, work.top + round(400 * scale)
+                    frame(eq, x, y, r.right - r.left, r.bottom - r.top)
+                    assert u.SetWindowPos(channel, eq, 0, 0, 0, 0, 0x13)
+                    blockers = [("channel", channel), ("pinned EQ", eq)]
+                    exposed("device-overlap-setup", blockers, require_overlap=False)
+                    hit("card", "Reverb", repeat=2)
+                    reverb = built("Reverb")
+                    r = rect(reverb)
+                    frame(reverb, x, y, r.right - r.left, r.bottom - r.top)
+                    hit(action)
+                    hit("pick_compressor")
+                    compressor = built("Compressor")
+                    wait(lambda: not u.IsWindowVisible(reverb), "Reverb replaced")
+                    assert u.SetWindowPos(channel, eq, 0, 0, 0, 0, 0x13)
+                    exposed(f"device-overlap-builtin-{action}", blockers + [("Compressor", compressor)])
+                    assert not failures, "\n".join(failures)
+                    return
+
+                hit("fx_blocker", repeat=2)
+                blocker = wait(lambda: new_frame(set()), "external FX blocker")
+                wait(lambda: fixture_view(blocker), "external FX blocker view")
+                pin = u.GetDlgItem(blocker, 4)
+                assert pin
+                result = c.c_size_t()
+                assert u.SendMessageTimeoutW(blocker, 0x0111, 4, pin, 2, 1000, c.byref(result))
+                wait(lambda: points().get("fx_blocker_pinned"), "external FX blocker pinned")
+                blockers = [("channel", channel), ("external blocker", blocker), ("pinned EQ", eq)]
+
+                def crowd():
+                    # The two full-height panes leave no separate space. The EQ's
+                    # title stays clear above the external pane, below its own title.
+                    split = width // 2
+                    frame(channel, work.left, work.top, split, height)
+                    frame(blocker, work.left + split, work.top, width - split, height)
+                    r = rect(eq)
+                    frame(eq, work.left + split + 70, work.top + round(72 * scale),
+                          r.right - r.left, r.bottom - r.top)
+                    assert u.SetWindowPos(blocker, eq, 0, 0, 0, 0, 0x13)
+                    time.sleep(0.3)
+                    exposed("device-overlap-setup", blockers, require_overlap=False)
+                    assert not failures or not failures[-1].startswith("device-overlap-setup")
+
+                def external_opened(known, label):
+                    hwnd = wait(lambda: new_frame(known), label)
+                    wait(lambda: fixture_view(hwnd), label + " view")
+                    if not u.GetForegroundWindow():
+                        # An inactive desktop cannot give the host the foreground
+                        # grant used on an explicit open. Arrange that z order
+                        # without activation; only the app sets the new bounds.
+                        for _, older in blockers:
+                            assert u.SetWindowPos(older, hwnd, 0, 0, 0, 0, 0x13)
+                    return hwnd
+
+                if action == "replace":
+                    hit("card", "Sampler", repeat=2)
+                    sampler = built("Sampler")
+                    crowd()
+                    hit("card", "Drum Kit", repeat=2)
+                    drum = built("Drum Kit")
+                    wait(lambda: not u.IsWindowVisible(sampler), "Sampler replaced")
+                    exposed("device-overlap-builtin-replace", blockers + [("Drum Kit", drum)])
+                elif action == "external-fx":
+                    crowd()
+                    hit("fx_card", repeat=2)
+                    fx = external_opened({blocker}, "external FX")
+                    exposed("device-overlap-external-fx", blockers + [("external FX", fx)])
+                    old_left, _, old_right, _ = edges(fx)
+                    close_external(fx)
+                    hit("fx_card", repeat=2)
+                    fx = wait(lambda: new_frame({blocker}), "external FX reopened")
+                    wait(lambda: fixture_view(fx), "reopened external FX view")
+                    new_left, _, new_right, _ = edges(fx)
+                    print("external FX reopen (left, width):",
+                          (old_left, old_right - old_left), (new_left, new_right - new_left), flush=True)
+                else:
+                    hit("instrument")
+                    hit("picker")
+                    wait(lambda: points().get("loaded"), "external instrument loaded", seconds=25)
+                    hit("card", "Sampler", repeat=2)
+                    sampler = built("Sampler")
+                    fixture = rect(blocker)
+                    fixture_width = fixture.right - fixture.left
+                    crowd()
+                    move_frame(sampler, work.left + width // 2 - fixture_width + round(8 * scale), work.top)
+                    hit("card", repeat=2)
+                    instrument = external_opened({blocker}, "external instrument")
+                    wait(lambda: not u.IsWindowVisible(sampler), "internal instrument replaced")
+                    exposed("device-overlap-external-instrument",
+                            blockers + [("external instrument", instrument)])
                 assert not failures, "\n".join(failures)
 
             def check_device_kinds(info):
@@ -719,6 +952,9 @@ def run_case(args):
                 assert (out/"input-ready.json").exists(), "fixture app exited during setup; read app.log"
                 info = json.loads((out/"input-ready.json").read_text(encoding="utf-8"))
                 main_hwnd = info["main"]
+                if overlap:
+                    check_device_overlap(info)
+                    return
                 if placement:
                     check_device_placement(info)
                     return
@@ -1133,7 +1369,8 @@ def run_case(args):
             try:
                 run_checks()
             except BaseException as error:
-                screenshot("failure")
+                if not overlap:
+                    screenshot("failure")
                 checks.append({"result":"failed", "error":str(error)})
                 raise
             finally:

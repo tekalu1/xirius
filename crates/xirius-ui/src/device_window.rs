@@ -850,7 +850,11 @@ pub(crate) fn channel_input_points(
                             center(v.flow.cards.iter().find(|card| card.pick == pick)?.rect);
                         (part_at(&v, x, y) == Some(Part::Card(pick))).then_some([x, y])
                     };
-                    let fixture = track.inserts.iter().find(|p| p.uid == fixture_uid);
+                    let mut fixture_effects = track.inserts.iter().filter(|p| {
+                        p.uid == fixture_uid && p.kind == xirius_core::model::PluginKind::Effect
+                    });
+                    let fixture = fixture_effects.next();
+                    let blocker = fixture_effects.next();
                     let seam = fixture.and_then(|p| {
                         let (index, gap) = v
                             .flow
@@ -878,8 +882,15 @@ pub(crate) fn channel_input_points(
                         "instrument": tool(Tool::Instrument),
                         "picker": picker(fixture_uid), "card": plugin.and_then(|p| card(p.id)),
                         "loaded": plugin.is_some_and(|plugin| s.has_loaded(plugin.id)),
+                        "fx_card": fixture.and_then(|p| card(p.id)),
+                        "fx_blocker": blocker.and_then(|p| card(p.id)),
+                        "fx_blocker_pinned": blocker.is_some_and(|p| s.mixer.editor_pins.contains(&p.id)),
+                        "eq_pinned": s.instruments.open.iter().any(|w| {
+                            w.pinned && track.inserts.iter().any(|p| p.id == w.plugin && p.uid == "eq")
+                        }),
                         "insert": tool(Tool::Insert), "seam": seam, "devices": devices,
                         "pick_eq": picker("builtin:eq"), "pick_limiter": picker("builtin:limiter"),
+                        "pick_compressor": picker("builtin:compressor"),
                     }))
                 })
             })

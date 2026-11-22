@@ -2680,6 +2680,9 @@ impl Inner {
                 {
                     let mut inner = rec.link.lock();
                     inner.editor_origin = Some(origin);
+                    if let Some(area) = &mut inner.editor_area {
+                        area.retiring = None;
+                    }
                     inner.editor_open_event(EditorOpenEvent::Opened { origin, size });
                 }
             }

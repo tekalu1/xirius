@@ -1,13 +1,41 @@
 //! Physical screen coordinates, passed by value across the GUI boundary (UI-337).
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::{HWND, RECT};
+use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromRect,
-    MonitorFromWindow,
+    ClientToScreen, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL, MONITORINFO,
+    MonitorFromRect, MonitorFromWindow,
 };
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+use windows_sys::Win32::UI::{
+    HiDpi::GetDpiForWindow,
+    WindowsAndMessaging::{GetClientRect, GetWindowRect},
+};
+
+pub const EDITOR_TITLE_HEIGHT: f32 = 36.0;
+
+#[derive(Clone, Copy, Debug)]
+pub struct EditorFrame {
+    pub bounds: [i32; 4],
+    title: [i32; 4],
+}
+
+impl EditorFrame {
+    pub fn new(bounds: [i32; 4], title_height: i32) -> Self {
+        let [l, t, r, b] = bounds;
+        Self {
+            bounds,
+            title: [l, t, r, b.min(t.saturating_add(title_height))],
+        }
+    }
+
+    fn title_points(self) -> [[i32; 4]; 3] {
+        let [l, t, r, b] = self.title;
+        let y = t + (b - t) / 2;
+        let inset = ((b - t) / 2).min((r - l) / 2);
+        [r - 1 - inset, l + inset, l + (r - l) / 2].map(|x| [x, y, x + 1, y + 1])
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EditorArea {
@@ -17,6 +45,7 @@ pub struct EditorArea {
     pub work: [i32; 4],
     pub restore: Option<(i32, i32)>,
     pub replacing: bool,
+    pub retiring: Option<isize>,
 }
 
 impl EditorArea {
@@ -49,6 +78,7 @@ impl EditorArea {
                 work: [w.left, w.top, w.right, w.bottom],
                 restore: None,
                 replacing: false,
+                retiring: None,
             })
         }
     }
@@ -61,10 +91,7 @@ impl EditorArea {
         external: &[u64],
         gap: i32,
     ) -> (i32, i32) {
-        if self.replacing {
-            return self.fit(size, saved, Some(self.work));
-        }
-        let occupied = visible_editors(self.main_window, external);
+        let occupied = visible_editors_except(self.main_window, external, self.retiring);
         self.place_new(size, saved, saved.and_then(monitor_work), &occupied, gap)
     }
 
@@ -74,14 +101,25 @@ impl EditorArea {
         size: (i32, i32),
         saved: Option<(i32, i32)>,
         saved_work: Option<[i32; 4]>,
-        occupied: &[[i32; 4]],
+        occupied: &[EditorFrame],
         gap: i32,
     ) -> (i32, i32) {
         // An editor opened on its own can reuse its saved monitor. Additional editors
         // look for room on the monitor from which the user opens them.
-        let work = saved_work.filter(|work| occupied.is_empty() || *work == self.work);
+        let work = if self.replacing {
+            Some(self.work)
+        } else {
+            saved_work.filter(|work| occupied.is_empty() || *work == self.work)
+        };
         let origin = self.fit(size, saved, work);
-        place_beside(origin, size, work.unwrap_or(self.work), occupied, gap)
+        place_editor(
+            origin,
+            size,
+            work.unwrap_or(self.work),
+            occupied,
+            gap,
+            self.replacing || (saved.is_some() && work.is_some()),
+        )
     }
 
     #[cfg(any(target_os = "windows", test))]
@@ -127,16 +165,8 @@ fn monitor_work((x, y): (i32, i32)) -> Option<[i32; 4]> {
     }
 }
 
-/// Places a new window around the open windows on its monitor, keeping its title bar
-/// reachable even on monitors too small for the windows to fit side by side.
-pub fn place_beside(
-    origin: (i32, i32),
-    size: (i32, i32),
-    work: [i32; 4],
-    occupied: &[[i32; 4]],
-    gap: i32,
-) -> (i32, i32) {
-    place_editor(origin, size, work, occupied, gap, false)
+fn intersects([l, t, r, b]: [i32; 4], [x, y, right, bottom]: [i32; 4]) -> bool {
+    l < right && t < bottom && r > x && b > y
 }
 
 /// A saved or inherited origin wins when the whole frame fits there.
@@ -144,7 +174,7 @@ pub fn place_editor(
     origin: (i32, i32),
     (width, height): (i32, i32),
     [left, top, right, bottom]: [i32; 4],
-    occupied: &[[i32; 4]],
+    occupied: &[EditorFrame],
     gap: i32,
     prefer_origin: bool,
 ) -> (i32, i32) {
@@ -152,15 +182,17 @@ pub fn place_editor(
     let max_y = bottom.saturating_sub(height).max(top);
     let clamp = |(x, y): (i32, i32)| (x.clamp(left, max_x), y.clamp(top, max_y));
     let origin = clamp(origin);
-    let occupied: Vec<_> = occupied
+    let windows: Vec<_> = occupied
         .iter()
         .copied()
-        .filter(|&[l, t, r, b]| r > left && l < right && b > top && t < bottom)
+        .filter(|frame| intersects(frame.bounds, [left, top, right, bottom]))
         .collect();
-    let clear = |(x, y): (i32, i32)| {
-        occupied.iter().all(|&[l, t, r, b]| {
-            x >= r || y >= b || x.saturating_add(width) <= l || y.saturating_add(height) <= t
-        })
+    let occupied: Vec<_> = windows.iter().map(|frame| frame.bounds).collect();
+    let frame_at = |(x, y): (i32, i32)| [x, y, x.saturating_add(width), y.saturating_add(height)];
+    let clear = |point| {
+        occupied
+            .iter()
+            .all(|&old| !intersects(frame_at(point), old))
     };
     if occupied.is_empty() || (prefer_origin && clear(origin)) {
         return origin;
@@ -196,54 +228,97 @@ pub fn place_editor(
             }
         }
     }
-    let [l, t, r, _] = occupied[0];
+    let [l, t, _, _] = occupied[0];
     let offset = gap.saturating_mul(3);
-    let shifted = clamp((l.saturating_add(offset), t.saturating_add(offset)));
-    let title_bottom = t.saturating_add(offset);
-    if shifted.1 < title_bottom {
-        // When the work area's lower edge prevents a full vertical step, keep
-        // the right end of the earlier title bar above the new window's edge.
-        let close_left = r.saturating_sub(offset);
-        let x = close_left.saturating_sub(width);
-        if x >= left {
-            return clamp((x.min(l.saturating_sub(offset)), shifted.1));
-        }
-    }
-    if shifted == (l, t) {
-        clamp((l.saturating_sub(offset), t.saturating_sub(offset)))
+    let preferred = if prefer_origin {
+        origin
     } else {
-        shifted
+        clamp((l.saturating_add(offset), t.saturating_add(offset)))
+    };
+    // Each title rules out a rectangle of origins. Checking its edges and the
+    // work-area edges finds the nearest position in every remaining region.
+    let candidates = |rectangles: &[[i32; 4]]| {
+        let mut xs = vec![left, max_x, preferred.0];
+        let mut ys = vec![top, max_y, preferred.1];
+        for &[l, t, r, b] in rectangles {
+            xs.extend([l.saturating_sub(width), r]);
+            ys.extend([t.saturating_sub(height), b]);
+        }
+        xs.retain(|x| (left..=max_x).contains(x));
+        ys.retain(|y| (top..=max_y).contains(y));
+        xs.sort_unstable();
+        xs.dedup();
+        ys.sort_unstable();
+        ys.dedup();
+        xs.iter()
+            .flat_map(|&x| ys.iter().map(move |&y| (x, y)))
+            .collect::<Vec<_>>()
+    };
+    let distance = |(x, y): (i32, i32)| -> u64 {
+        u64::from(x.abs_diff(preferred.0)) + u64::from(y.abs_diff(preferred.1))
+    };
+    let titles: Vec<_> = windows.iter().map(|old| old.title).collect();
+    if let Some(point) = candidates(&titles)
+        .into_iter()
+        .filter(|&point| {
+            titles
+                .iter()
+                .all(|&title| !intersects(frame_at(point), title))
+        })
+        .min_by_key(|&point| distance(point))
+    {
+        return point;
     }
+    // A nearly screen-sized editor can make full bars impossible. Keep as many
+    // close buttons and title points reachable as the work area permits.
+    let probes: Vec<_> = windows.iter().flat_map(|old| old.title_points()).collect();
+    candidates(&probes)
+        .into_iter()
+        .min_by_key(|&point| {
+            let frame = frame_at(point);
+            let hidden = |rect| intersects(frame, rect);
+            let (titles, _) = probes.as_chunks::<3>();
+            let closes = titles.iter().filter(|p| hidden(p[0])).count();
+            let total = probes.iter().filter(|&&p| hidden(p)).count();
+            (closes, total, distance(point))
+        })
+        .unwrap_or(preferred)
 }
 
-/// Visible, independent Studio windows and the external top-level editors reported by
-/// the host. The loading placeholders and temporary preset forms have their own policy.
-#[cfg(target_os = "windows")]
-pub fn visible_editors(main: isize, external: &[u64]) -> Vec<[i32; 4]> {
-    visible_editors_except(main, external, None)
-}
-
-/// As above, excluding the editor that will close once its replacement is open.
+/// Visible independent Studio and host windows, excluding loading placeholders and
+/// the editor that will close once its replacement is open.
 #[cfg(target_os = "windows")]
 pub fn visible_editors_except(
     main: isize,
     external: &[u64],
     retiring: Option<isize>,
-) -> Vec<[i32; 4]> {
+) -> Vec<EditorFrame> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GW_HWNDNEXT, GW_OWNER, GetTopWindow, GetWindow, GetWindowTextW, IsWindowVisible,
     };
-    let rect = |hwnd| {
+    let frame = |hwnd| {
         let mut r = RECT::default();
+        let mut client = RECT::default();
+        let mut at = POINT::default();
         // SAFETY: both calls are read-only on a native handle.
-        (unsafe { IsWindowVisible(hwnd) != 0 && GetWindowRect(hwnd, &mut r) != 0 })
-            .then_some([r.left, r.top, r.right, r.bottom])
+        unsafe {
+            if IsWindowVisible(hwnd) == 0 || GetWindowRect(hwnd, &mut r) == 0 {
+                return None;
+            }
+            let scale = GetDpiForWindow(hwnd).max(96) as f32 / 96.0;
+            let height = (EDITOR_TITLE_HEIGHT * scale).round() as i32;
+            let mut frame = EditorFrame::new([r.left, r.top, r.right, r.bottom], height);
+            if GetClientRect(hwnd, &mut client) != 0 && ClientToScreen(hwnd, &mut at) != 0 {
+                frame.title = [at.x, at.y, at.x + client.right, r.bottom.min(at.y + height)];
+            }
+            Some(frame)
+        }
     };
     let mut bounds: Vec<_> = external
         .iter()
         .map(|&id| id as isize)
         .filter(|&hwnd| Some(hwnd) != retiring)
-        .filter_map(|hwnd| rect(hwnd as HWND))
+        .filter_map(|hwnd| frame(hwnd as HWND))
         .collect();
     if main == 0 {
         return bounds;
@@ -254,7 +329,7 @@ pub fn visible_editors_except(
         while !hwnd.is_null() {
             if Some(hwnd as isize) != retiring
                 && GetWindow(hwnd, GW_OWNER) == main as HWND
-                && let Some(r) = rect(hwnd)
+                && let Some(r) = frame(hwnd)
             {
                 let mut title = [0u16; 64];
                 let len = GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) as usize;
@@ -287,6 +362,7 @@ mod tests {
         work: [1920, 0, 3840, 1040],
         restore: None,
         replacing: false,
+        retiring: None,
     };
     #[test]
     fn restores_the_instance_position_and_clamps_to_its_monitor() {
@@ -306,7 +382,7 @@ mod tests {
                 origin,
                 (300, 170),
                 [0, 0, 1200, 800],
-                &[[0, 0, 400, 700]],
+                &[EditorFrame::new([0, 0, 400, 700], 36)],
                 10,
                 true,
             )
@@ -322,20 +398,23 @@ mod tests {
         let right = [810, 200, 1200, 550];
         let left = [0, 200, 390, 550];
         let below = [0, 560, 1200, 800];
-        let place =
-            |occupied: &[[i32; 4]]| place_beside((400, 200), (320, 170), work, occupied, 10);
+        let place = |occupied: &[[i32; 4]]| {
+            let frames: Vec<_> = occupied.iter().map(|&r| EditorFrame::new(r, 36)).collect();
+            place_editor((400, 200), (320, 170), work, &frames, 10, false)
+        };
         assert_eq!(place(&[center]), (810, 200));
         assert_eq!(place(&[center, right]), (70, 200));
         assert_eq!(place(&[center, right, left]), (400, 560));
         assert_eq!(place(&[center, right, left, below]), (400, 20));
         assert_eq!(place(&[[1200, 0, 1500, 500]]), (400, 200));
         assert_eq!(
-            place_beside(
+            place_editor(
                 (0, 0),
                 (320, 170),
                 [0, 0, 640, 170],
-                &[[0, 0, 320, 170]],
-                10
+                &[EditorFrame::new([0, 0, 320, 170], 36)],
+                10,
+                false
             ),
             (320, 0)
         );
@@ -343,9 +422,34 @@ mod tests {
 
     #[test]
     fn a_cascade_at_the_bottom_keeps_the_older_close_button_exposed() {
-        let old = [200, 100, 700, 600];
-        let (x, y) = place_beside((200, 100), (500, 500), [0, 0, 750, 600], &[old], 12);
-        assert!(y >= old[1] + 36 || x + 500 <= old[2] - 36);
+        let old = EditorFrame::new([200, 100, 700, 600], 36);
+        let (x, y) = place_editor((200, 100), (500, 500), [0, 0, 750, 600], &[old], 12, false);
+        assert!(x + 500 <= old.title_points()[0][0] || y >= old.title[3]);
+    }
+
+    #[test]
+    fn overlap_avoids_the_titles_of_every_window() {
+        let frames = [
+            EditorFrame::new([0, 0, 400, 700], 63),
+            EditorFrame::new([400, 0, 800, 700], 63),
+            EditorFrame::new([425, 126, 800, 500], 63),
+        ];
+        for prefer_origin in [false, true] {
+            let (x, y) = place_editor(
+                (400, 126),
+                (600, 500),
+                [0, 0, 800, 700],
+                &frames,
+                42,
+                prefer_origin,
+            );
+            assert_eq!(y, 189);
+            assert!(
+                frames
+                    .iter()
+                    .all(|old| !intersects([x, y, x + 600, y + 500], old.title))
+            );
+        }
     }
 
     #[test]
@@ -364,7 +468,13 @@ mod tests {
             (-1200, 90)
         );
         assert_eq!(
-            AREA.place_new(size, saved, saved_work, &[[2300, 200, 2800, 500]], 10),
+            AREA.place_new(
+                size,
+                saved,
+                saved_work,
+                &[EditorFrame::new([2300, 200, 2800, 500], 36)],
+                10
+            ),
             (2810, 200)
         );
     }
