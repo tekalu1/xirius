@@ -384,7 +384,6 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("bugs2", bugs2_shots::SHOTS),
     ("caption", caption_shots::CAPTION),
     ("channel", channel_shots::SHOTS),
-    ("layer-selection", channel_shots::LAYER_SELECTION),
     ("channel-step", channel_step_shots::SHOTS),
     ("clip-menu-rows", clip_menu_rows_shots::SHOTS),
     ("clipedit", clipedit_shots::CLIPEDIT),
@@ -406,6 +405,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     #[cfg(windows)]
     ("device-drag", device_window::drag_shots::SHOTS),
     ("device-input", device_window::input_shots::SHOTS),
+    #[cfg(windows)]
+    ("device-kinds-input", preset_input_shots::DEVICE_KINDS),
     #[cfg(windows)]
     ("device-place", device_window::verify_shots::PLACE_SHOTS),
     #[cfg(windows)]
@@ -448,6 +449,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("keys-view-menu", keys_view_menu_shots::SHOTS),
     ("lane-rect", lane_rect_shots::SHOTS),
     ("lanes", lane_shots::LANES),
+    ("layer-selection", channel_shots::LAYER_SELECTION),
     ("macro-lane", macro_lane_shots::SHOTS),
     ("menu-key", menu_key_shots::SHOTS),
     ("midi-assign", midi_assign_shots::SHOTS),
@@ -493,8 +495,6 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("preset-input", preset_input_shots::SHOTS),
     #[cfg(windows)]
     ("preset-input-cold", preset_input_shots::COLD),
-    #[cfg(windows)]
-    ("device-kinds-input", preset_input_shots::DEVICE_KINDS),
     ("quiet", quiet_shots::QUIET),
     ("rail-tips", fixed_screens_shots::RAIL_TIPS),
     ("range-trim", range_trim_shots::SHOTS),
