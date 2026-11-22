@@ -217,7 +217,7 @@ fn prepare_device_kinds(s: &mut Studio, window: &Window, dir: PathBuf) {
     let mut catalog = xirius_plugins::Catalog::load(s.song().plugin_cache());
     catalog.entries[0].kind = xirius_core::model::PluginKind::Instrument;
     s.use_plugins(catalog);
-    DEVICE_FIXTURE.with_borrow_mut(|fixture| *fixture = Some(entry.name.clone()));
+    DEVICE_FIXTURE.with_borrow_mut(|fixture| *fixture = Some(entry.uid.clone()));
     s.drawer_open = true;
     s.tab = crate::studio::DrawerTab::Mixer;
     s.drawer_size.mixer = Some(500.0);
