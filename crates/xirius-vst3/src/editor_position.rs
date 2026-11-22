@@ -61,18 +61,27 @@ impl EditorArea {
         external: &[u64],
         gap: i32,
     ) -> (i32, i32) {
-        let work = saved.and_then(monitor_work);
-        let origin = self.fit(size, saved, work);
         if self.replacing {
-            return origin;
+            return self.fit(size, saved, Some(self.work));
         }
-        place_beside(
-            origin,
-            size,
-            work.unwrap_or(self.work),
-            &visible_editors(self.main_window, external),
-            gap,
-        )
+        let occupied = visible_editors(self.main_window, external);
+        self.place_new(size, saved, saved.and_then(monitor_work), &occupied, gap)
+    }
+
+    #[cfg(any(target_os = "windows", test))]
+    fn place_new(
+        self,
+        size: (i32, i32),
+        saved: Option<(i32, i32)>,
+        saved_work: Option<[i32; 4]>,
+        occupied: &[[i32; 4]],
+        gap: i32,
+    ) -> (i32, i32) {
+        // An editor opened on its own can reuse its saved monitor. Additional editors
+        // look for room on the monitor from which the user opens them.
+        let work = saved_work.filter(|work| occupied.is_empty() || *work == self.work);
+        let origin = self.fit(size, saved, work);
+        place_beside(origin, size, work.unwrap_or(self.work), occupied, gap)
     }
 
     #[cfg(any(target_os = "windows", test))]
@@ -282,5 +291,20 @@ mod tests {
     fn removed_monitor_returns_to_the_current_main_monitor() {
         assert_eq!(AREA.fit((500, 300), Some((-1200, 90)), None), (2350, 300));
         assert_eq!(AREA.fit((5000, 3000), None, None), (1920, 0));
+    }
+
+    #[test]
+    fn an_additional_editor_stays_on_the_source_monitor() {
+        let saved = Some((-1200, 90));
+        let saved_work = Some([-1920, 0, 0, 1040]);
+        let size = (500, 300);
+        assert_eq!(
+            AREA.place_new(size, saved, saved_work, &[], 10),
+            (-1200, 90)
+        );
+        assert_eq!(
+            AREA.place_new(size, saved, saved_work, &[[2300, 200, 2800, 500]], 10),
+            (2810, 200)
+        );
     }
 }

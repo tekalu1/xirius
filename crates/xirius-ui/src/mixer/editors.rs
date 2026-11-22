@@ -354,6 +354,7 @@ impl Studio {
                 .and_then(|id| self.device_window_handle(id))
                 .and_then(xirius_vst3::EditorArea::from_window)
             {
+                area.work = previous.work;
                 area.restore = Some((previous.main[0], previous.main[1]));
                 area.replacing = true;
             }
