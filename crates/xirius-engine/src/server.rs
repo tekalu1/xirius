@@ -329,7 +329,10 @@ impl PluginLink {
         let inner = self.lock();
         let mut messages = Vec::new();
         if let Some(mut area) = inner.editor_area {
-            area.restore = inner.editor_origin.or(area.restore);
+            if let Some(origin) = inner.editor_origin {
+                area.restore = Some(origin);
+                area.replacing = true;
+            }
             messages.push(ToHost::SetEditorArea { slot, area });
         }
         if let Some(bar) = &inner.editor_bar {

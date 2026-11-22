@@ -2714,18 +2714,23 @@ fn ui_333_a_window_another_device_takes_ends_its_sweep_on_the_zone_turned() {
     let (x, y) = s.instrument_center(&g, id, Part::Knob(k)).unwrap();
     assert!(s.device_wheel(&g, x, y, 4.0, false));
     assert!(s.instruments.sweep.is_some());
-    let vocal = s
+    let other = s
         .project()
         .tracks
         .values()
-        .find(|t| t.name == "Vocal")
+        .find(|track| track.id != t && track.kind == xirius_core::model::TrackKind::Instrument)
         .unwrap()
         .id;
-    assert!(s.run_command("plugin.add", json!({"track": vocal, "name": "EQ"})));
-    let eq = s.project().tracks[&vocal].inserts.last().unwrap().id;
-    s.show_instrument(vocal, eq);
-    s.instruments.detached_target = Some(eq);
-    assert!(!s.instruments.is_open(id), "the EQ took the window in");
+    assert!(s.set_instrument(other, &crate::instrument::Pick::built_in("Drum Kit")));
+    let drums = crate::instrument::current(&s.project().tracks[&other])
+        .unwrap()
+        .id;
+    s.show_instrument(other, drums);
+    s.instruments.detached_target = Some(drums);
+    assert!(
+        !s.instruments.is_open(id),
+        "the Drum Kit took the window in"
+    );
     assert!(s.instruments.sweep.is_none());
     assert_eq!(zone(&s, 0), first, "the first zone stays");
     assert_ne!(zone(&s, 1)[k], second[k], "the turn went to the second");

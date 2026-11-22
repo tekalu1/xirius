@@ -186,7 +186,7 @@ fn an_empty_song_takes_a_dropped_instrument_as_its_first_track() {
     assert_eq!(s.project().root.len(), 2);
     let new = *s.project().tracks.keys().max().unwrap();
     assert_eq!(s.selected_row, Some(RowKind::Track(new)));
-    assert!(s.mixer.open_later.is_none());
+    assert!(s.mixer.open_later.is_empty());
     assert!(s.mixer.editors.is_empty());
     assert!(
         s.instruments

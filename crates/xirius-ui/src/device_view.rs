@@ -1,8 +1,116 @@
 //! Opening and closing the view of a device never changes the device in the song (UI-337).
 use crate::studio::Studio;
 use xirius_core::id::PluginId;
+use xirius_core::model::PluginKind;
+
+use crate::mixer::editors::Where;
 
 impl Studio {
+    pub(crate) fn device_kind(&self, id: PluginId) -> Option<PluginKind> {
+        let project = self.project();
+        project
+            .tracks
+            .values()
+            .flat_map(|track| &track.inserts)
+            .find(|plugin| plugin.id == id)
+            .map(|plugin| plugin.kind)
+    }
+
+    /// The existing keyboard shortcuts can still close a shown device.
+    pub(crate) fn toggle_device_shortcut(
+        &mut self,
+        track: xirius_core::id::TrackId,
+        id: PluginId,
+    ) -> bool {
+        if self.instruments.is_open(id) && !self.instruments.pending.contains(&id) {
+            self.close_device_view(id);
+        } else if self.editor_shown(id) {
+            self.close_editor(id);
+        } else {
+            return self.open_plugin(track, id);
+        }
+        true
+    }
+
+    pub(crate) fn normal_view_before(&self, id: PluginId) -> Option<PluginId> {
+        let kind = self.device_kind(id)?;
+        self.instruments
+            .open
+            .iter()
+            .rev()
+            .filter(|w| !w.pinned && !self.instruments.pending.contains(&w.plugin))
+            .map(|w| w.plugin)
+            .chain(
+                self.mixer
+                    .editors
+                    .iter()
+                    .filter(|e| {
+                        matches!(e.at, Where::Host { opened: true })
+                            && !self.mixer.editor_pins.contains(&e.id)
+                    })
+                    .map(|e| e.id),
+            )
+            .find(|other| *other != id && self.device_kind(*other) == Some(kind))
+    }
+
+    pub(crate) fn finish_device_open(&mut self, id: PluginId) {
+        self.instruments.pending.remove(&id);
+        if self.mixer.editor_pins.contains(&id)
+            || self
+                .instruments
+                .open
+                .iter()
+                .any(|w| w.plugin == id && w.pinned)
+        {
+            return;
+        }
+        if let Some(old) = self.normal_view_before(id) {
+            if self.instruments.detached.contains(&old) {
+                self.close_device_view(old);
+            } else {
+                self.close_editor(old);
+            }
+        }
+    }
+
+    /// Supersede work in progress for this kind while retaining the current visible editor.
+    pub(crate) fn supersede_pending_views(&mut self, id: PluginId, kind: PluginKind) {
+        let waiting: Vec<_> = self
+            .mixer
+            .open_later
+            .iter()
+            .map(|w| w.id)
+            .chain(self.instruments.pending.iter().copied())
+            .chain(
+                self.mixer
+                    .editors
+                    .iter()
+                    .filter(|e| matches!(e.at, Where::Host { opened: false }))
+                    .map(|e| e.id),
+            )
+            .filter(|other| {
+                *other != id
+                    && !self.mixer.editor_pins.contains(other)
+                    && self.device_kind(*other) == Some(kind)
+            })
+            .collect();
+        for other in waiting {
+            self.mixer.open_later.retain(|w| w.id != other);
+            if self.instruments.detached.contains(&other) {
+                self.close_device_view(other);
+            } else {
+                self.close_editor(other);
+            }
+        }
+    }
+
+    pub(crate) fn unpinned_device_view(&mut self, id: PluginId) {
+        if let Some(kind) = self.device_kind(id) {
+            self.supersede_pending_views(id, kind);
+            self.finish_device_open(id);
+        }
+    }
+
     pub(crate) fn close_device_view(&mut self, id: PluginId) {
         if self.instruments.note.is_some_and(|n| n.plugin == id) {
             self.window_note_off();
@@ -27,6 +135,7 @@ impl Studio {
         if self.instruments.sweep.is_some_and(|s| s.plugin == id) {
             self.device_sweep_end();
         }
+        self.instruments.pending.remove(&id);
         self.instruments.open.retain(|w| w.plugin != id);
         self.instruments.detached.remove(&id);
         crate::instrument::window::forget_turns(self);

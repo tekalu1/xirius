@@ -120,6 +120,7 @@ pub(crate) struct Spec {
     pub min_size: Option<Size<Pixels>>,
     pub resizable: bool,
     pub positions: Option<Positions>,
+    pub restore: bool,
 }
 
 fn offscreen() -> bool {
@@ -162,6 +163,7 @@ pub(crate) fn open<V: Render + 'static>(
         .kind
         .key()
         .zip(spec.positions.as_ref())
+        .filter(|_| spec.restore)
         .and_then(|(key, p)| p.borrow().get(&key).copied())
         .unwrap_or(spec.initial);
     let display = spec
@@ -221,6 +223,7 @@ pub(crate) fn open<V: Render + 'static>(
                     &title,
                     initial,
                     scale.unwrap_or_else(|| window.scale_factor()),
+                    matches!(spec.kind, Kind::Device(_)),
                 ) {
                     window.resize(initial.size);
                 }
@@ -242,11 +245,11 @@ pub(crate) fn open<V: Render + 'static>(
     )
 }
 
-/// Applies the client bounds in logical pixels of the destination display before showing the
-/// window. Elsewhere the platform places the window at the initial bounds it is created with.
-fn place(title: &str, bounds: Bounds<Pixels>, scale: f32) -> bool {
+/// Applies the size and origin before showing the window. Device windows use their
+/// frame origin so it agrees with the origin used by the external editor host.
+fn place(title: &str, bounds: Bounds<Pixels>, scale: f32, frame_origin: bool) -> bool {
     #[cfg(not(windows))]
-    let _ = (title, bounds, scale);
+    let _ = (title, bounds, scale, frame_origin);
     #[cfg(windows)]
     if let Some(hwnd) = crate::park::own_handle(title) {
         use windows_sys::Win32::Foundation::{POINT, RECT};
@@ -275,11 +278,16 @@ fn place(title: &str, bounds: Bounds<Pixels>, scale: f32) -> bool {
             let want_y = physical(bounds.origin.y);
             let border_width = frame.right - frame.left - client.right;
             let border_height = frame.bottom - frame.top - client.bottom;
+            let (x, y) = if frame_origin {
+                (want_x, want_y)
+            } else {
+                (frame.left + want_x - at.x, frame.top + want_y - at.y)
+            };
             return SetWindowPos(
                 hwnd as _,
                 std::ptr::null_mut(),
-                frame.left + want_x - at.x,
-                frame.top + want_y - at.y,
+                x,
+                y,
                 physical(bounds.size.width) + border_width,
                 physical(bounds.size.height) + border_height,
                 SWP_NOZORDER | SWP_NOACTIVATE,
@@ -391,6 +399,117 @@ pub(crate) fn screens(cx: &App) -> Vec<Screen> {
             })
             .collect()
     }
+}
+
+/// Choose an independent device or loading window's place, in the destination monitor's
+/// logical pixels. Replacements inherit the old window's origin and keep their own size.
+pub(crate) fn device_bounds(
+    studio: &crate::studio::Studio,
+    main: &Window,
+    cx: &App,
+    id: PluginId,
+    mut initial: Bounds<Pixels>,
+    source: u64,
+) -> (Bounds<Pixels>, Option<DisplayId>) {
+    if offscreen() {
+        return (initial, None);
+    }
+    let positions = studio.instruments.positions.borrow();
+    let previous = studio.normal_view_before(id);
+    let mut occupied = Vec::new();
+    #[cfg(windows)]
+    let screens = screens(cx);
+    #[cfg(windows)]
+    let native = |hwnd| {
+        let area = xirius_vst3::EditorArea::from_window(hwnd)?;
+        let screen = screens.iter().find(|screen| screen.work == area.work)?;
+        Some((
+            point(
+                px(area.main[0] as f32 / screen.scale),
+                px(area.main[1] as f32 / screen.scale),
+            ),
+            screen.id,
+        ))
+    };
+    if let Some(old) = previous
+        && let Some(bounds) = positions.get(&Key::Device(old))
+    {
+        initial.origin = bounds.origin;
+    }
+    #[cfg(windows)]
+    let display = if let Some(old) = previous {
+        studio
+            .device_window_handle(old)
+            .and_then(native)
+            .map(|(origin, id)| {
+                initial.origin = origin;
+                id
+            })
+    } else {
+        native(source as isize).map(|(_, id)| id)
+    };
+    #[cfg(not(windows))]
+    let display = {
+        let _ = source;
+        None
+    };
+    let display = display
+        .and_then(|id| cx.find_display(id))
+        .or_else(|| {
+            if previous.is_some() {
+                return cx
+                    .displays()
+                    .into_iter()
+                    .find(|d| d.bounds().contains(&initial.origin));
+            }
+            main.display(cx)
+        })
+        .or_else(|| main.display(cx));
+    let Some(display) = display else {
+        return (initial, None);
+    };
+    let work = display.visible_bounds();
+    initial = fit_bounds(initial, work);
+    if previous.is_some() {
+        return (initial, Some(display.id()));
+    }
+    #[cfg(windows)]
+    if let Some(screen) = screens.iter().find(|s| s.id == display.id()) {
+        occupied.extend(
+            xirius_vst3::visible_editors(
+                crate::device_window::hwnd_of(main),
+                &studio.editor_stack(),
+            )
+            .into_iter()
+            .map(|edges| edges.map(|v| (v as f32 / screen.scale).round() as i32)),
+        );
+    }
+    let to_int = |value: Pixels| f32::from(value).round() as i32;
+    let edges = |bounds: Bounds<Pixels>| {
+        [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()].map(to_int)
+    };
+    #[cfg(not(windows))]
+    occupied.extend(positions.iter().filter_map(|(key, &bounds)| {
+        let visible = match *key {
+            Key::Device(other) => {
+                other != id
+                    && studio.instruments.detached.contains(&other)
+                    && !studio.instruments.pending.contains(&other)
+            }
+            Key::Channel => studio.channel.is_some(),
+            Key::Macros => studio.instruments.detached_macros,
+        };
+        visible.then(|| edges(bounds))
+    }));
+    let (x, y) = xirius_vst3::place_beside(
+        (to_int(initial.origin.x), to_int(initial.origin.y)),
+        (to_int(initial.size.width), to_int(initial.size.height)),
+        edges(work),
+        &occupied,
+        24,
+    );
+    initial.origin = point(px(x as f32), px(y as f32));
+    (initial, Some(display.id()))
 }
 
 pub(crate) fn fit_bounds(mut bounds: Bounds<Pixels>, work: Bounds<Pixels>) -> Bounds<Pixels> {

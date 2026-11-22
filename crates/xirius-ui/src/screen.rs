@@ -1228,6 +1228,7 @@ fn watch_editor_bar(window: &Window, cx: &mut Context<Screen>) {
                     let changed = !studio.mixer.editors.is_empty() && studio.poll_editors();
                     drop(studio);
                     if changed {
+                        this.device_windows.close_retired(&this.studio, cx);
                         this.loading_windows
                             .sync_after_poll(&this.studio, window, cx);
                         cx.notify();
@@ -2303,7 +2304,11 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
                     Phase::Settle(_) if capture_ready => {
                         let name = d.current.map_or("shot", |s| s.name);
                         let path = d.dir.join(format!("{name}.bmp"));
-                        d.phase = Phase::Capturing(Capture::start(WINDOW_TITLE, path));
+                        let title = match name {
+                            "layer-selected" | "layer-hover" => crate::device_window::CHANNEL_TITLE,
+                            _ => WINDOW_TITLE,
+                        };
+                        d.phase = Phase::Capturing(Capture::start(title, path));
                     }
                     Phase::Settle(_) => {}
                     Phase::Capturing(capture) => match capture.outcome() {

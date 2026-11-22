@@ -126,9 +126,10 @@ fn the_mixer_row_of_a_built_in_instrument_opens_the_same_window() {
     assert!(s.instruments.is_open(id));
     assert_eq!(s.mixer.open_editors(), 0, "no window of a plug-in");
     assert!(s.error.is_none());
-    // The row's second press shuts it.
+    // The row's second press raises the same window.
     assert!(s.open_plugin(t, id));
-    assert!(!s.instruments.is_open(id));
+    assert!(s.instruments.is_open(id));
+    assert_eq!(s.instruments.open.last().unwrap().plugin, id);
 }
 
 #[test]
@@ -1180,12 +1181,12 @@ fn save_as_counts_on_and_refuses_default_and_the_dash_writes_nothing() {
 /// width, not the narrow one's.
 #[test]
 fn a_window_that_takes_a_wider_device_in_takes_its_width() {
-    let (mut s, _g, t, id) = studio();
-    assert!(s.run_command(
-        "plugin.add",
-        serde_json::json!({ "track": t.to_string(), "name": "Limiter" }),
-    ));
+    let (mut s, _g, t, _) = studio();
+    for name in ["Limiter", "EQ"] {
+        assert!(s.run_command("plugin.add", serde_json::json!({"track": t, "name": name})));
+    }
     let lim = added(&s, t, "Limiter");
+    let id = added(&s, t, "EQ");
     s.show_instrument(t, lim);
     s.instruments.detached_target = Some(lim);
     assert_eq!(s.instruments.open.len(), 1);
@@ -1199,7 +1200,14 @@ fn a_window_that_takes_a_wider_device_in_takes_its_width() {
     );
     let w = s.instruments.open[0];
     assert_eq!(w.plugin, id);
-    let def = plugin(&s, t).builtin().unwrap();
+    let project = s.project();
+    let def = project.tracks[&t]
+        .inserts
+        .iter()
+        .find(|p| p.id == id)
+        .unwrap()
+        .builtin()
+        .unwrap();
     assert!(
         w.body.0 >= crate::device::layout::min_w(def),
         "{}",

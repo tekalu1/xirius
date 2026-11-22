@@ -76,7 +76,7 @@ impl Studio {
         0
     }
 
-    fn editor_stack(&self) -> Vec<u64> {
+    pub(crate) fn editor_stack(&self) -> Vec<u64> {
         let mut windows: Vec<_> = self
             .mixer
             .editors
@@ -125,18 +125,6 @@ impl Studio {
             powered: plugin.runs(),
             pinned: self.mixer.editor_pins.contains(&plugin.id),
             sidechain: plugin.sidechain.is_some(),
-        }
-    }
-    pub(crate) fn replace_unpinned_editors(&mut self, keep: PluginId) {
-        let close: Vec<_> = self
-            .mixer
-            .editors
-            .iter()
-            .filter(|e| e.id != keep && !self.mixer.editor_pins.contains(&e.id))
-            .map(|e| e.id)
-            .collect();
-        for id in close {
-            self.close_editor(id);
         }
     }
     /// Reconcile the desktop's owner group after a Studio window is activated.
@@ -328,6 +316,13 @@ impl Studio {
         }
     }
 
+    #[cfg(windows)]
+    pub(crate) fn device_window_handle(&self, id: PluginId) -> Option<isize> {
+        self.mixer
+            .editor_hwnd(id)
+            .or_else(|| crate::park::own_handle(&format!("Xirius · {id}")))
+    }
+
     /// Opens `plugin`'s own window, on the instance that plays it. `at` keeps the corner of a
     /// window that opens again.
     pub(crate) fn open_vst3_window(
@@ -348,7 +343,20 @@ impl Studio {
         }
         let mut base = self.editor_placement();
         if let Some(area) = &mut base.area {
+            if let Some(source) = xirius_vst3::EditorArea::from_window(foreground_from as isize) {
+                area.main = source.main;
+                area.work = source.work;
+            }
             area.restore = self.mixer.editor_positions.get(&plugin.id).copied();
+            #[cfg(windows)]
+            if let Some(previous) = self
+                .normal_view_before(plugin.id)
+                .and_then(|id| self.device_window_handle(id))
+                .and_then(xirius_vst3::EditorArea::from_window)
+            {
+                area.restore = Some((previous.main[0], previous.main[1]));
+                area.replacing = true;
+            }
         }
         let project = self.auto_heard(&self.project());
         let bar = self.vst_bar(plugin);
@@ -429,13 +437,18 @@ impl Studio {
         host.begin_pull_states();
     }
 
-    /// Brings the open window of `id` above the other windows.
-    pub(crate) fn raise_editor(&mut self, id: PluginId) {
-        if self.mixer.editors.iter().any(|e| e.id == id)
-            && let Some(host) = self.transport.host_mut()
-        {
-            host.raise_plugin_editor(id, 0);
+    /// Bring an existing window forward through the same stack queue as a newly opened editor.
+    pub(crate) fn raise_editor(&mut self, id: PluginId, source: u64) {
+        if let Some((_, time)) = self.mixer.editor_touches.get_mut(&id) {
+            *time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_micros() as u64;
         }
+        if source != 0 {
+            self.mixer.editor_raises.foreground = Some((id, source));
+        }
+        self.raise_editors_over(0);
     }
 
     /// The window of `id` is open and shown.
@@ -500,6 +513,11 @@ impl Studio {
         }
         let opened = !opened_sizes.is_empty();
         if !opened_sizes.is_empty() {
+            for &(id, _) in &opened_sizes {
+                if !failed.iter().any(|(failed, _)| *failed == id) {
+                    self.finish_device_open(id);
+                }
+            }
             let project = self.project();
             let sizes: Vec<_> = opened_sizes
                 .into_iter()
@@ -626,7 +644,9 @@ impl Studio {
                     );
                 }
                 EditorAction::Pin => {
-                    if !self.mixer.editor_pins.remove(&id) {
+                    if self.mixer.editor_pins.remove(&id) {
+                        self.unpinned_device_view(id);
+                    } else {
                         self.mixer.editor_pins.insert(id);
                     }
                 }

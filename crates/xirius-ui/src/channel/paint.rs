@@ -75,24 +75,38 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) {
             .cloned()
             .unwrap_or_default();
         pressed.extend(w.mouse_note.map(|n| n.0));
-        k.paint(pen, &pressed);
+        let preview = v.keys.as_ref().and_then(|keys| {
+            let index = preview_layer(w, t).unwrap_or(keys.chosen);
+            keys.boxes.get(index).map(|b| b.ranges.0)
+        });
+        k.paint_range(pen, &pressed, preview);
     }
+}
+
+fn preview_layer(w: &ChannelWin, t: &Track) -> Option<usize> {
+    let layer = |part| {
+        keys::layers(t).iter().position(|l| match part {
+            Part::Card(Pick::Plugin(id))
+            | Part::Dot(Pick::Plugin(id))
+            | Part::More(Pick::Plugin(id)) => l.instrument == id,
+            Part::Range(id) | Part::Side(id, _) => l.id == id,
+            _ => false,
+        })
+    };
+    w.hot
+        .and_then(layer)
+        .or_else(|| w.layer_focus.and_then(layer))
 }
 
 /// The key range figure: the chosen layer's header, the boxes over the map and the keyboard.
 fn paint_keys(pen: &mut Pen, w: &ChannelWin, t: &Track, k: &keys::Keys) {
     let c = pen.c;
     pen.fill(Rect::new(k.panel.x, k.panel.y, k.panel.w, 1.0), c.line[0]);
-    // The header: the chosen layer's chip, name, transpose and ranges.
+    // The header: the chosen layer's name, transpose and ranges.
     if let Some(b) = k.boxes.get(k.chosen) {
         let h = k.head;
-        let cy = h.y + h.h / 2.0;
         let mut x = h.x;
-        let chip = Rect::new(x, cy - super::CHIP / 2.0, super::CHIP, super::CHIP);
-        // design-lint: allow(exception-family) 層の色の印（層はトラックの色の族で見分ける。v2 s04 の鍵域の図）
-        pen.round(chip, c.tracks[b.index % c.tracks.len()], Radius::Clip);
-        x += super::CHIP + 6.0;
-        let name = keys::layer_name(t, b.index);
+        let name = keys::layer_label(t, b.index);
         let name_w = pen.text(
             &name,
             FontSize::Body,
@@ -155,21 +169,7 @@ fn paint_keys(pen: &mut Pen, w: &ChannelWin, t: &Track, k: &keys::Keys) {
             pen.fill(Rect::new(k.board.edge(key), m.y, 1.0, m.h), c.line[0]);
         }
     });
-    let mut order: Vec<&keys::LayerBox> = k.boxes.iter().collect();
-    order.sort_by_key(|b| b.index == k.chosen);
-    let mut labels: Vec<Rect> = Vec::new();
-    for b in order.iter().rev() {
-        // Each box's label under the ones above it that it would cover.
-        let mut at = Rect::new(b.rect.x, b.rect.y, b.rect.w, 18.0);
-        while labels
-            .iter()
-            .any(|l| l.y == at.y && l.x < at.right() && at.x < l.right())
-        {
-            at.y += 18.0;
-        }
-        labels.push(at);
-    }
-    labels.reverse();
+    let preview = preview_layer(w, t);
     // A box past the map's ends while its side is dragged there is cut at them.
     // (a scrolled map is cut at its sides: the padding stays clear of it)
     let side = if k.board.extent > k.board.view.w {
@@ -184,27 +184,32 @@ fn paint_keys(pen: &mut Pen, w: &ChannelWin, t: &Track, k: &keys::Keys) {
         m.h + 2.0 * keys::GRIP_T,
     );
     pen.mask(near, |pen| {
-        for (b, label) in order.iter().zip(&labels) {
+        for (b, label) in k.labeled_boxes() {
             let chosen = b.index == k.chosen;
-            let hot = matches!(w.hot, Some(Part::Range(id) | Part::Side(id, _)) if id == b.id);
+            let hot = preview == Some(b.index);
+            let keyed = w.layer_focus == Some(Part::Range(b.id));
             let (line, width) = if chosen {
                 (c.ring, 1.5)
-            } else if hot {
-                (c.line[1], 1.0)
+            } else if hot || keyed {
+                (c.ring.opacity(0.7), 1.0)
             } else {
                 (c.line[0], 1.0)
             };
+            if hot {
+                pen.round(b.rect, c.ring.opacity(0.14), Radius::Xs);
+            }
             pen.outline(b.rect, line, Radius::Xs, width);
             if label.bottom() <= b.rect.bottom() {
                 pen.mask(b.rect, |pen| {
-                    let cy = label.y + label.h / 2.0;
                     let mut x = label.x + 6.0;
-                    let chip = Rect::new(x, cy - 4.0, 8.0, 8.0);
-                    // design-lint: allow(exception-family) 層の色の印（層はトラックの色の族で見分ける。v2 s04 の鍵域の図）
-                    pen.round(chip, c.tracks[b.index % c.tracks.len()], Radius::Clip);
-                    x += 12.0;
+                    let name = pen.fit(
+                        &keys::layer_label(t, b.index),
+                        FontSize::Small,
+                        Weight::Semibold,
+                        (label.right() - x).max(0.0),
+                    );
                     x += pen.text(
-                        &keys::layer_name(t, b.index),
+                        &name,
                         FontSize::Small,
                         Weight::Semibold,
                         c.ink_strong,
@@ -216,14 +221,17 @@ fn paint_keys(pen: &mut Pen, w: &ChannelWin, t: &Track, k: &keys::Keys) {
                         keys::keys_text(b.ranges.0).replace(' ', ""),
                         keys::velocity_text(b.ranges.1).replace(' ', "")
                     );
-                    pen.text(
-                        &ranges,
-                        FontSize::Small,
-                        Weight::Regular,
-                        c.ink,
-                        Rect::new(x, label.y, (label.right() - x).max(0.0), label.h),
-                        Align::Left,
-                    );
+                    let width = (label.right() - x).max(0.0);
+                    if pen.measure(&ranges, FontSize::Small, Weight::Regular) <= width {
+                        pen.text(
+                            &ranges,
+                            FontSize::Small,
+                            Weight::Regular,
+                            c.ink,
+                            Rect::new(x, label.y, width, label.h),
+                            Align::Left,
+                        );
+                    }
                 });
             }
             if chosen {
@@ -736,7 +744,13 @@ fn paint_card(
 ) {
     let c = pen.c;
     let r = card.rect;
-    let chosen = w.chosen == Some(card.pick);
+    let layer = match card.kind {
+        CardKind::Instrument { layer } => layer,
+        _ => None,
+    };
+    let chosen = w.chosen == Some(card.pick) || layer == Some(keys::chosen_layer(t, w.chosen));
+    let preview = layer.is_some() && preview_layer(w, t) == layer;
+    let keyed = w.layer_focus == Some(Part::Card(card.pick));
     let hot = match w.hot {
         Some(Part::Card(p) | Part::Dot(p) | Part::More(p)) => p == card.pick,
         Some(Part::Mode(id)) => card.pick == Pick::Split(id),
@@ -751,6 +765,21 @@ fn paint_card(
     };
     let face = if dragged { face.opacity(0.5) } else { face };
     pen.round(r, face, Radius::S);
+    if layer.is_some() && (chosen || preview || keyed) {
+        if preview && !chosen {
+            pen.round(r, c.ring.opacity(0.14), Radius::S);
+        }
+        pen.outline(
+            r,
+            if chosen || keyed {
+                c.ring
+            } else {
+                c.ring.opacity(0.7)
+            },
+            Radius::S,
+            1.0,
+        );
+    }
     let cp = card_parts(card);
     match card.kind {
         CardKind::Split { mode } => {
@@ -803,10 +832,8 @@ fn paint_card(
                     pen.power(d, p.bypass, chosen);
                 }
             }
-            if let (Some(chip), CardKind::Instrument { layer: Some(i) }) = (cp.chip, card.kind) {
-                pen.round(chip, c.tracks[i % c.tracks.len()], Radius::Clip);
-            }
-            let name = pen.fit(&p.name, FontSize::Small, Weight::Regular, cp.name.w);
+            let label = layer.map_or_else(|| p.name.clone(), |index| keys::layer_label(t, index));
+            let name = pen.fit(&label, FontSize::Small, Weight::Regular, cp.name.w);
             if p.bypass || p.deactivated {
                 pen.struck(
                     &name,

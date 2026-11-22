@@ -350,7 +350,7 @@ fn at_the_narrow_width_a_hovered_or_picked_branch_row_keeps_its_whole_name() {
                 crate::browser::text_width(&level_text(v), FontSize::Micro)
             })
         };
-        name_part(*r, l, false, level, false, mute).w
+        name_part(*r, l, level, false, mute).w
     };
     let fits = |w: f32, name: &str| w >= crate::browser::text_width(name, FontSize::Small);
     // under the pointer the M takes the close's place

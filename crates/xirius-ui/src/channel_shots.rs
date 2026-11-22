@@ -39,6 +39,41 @@ pub const SHOTS: &[Shot] = &[
     },
 ];
 
+pub const LAYER_SELECTION: &[Shot] = &[
+    Shot {
+        name: "layer-hover",
+        acts: &[Act::Reset, Act::Stage(Play::Laid(layer_selection), 1)],
+    },
+    Shot {
+        name: "layer-selected",
+        acts: &[Act::Reset, Act::Stage(Play::Laid(layer_selection), 0)],
+    },
+];
+
+fn layer_selection(s: &mut Studio, _: &Geometry, hover: u8) {
+    let t = track(s, "Keys");
+    for (name, range, velocity) in [
+        ("Sampler", "C2-C5", "1-100"),
+        ("Drum Kit", "C1-C2", "1-127"),
+    ] {
+        assert!(s.run_command(
+            "rack.layer.add",
+            json!({"track":t,"name":name,"format":"builtin","keys":range,"velocity":velocity}),
+        ));
+    }
+    for name in ["Reverb", "Delay"] {
+        assert!(s.run_command("plugin.add", json!({"track":t,"name":name})));
+    }
+    s.open_channel(t);
+    let project = s.project();
+    let layers = crate::channel::keys::layers(&project.tracks[&t]);
+    let channel = s.channel.as_mut().unwrap();
+    channel.chosen = Some(Pick::Plugin(layers[0].instrument));
+    if hover != 0 {
+        channel.hot = Some(crate::channel::Part::Range(layers[1].id));
+    }
+}
+
 fn track(s: &Studio, name: &str) -> TrackId {
     s.project()
         .tracks

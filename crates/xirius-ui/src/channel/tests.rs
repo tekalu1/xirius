@@ -970,6 +970,45 @@ fn a_multi_instrument_has_the_key_figure_when_the_window_is_wide() {
 }
 
 #[test]
+fn a_layer_card_places_its_name_right_after_power() {
+    let (mut s, g) = studio();
+    let (_, layers) = multi(&mut s);
+    let v = s.channel_view(&g).unwrap();
+    let parts = card_parts(&card(&v, Pick::Plugin(layers[0].instrument)));
+    assert_eq!(parts.name.x, parts.dot.unwrap().right() + 6.0);
+}
+
+#[test]
+fn keyboard_selects_overlapping_layers_from_cards_and_bands() {
+    let (mut s, g) = studio();
+    let (_track, layers) = multi(&mut s);
+    assert!(s.channel_layer_key(&g, "tab", false));
+    assert!(s.channel_layer_key(&g, "tab", false));
+    assert!(s.channel_layer_key(&g, "enter", false));
+    assert_eq!(s.channel_view(&g).unwrap().keys.unwrap().chosen, 1);
+    assert_eq!(
+        s.channel.as_ref().unwrap().layer_focus,
+        Some(Part::Card(Pick::Plugin(layers[1].instrument)))
+    );
+    for _ in 0..3 {
+        assert!(s.channel_layer_key(&g, "tab", false));
+    }
+    assert_eq!(
+        s.channel.as_ref().unwrap().layer_focus,
+        Some(Part::Range(layers[1].id))
+    );
+    assert!(s.channel_layer_key(&g, "tab", true));
+    assert!(s.channel_layer_key(&g, "space", false));
+    let keys = s.channel_view(&g).unwrap().keys.unwrap();
+    assert_eq!(keys.chosen, 0);
+    let labels = keys.labeled_boxes();
+    assert_eq!(labels.last().unwrap().0.id, layers[0].id);
+    let (band, label) = labels[labels.len() - 2];
+    let (x, y) = mid(label);
+    assert_eq!(keys::hit(&keys, x, y), Some((band.id, None)));
+}
+
+#[test]
 fn a_box_pressed_chooses_its_layer() {
     let (mut s, g) = studio();
     let (t, layers) = multi(&mut s);

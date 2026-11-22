@@ -499,13 +499,13 @@ fn plg_066_closing_the_window_ends_the_note() {
     assert_eq!(s.instruments.note, None);
     wait_sounding(&mut s, id, |n| n == 0);
 
-    // The mixer's button closing it does the same.
+    // The window shortcut closing it does the same.
     s.show_instrument(t, id);
     s.instruments.detached_target = Some(id);
     let (x, y) = s.instrument_center(&g, id, Part::Key(65)).unwrap();
     assert!(s.instrument_down(&g, x, y));
     wait_sounding(&mut s, id, |n| n > 0);
-    assert!(s.open_plugin(t, id));
+    assert!(s.toggle_device_shortcut(t, id));
     assert!(!s.instruments.is_open(id));
     assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 65 })));
     wait_sounding(&mut s, id, |n| n == 0);

@@ -597,7 +597,7 @@ impl Studio {
                     }
                     _ => None,
                 });
-                return plugin.is_some_and(|(t, id)| self.open_plugin(t, id));
+                return plugin.is_some_and(|(t, id)| self.toggle_device_shortcut(t, id));
             }
             "view.export-run" => {
                 return self

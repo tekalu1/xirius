@@ -207,14 +207,18 @@ fn click_opens_and_remove_button_removes_the_insert() {
     close(&mut s);
     let id = s.project().tracks[&a].inserts[0].id;
     // a click opens the row's window on its own surface (UI-337); clicking it
-    // again shuts the window (UI-025)
+    // again raises the existing window (UI-374).
     let at = grab(&mut s, &g, a, id);
     s.fx_up(&g, at.0, at.1, false);
     assert!(s.instruments.is_open(id));
     assert!(s.instruments.detached.contains(&id));
     let at = grab(&mut s, &g, a, id);
     s.fx_up(&g, at.0, at.1, false);
-    assert!(!s.instruments.is_open(id));
+    assert!(s.instruments.is_open(id));
+    assert_eq!(
+        s.instruments.open.iter().filter(|w| w.plugin == id).count(),
+        1
+    );
     close(&mut s);
     let r = remove_part(s.strip_item(&g, a, id).unwrap());
     assert!(s.chain_down(&g, r.x + 8.0, r.y + 11.0));

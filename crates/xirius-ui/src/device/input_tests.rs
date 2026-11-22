@@ -567,16 +567,16 @@ fn ui_324_a_versions_copy_leaves_the_wheel_turn_running() {
     assert_eq!(s.song().steps(), before + 1);
 }
 
-/// A pad's knob turned by the wheel and its window closed from the mixer at once (L2-ui-1):
+/// A knob turned by the wheel and its window closed by the shortcut at once (L2-ui-1):
 /// the turn goes into the device it was turned on.
 #[test]
-fn ui_324_a_wheel_turn_goes_in_when_the_mixer_closes_the_window() {
+fn ui_324_a_wheel_turn_goes_in_when_the_shortcut_closes_the_window() {
     let (mut s, g, t, id) = delay();
     let (k, start) = value(&s, t, "mix");
     let (x, y) = center(&s, &g, id, k);
     let before = s.song().steps();
     assert!(s.device_wheel(&g, x, y, 1.0, false));
-    assert!(s.open_plugin(t, id));
+    assert!(s.toggle_device_shortcut(t, id));
     assert!(!s.instruments.is_open(id));
     assert!(s.instruments.sweep.is_none());
     assert_eq!(s.song().steps(), before + 1);

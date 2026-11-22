@@ -349,6 +349,7 @@ pub struct Windows {
     /// The Macro Controls' own window is the surface now (UI-337).
     pub(crate) detached_macros: bool,
     pub open: Vec<Win>,
+    pub(crate) pending: std::collections::HashSet<PluginId>,
     pub(crate) grab: Option<Grab>,
     /// The control the keys move (UI-324): its plug-in and its parameter.
     pub focus: Option<(PluginId, usize)>,
@@ -1050,6 +1051,7 @@ impl Windows {
         }
         let open: Vec<PluginId> = self.open.iter().map(|w| w.plugin).collect();
         self.detached.retain(|id| open.contains(id));
+        self.pending.retain(|id| open.contains(id));
         self.chosen.retain(|id, _| open.contains(id));
         self.pads.retain(|id, _| open.contains(id));
         self.analysers.retain(|id, _| open.contains(id));
@@ -1550,92 +1552,67 @@ impl Studio {
             self.open_popup(PopupKind::Instrument(t), anchor);
             return true;
         };
-        let id = plugin.id;
-        if !is_built_in(plugin) {
-            // Its window comes to the top when open, as a built-in's does.
-            if self.editor_shown(id) {
-                self.raise_editor(id);
-                return true;
-            }
-            return self.open_plugin(t, id);
-        }
-        self.show_instrument(t, id);
-        true
+        self.open_plugin(t, plugin.id)
     }
 
-    /// Opens the window of a built-in plugin (UI-323): an open one comes to
-    /// the top; else the unpinned window used last takes it in; else, all
-    /// pinned, a new window opens a step on. Its frame lights either way.
     pub(crate) fn show_instrument(&mut self, t: TrackId, id: PluginId) {
-        self.replace_unpinned_editors(id);
-        // Another window asked for: the one waiting for a plugin just put in is not (PLG-050).
-        self.mixer.open_later = None;
-        // A sweep on the device whose window this one takes in goes into the song first, on
-        // the zone or the pad the window shows (the window gone, it would go to the first).
-        let ins = &self.instruments;
-        let taken = !ins.open.iter().any(|w| w.plugin == id)
-            && ins
-                .open
-                .iter()
-                .rposition(|w| !w.pinned)
-                .is_some_and(|i| ins.sweep.is_some_and(|s| s.plugin == ins.open[i].plugin));
-        if taken {
-            self.device_sweep_end();
-        }
+        self.show_instrument_from(t, id, Self::editor_foreground());
+    }
+
+    /// Opens or raises a built-in editor. In the UI the old view stays until the new
+    /// native window has been created successfully.
+    pub(crate) fn show_instrument_from(&mut self, t: TrackId, id: PluginId, source: u64) {
         let p = self.project();
         self.instruments.prune(&p);
-        let ins = &mut self.instruments;
-        let shown = (0, 0, None);
-        match ins.open.iter().position(|w| w.plugin == id) {
-            Some(i) => {
-                ins.raise(i);
-            }
-            None => {
-                let plugin = p
-                    .tracks
-                    .get(&t)
-                    .and_then(|x| x.inserts.iter().find(|x| x.id == id));
-                let Some((plugin, def)) = plugin.and_then(|x| Some((x, x.builtin()?))) else {
-                    return;
-                };
-                // The size this kind was last left at, else its own.
-                let body = match ins.sizes.get(def.uid) {
-                    Some(&want) => fit_of(def, want, Some(plugin)),
-                    None => layout::size_of(def, layout::natural_w(def), Some(plugin)),
-                };
-                let win = Win {
-                    track: t,
-                    plugin: id,
-                    knobs: def.params.len(),
-                    body,
-                    pinned: false,
-                    // The first place in the cascade no window sits at.
-                    seat: (0..)
+        if let Some(kind) = self.device_kind(id) {
+            self.supersede_pending_views(id, kind);
+        }
+        if let Some(i) = self.instruments.open.iter().position(|w| w.plugin == id) {
+            self.instruments.raise(i);
+        } else {
+            let plugin = p
+                .tracks
+                .get(&t)
+                .and_then(|x| x.inserts.iter().find(|x| x.id == id));
+            let Some((plugin, def)) = plugin.and_then(|x| Some((x, x.builtin()?))) else {
+                return;
+            };
+            let previous = self.normal_view_before(id);
+            let ins = &mut self.instruments;
+            let size = ins.sizes.get(def.uid).copied();
+            let body = match size {
+                Some(want) => fit_of(def, want, Some(plugin)),
+                None => layout::size_of(def, layout::natural_w(def), Some(plugin)),
+            };
+            let seat = previous
+                .and_then(|old| ins.open.iter().find(|w| w.plugin == old))
+                .map(|w| w.seat)
+                .unwrap_or_else(|| {
+                    (0..)
                         .find(|n| !ins.open.iter().any(|w| w.seat == *n))
-                        .unwrap_or(0),
-                    pick: shown.0,
-                    layer: shown.1,
-                    bank: shown.2,
-                    filled: !plugin.samples.is_empty(),
-                };
-                // The windows are in the order they were last used.
-                match ins.open.iter().rposition(|w| !w.pinned) {
-                    Some(i) => {
-                        let old = ins.open[i];
-                        ins.open[i] = Win {
-                            seat: old.seat,
-                            ..win
-                        };
-                        ins.raise(i);
-                        ins.prune(&p);
-                    }
-                    None => ins.open.push(win),
-                }
+                        .unwrap_or(0)
+                });
+            ins.open.push(Win {
+                track: t,
+                plugin: id,
+                knobs: def.params.len(),
+                body,
+                pinned: false,
+                seat,
+                pick: 0,
+                layer: 0,
+                bank: None,
+                filled: !plugin.samples.is_empty(),
+            });
+            if self.transport.is_windowed() {
+                self.instruments.pending.insert(id);
+            } else {
+                self.finish_device_open(id);
             }
         }
-        ins.detached.insert(id);
-        ins.prune(&p);
-        ins.flash = Some((id, std::time::Instant::now()));
+        self.instruments.detached.insert(id);
+        self.instruments.activate_device = Some((id, source));
+        self.instruments.flash = Some((id, std::time::Instant::now()));
     }
 
     /// Is the track an instrument track?
@@ -1804,6 +1781,9 @@ impl Studio {
             }
             Part::Pin => {
                 self.instruments.open[i].pinned = !w.pinned;
+                if w.pinned {
+                    self.unpinned_device_view(w.plugin);
+                }
             }
             Part::Knob(k) => {
                 let slot = live(&p, &w).and_then(|(_, x0, d)| {

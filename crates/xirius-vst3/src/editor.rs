@@ -244,6 +244,7 @@ fn wide(s: &str) -> Vec<u16> {
 /// What the window procedure and the frame share about one editor window. It lives in a box
 /// owned by the [`Editor`]; the window's `GWLP_USERDATA` points at it.
 struct WindowState {
+    flashing: Cell<bool>,
     presets: std::cell::RefCell<Option<crate::editor_presets::Popup>>,
     native_frame: bool,
     viewport: HWND,
@@ -376,6 +377,8 @@ unsafe fn state<'a>(hwnd: HWND) -> Option<&'a WindowState> {
     unsafe { (GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const WindowState).as_ref() }
 }
 
+const FRAME_FLASH_TIMER: usize = 1;
+
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT, ScreenToClient};
     use windows_sys::Win32::UI::WindowsAndMessaging::WM_PAINT;
@@ -421,6 +424,17 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         if msg == WM_ACTIVATE && wp & 0xffff == WA_CLICKACTIVE as usize {
             st.touched(hwnd);
         }
+        use windows_sys::Win32::Graphics::Gdi::InvalidateRect;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{KillTimer, WM_TIMER};
+        if msg == WM_TIMER && wp == FRAME_FLASH_TIMER {
+            st.flashing.set(false);
+            // SAFETY: the timer and paint belong to this frame.
+            unsafe {
+                KillTimer(hwnd, FRAME_FLASH_TIMER);
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+            }
+            return 0;
+        }
         if msg == WM_PAINT || msg == windows_sys::Win32::UI::WindowsAndMessaging::WM_PRINTCLIENT {
             let mut ps = PAINTSTRUCT::default();
             // SAFETY: balanced paint scope on the frame.
@@ -445,6 +459,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                     st.chrome_scale.get(),
                     None,
                 );
+                if st.flashing.get() {
+                    crate::editor_chrome::paint_focus(
+                        hwnd,
+                        dc,
+                        st.chrome_caption.get(),
+                        st.chrome_scale.get(),
+                    );
+                }
                 if !printing {
                     EndPaint(hwnd, &ps);
                 }
@@ -908,6 +930,13 @@ impl Plugin {
             (size.right - size.left).max((crate::editor_chrome::MIN_WIDTH * scale).round() as i32),
             size.bottom - size.top + crate::editor_chrome::height(scale),
         );
+        let external = self
+            .shared()
+            .editor_bar
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .stack
+            .clone();
         let (x, y) = {
             let mut position = self
                 .shared()
@@ -920,7 +949,14 @@ impl Plugin {
             if place.top && !offscreen_wanted() {
                 position.area.map_or_else(
                     || place.origin(w, h),
-                    |area| area.origin((w, h), place.at.or(area.restore).or(position.saved)),
+                    |area| {
+                        area.origin(
+                            (w, h),
+                            place.at.or(area.restore).or(position.saved),
+                            &external,
+                            (12.0 * scale).round() as i32,
+                        )
+                    },
                 )
             } else {
                 place.origin(w, h)
@@ -1002,6 +1038,7 @@ impl Plugin {
             return Err(error("cannot route plug-in viewport keys"));
         }
         let state = Box::new(WindowState {
+            flashing: Cell::new(false),
             presets: Default::default(),
             native_frame,
             viewport,
@@ -1082,6 +1119,8 @@ impl Plugin {
                 area.origin(
                     (width, height),
                     place.at.or(area.restore).or(position.saved),
+                    &external,
+                    (12.0 * dpi.max(96) as f32 / 96.0).round() as i32,
                 )
             })
         } else {
@@ -1414,6 +1453,20 @@ impl Editor {
                 && GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE as isize == 0
             {
                 SetForegroundWindow(self.hwnd);
+                if windows_sys::Win32::UI::WindowsAndMessaging::SetTimer(
+                    self.hwnd,
+                    FRAME_FLASH_TIMER,
+                    420,
+                    None,
+                ) != 0
+                {
+                    self.state.flashing.set(true);
+                    windows_sys::Win32::Graphics::Gdi::InvalidateRect(
+                        self.hwnd,
+                        std::ptr::null(),
+                        0,
+                    );
+                }
             }
         };
         self._shared

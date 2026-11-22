@@ -401,6 +401,6 @@ impl Studio {
         else {
             return false;
         };
-        self.open_plugin(t, id)
+        self.toggle_device_shortcut(t, id)
     }
 }

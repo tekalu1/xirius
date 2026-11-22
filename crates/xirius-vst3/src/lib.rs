@@ -27,7 +27,9 @@ mod editor_icons;
 mod editor_presets;
 pub use editor_bar::{EditorAction, EditorBar, PresetRow, preset_steps};
 mod editor_position;
-pub use editor_position::EditorArea;
+#[cfg(windows)]
+pub use editor_position::visible_editors;
+pub use editor_position::{EditorArea, place_beside};
 #[cfg(target_os = "windows")]
 mod editor_keys;
 mod host;

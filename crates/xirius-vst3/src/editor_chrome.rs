@@ -169,6 +169,25 @@ fn seat(id: usize, width: f32, bar: &EditorBar) -> Option<(f32, f32)> {
     })
 }
 
+pub(crate) fn paint_focus(hwnd: HWND, dc: HDC, caption: Option<Caption>, scale: f32) {
+    let theme = if caption.is_none_or(|c| c.dark) {
+        Theme::Dark
+    } else {
+        Theme::Light
+    };
+    let mut bounds = RECT::default();
+    // SAFETY: the client rectangle and brush belong to this paint on the host GUI thread.
+    unsafe {
+        GetClientRect(hwnd, &mut bounds);
+        let brush = CreateSolidBrush(color(
+            xirius_design::Accent::FocusRing.color(theme).to_rgb_u32(),
+        ));
+        bounds.bottom = (2.0 * scale).round() as i32;
+        FillRect(dc, &bounds, brush);
+        DeleteObject(brush);
+    }
+}
+
 pub(crate) fn height(scale: f32) -> i32 {
     (HEIGHT * scale).round() as i32
 }

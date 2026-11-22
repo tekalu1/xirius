@@ -635,8 +635,8 @@ pub struct Mixer {
     /// The channel editor's ＋ the insert list was opened from, when nothing is before it in
     /// its chain (MIX-042): the new effect is moved there.
     pub insert_into: Option<(TrackId, crate::channel::flow::Chain, usize)>,
-    /// The plugin just put in whose window opens once it is loaded (PLG-050).
-    pub(crate) open_later: Option<crate::loading::OpenLater>,
+    /// Windows waiting for their plugin to load, at most one request per kind.
+    pub(crate) open_later: Vec<crate::loading::OpenLater>,
     #[cfg(test)]
     pub(crate) fake_load: Option<crate::loading::FakeLoad>,
     pub(crate) editors: Vec<OpenEditor>,
@@ -1913,9 +1913,7 @@ impl Studio {
         self.mixer.folds.set(id, nested, wide, !open);
     }
 
-    /// Opens a plugin's own window, or shuts it when it is open (UI-025 is
-    /// the window's keys; the window itself is the plugin's). A window the
-    /// person closed opens again.
+    /// Opens a plugin's own window or brings the existing one to the front.
     pub fn open_plugin(&mut self, t: TrackId, id: PluginId) -> bool {
         self.open_plugin_from(t, id, Self::editor_foreground())
     }
@@ -1926,32 +1924,19 @@ impl Studio {
         id: PluginId,
         foreground_from: u64,
     ) -> bool {
-        // Asked for again while it loads: it opens once loaded, as it will (PLG-050). Another
-        // window asked for drops the wait.
-        if let Some(w) = self.mixer.open_later.take()
-            && w.id == id
-            && !self.has_loaded(id)
-        {
-            self.mixer.open_later = Some(w);
+        if let Some(waiting) = self.mixer.open_later.iter_mut().find(|w| w.id == id) {
+            waiting.foreground_from = foreground_from;
             return true;
         }
-        if self.mixer.is_open(id) {
-            let shown = self.editor_shown(id);
-            self.close_editor(id);
-            if shown {
-                return true;
+        if self.editor_shown(id) {
+            if let Some(kind) = self.device_kind(id) {
+                self.supersede_pending_views(id, kind);
             }
+            self.raise_editor(id, foreground_from);
+            return true;
         }
-        if self.instruments.is_open(id) {
-            if self.instruments.note.is_some_and(|n| n.plugin == id) {
-                self.window_note_off();
-            }
-            // Its pad's knob still turning goes in while the window still says which pad
-            // (L2-ui-1).
-            self.device_sweep_end();
-            self.instruments.open.retain(|w| w.plugin != id);
-            self.instruments.detached.remove(&id);
-            crate::instrument::window::forget_turns(self);
+        if let Some(editor) = self.mixer.editors.iter_mut().find(|e| e.id == id) {
+            editor.foreground_from = foreground_from;
             return true;
         }
         let p = self.project();
@@ -1963,18 +1948,15 @@ impl Studio {
         };
         // A built-in instrument has its window here (UI-098).
         if crate::instrument::window::is_built_in(plugin) {
-            self.show_instrument(t, id);
-            self.instruments.activate_device = Some((id, foreground_from));
+            self.show_instrument_from(t, id, foreground_from);
             return true;
         }
         let title = format!("{} · {}", plugin.name, track.shown_name());
-        self.replace_unpinned_editors(id);
-        self.device_sweep_end();
-        self.instruments.open.retain(|w| w.pinned);
+        self.supersede_pending_views(id, plugin.kind);
         match self.open_vst3_window(plugin, title, foreground_from) {
             Ok(e) => self.mixer.editors.push(e),
             Err(e) if e == crate::transport::PREPARING => {
-                self.mixer.open_later = Some(crate::loading::OpenLater {
+                self.mixer.open_later.push(crate::loading::OpenLater {
                     track: t,
                     id,
                     foreground_from,

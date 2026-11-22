@@ -51,7 +51,6 @@ pub const TBTN_GAP: f32 = 6.0;
 pub const DOT: f32 = 16.0;
 pub const MORE_W: f32 = 20.0;
 pub const MORE_H: f32 = 22.0;
-pub const CHIP: f32 = 10.0;
 /// A splitter's mode pill.
 pub const PILL_H: f32 = 22.0;
 /// A head's parts: the level's bar, the value, the M and the ×.
@@ -201,6 +200,7 @@ pub struct ChannelWin {
     /// Where the pointer is, over it or not.
     pub pointer: Option<(f32, f32)>,
     pub hot: Option<Part>,
+    layer_focus: Option<Part>,
     pub chosen: Option<Pick>,
     pub(crate) grab: Option<Grab>,
 }
@@ -227,6 +227,7 @@ impl ChannelWin {
             key_down: false,
             pointer: None,
             hot: None,
+            layer_focus: None,
             chosen: None,
             grab: None,
         }
@@ -463,7 +464,6 @@ fn clamp_scroll(s: (f32, f32), flow: &Flow, body: Rect) -> (f32, f32) {
 /// A card's parts: its power dot, its ⋯ and, for a splitter, its mode pill.
 pub struct CardParts {
     pub dot: Option<Rect>,
-    pub chip: Option<Rect>,
     /// Where the name goes.
     pub name: Rect,
     pub more: Rect,
@@ -490,23 +490,16 @@ pub fn card_parts(card: &flow::Card) -> CardParts {
             let x = r.x + 12.0;
             CardParts {
                 dot: None,
-                chip: None,
                 name: Rect::new(x, r.y, (pill.x - 6.0 - x).max(0.0), r.h),
                 more,
                 mode: Some(pill),
             }
         }
-        kind => {
+        _ => {
             let dot = Rect::new(r.x + 6.0, cy - DOT / 2.0, DOT, DOT);
-            let mut x = dot.right() + 6.0;
-            let chip = matches!(kind, CardKind::Instrument { layer: Some(_) }).then(|| {
-                let chip = Rect::new(x, cy - CHIP / 2.0, CHIP, CHIP);
-                x = chip.right() + 6.0;
-                chip
-            });
+            let x = dot.right() + 6.0;
             CardParts {
                 dot: Some(dot),
-                chip,
                 name: Rect::new(x, r.y, (more.x - 4.0 - x).max(0.0), r.h),
                 more,
                 mode: None,
@@ -1050,6 +1043,7 @@ impl Studio {
                 self.channel_tool(t, tool, rect.unwrap_or(v.r), &v.flow);
             }
             Part::Card(pick) => {
+                w.layer_focus = None;
                 w.chosen = Some(pick);
                 if clicks >= 2 {
                     self.channel_open(t, pick);
@@ -1161,12 +1155,14 @@ impl Studio {
                 }
             }
             Part::Range(id) => {
+                w.layer_focus = None;
                 let pick = layer_pick(&self.project(), t, id);
                 if let Some(w) = self.channel.as_mut() {
                     w.chosen = pick;
                 }
             }
             Part::Side(id, edge) => {
+                w.layer_focus = None;
                 let p = self.project();
                 let layer = p
                     .tracks
@@ -1258,19 +1254,7 @@ impl Studio {
         let Pick::Plugin(id) = pick else {
             return;
         };
-        let built_in = self
-            .project()
-            .tracks
-            .get(&t)
-            .and_then(|x| x.inserts.iter().find(|p| p.id == id))
-            .is_some_and(crate::instrument::window::is_built_in);
-        if built_in {
-            self.show_instrument(t, id);
-        } else if self.editor_shown(id) {
-            self.raise_editor(id);
-        } else {
-            self.open_plugin(t, id);
-        }
+        self.open_plugin(t, id);
     }
 
     /// The power dot: a bypassed device plays again, a switched-off one turns on.
@@ -1583,6 +1567,73 @@ impl Studio {
         true
     }
 
+    /// Tab visits layer cards and range bands. Enter selects the focused layer.
+    pub(crate) fn channel_layer_key(&mut self, g: &Geometry, key: &str, reverse: bool) -> bool {
+        let Some(v) = self.channel_view(g) else {
+            return false;
+        };
+        let Some(k) = v.keys.filter(|k| !k.boxes.is_empty()) else {
+            return false;
+        };
+        let Some(w) = &mut self.channel else {
+            return false;
+        };
+        let project = self.song.project();
+        let Some(track) = project.tracks.get(&w.track) else {
+            return false;
+        };
+        let layers = keys::layers(track);
+        let stops: Vec<_> = layers
+            .iter()
+            .map(|l| Part::Card(Pick::Plugin(l.instrument)))
+            .chain(layers.iter().map(|l| Part::Range(l.id)))
+            .collect();
+        match key {
+            "tab" => {
+                let index = match w
+                    .layer_focus
+                    .and_then(|part| stops.iter().position(|p| *p == part))
+                {
+                    Some(i) if reverse => (i + stops.len() - 1) % stops.len(),
+                    Some(i) => (i + 1) % stops.len(),
+                    None if reverse => stops.len() - 1,
+                    None => 0,
+                };
+                let part = stops[index];
+                w.layer_focus = Some(part);
+                match part {
+                    Part::Card(pick) => {
+                        if let Some(card) = v.flow.cards.iter().find(|card| card.pick == pick) {
+                            let (dx, dy) = reveal(card.rect, v.body);
+                            w.scroll.0 =
+                                (w.scroll.0 + dx).clamp(0.0, (v.flow.w - v.body.w).max(0.0));
+                            w.scroll.1 =
+                                (w.scroll.1 + dy).clamp(0.0, (v.flow.h - v.body.h).max(0.0));
+                        }
+                    }
+                    Part::Range(_) => {
+                        let (dx, _) = reveal(k.boxes[index - layers.len()].rect, k.map);
+                        w.keyboard_scroll =
+                            (k.board.scroll + dx).clamp(0.0, (k.board.extent - k.map.w).max(0.0));
+                    }
+                    _ => unreachable!(),
+                }
+                true
+            }
+            "enter" | "space" => {
+                let Some(index) = w
+                    .layer_focus
+                    .and_then(|part| stops.iter().position(|p| *p == part))
+                else {
+                    return false;
+                };
+                w.chosen = Some(Pick::Plugin(layers[index % layers.len()].instrument));
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// The pointer moves with nothing held: the part under it lights.
     pub fn channel_hover(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
         if self.channel.is_none() {
@@ -1712,6 +1763,20 @@ impl Studio {
         }
         true
     }
+}
+
+fn reveal(rect: Rect, view: Rect) -> (f32, f32) {
+    fn delta(start: f32, end: f32, low: f32, high: f32) -> f32 {
+        if start < low || end - start > high - low {
+            start - low
+        } else {
+            (end - high).max(0.0)
+        }
+    }
+    (
+        delta(rect.x, rect.right(), view.x, view.right()),
+        delta(rect.y, rect.bottom(), view.y, view.bottom()),
+    )
 }
 
 /// A splitter's modes as a list (UI-320), the one it has checked.

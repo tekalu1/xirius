@@ -1,6 +1,6 @@
 //! The key range figure (MIX-043): under a multi-instrument's flow, each layer's keys (across)
 //! and velocities (up) as an outlined box over a keyboard, with a handle on each side of the
-//! chosen layer's box. The boxes are not filled: a layer's colour is only its small chip.
+//! chosen layer's box.
 
 use xirius_core::id::NodeId;
 use xirius_core::model::Track;
@@ -109,6 +109,36 @@ pub fn layer_name(t: &Track, index: usize) -> String {
         .map_or_else(|| format!("レイヤー {}", index + 1), |p| p.name.clone())
 }
 
+/// Add the branch number when the instrument's name is shared by another layer.
+pub(super) fn layer_label(t: &Track, index: usize) -> String {
+    let name = layer_name(t, index);
+    if (0..layers(t).len()).any(|other| other != index && layer_name(t, other) == name) {
+        format!("{} · {name}", index + 1)
+    } else {
+        name
+    }
+}
+
+impl Keys {
+    pub(super) fn labeled_boxes(&self) -> Vec<(&LayerBox, Rect)> {
+        let mut order: Vec<_> = self.boxes.iter().collect();
+        order.sort_by_key(|b| b.index == self.chosen);
+        let mut labels: Vec<(&LayerBox, Rect)> = Vec::new();
+        for b in order.into_iter().rev() {
+            let mut at = Rect::new(b.rect.x, b.rect.y, b.rect.w, 18.0);
+            while labels
+                .iter()
+                .any(|(_, label)| label.y == at.y && label.x < at.right() && at.x < label.right())
+            {
+                at.y += at.h;
+            }
+            labels.push((b, at));
+        }
+        labels.reverse();
+        labels
+    }
+}
+
 /// A transpose as the field shows it: a sign before a rise.
 pub fn transpose_text(v: i8) -> String {
     if v > 0 {
@@ -212,15 +242,13 @@ pub fn layout(
             }
         })
         .collect();
-    // The header: chip, name, then "Transpose" and its field.
+    // The header: name, then "Transpose" and its field.
     let transpose = layers(t).get(chosen).map(|l| {
         let v = turning
             .filter(|(id, _)| *id == l.id)
             .map_or(l.transpose, |(_, v)| v);
         let x = head.x
-            + super::CHIP
-            + 6.0
-            + estimated_text_width(&layer_name(t, chosen), FontSize::Body)
+            + estimated_text_width(&layer_label(t, chosen), FontSize::Body)
             + ITEM_GAP
             + estimated_text_width("Transpose", FontSize::Small)
             + LABEL_GAP;
@@ -279,6 +307,14 @@ pub fn hit(k: &Keys, x: f32, y: f32) -> Option<(NodeId, Option<Edge>)> {
         && let Some(e) = Edge::ALL.into_iter().find(|e| reach(b, *e).contains(x, y))
     {
         return Some((b.id, Some(e)));
+    }
+    if let Some((b, _)) = k
+        .labeled_boxes()
+        .iter()
+        .rev()
+        .find(|(b, label)| label.bottom() <= b.rect.bottom() && label.contains(x, y))
+    {
+        return Some((b.id, None));
     }
     k.boxes
         .iter()
