@@ -192,7 +192,9 @@ fn in_a_normal_launch_the_windows_open_where_and_as_big_as_asked_and_come_back()
     let (report, _tmp) = run_placed();
     let opening = rows(&report, "opening");
     assert_eq!(opening.len(), 3, "{report}");
-    for o in opening {
+    let (device, others) = opening.split_first().unwrap();
+    assert_eq!(device["avoids_other_editors"], true, "{device}");
+    for o in others {
         assert_eq!(o["size_ok"], true, "{o}");
         assert_eq!(o["origin_ok"], true, "{o}");
     }
