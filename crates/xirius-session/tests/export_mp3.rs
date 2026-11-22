@@ -234,30 +234,36 @@ fn loudness_and_true_peak_are_those_of_the_mp3() {
     let mut s = song("lufs", dir.path());
     voice(&mut s, "A", 60, 2.0);
     voice(&mut s, "B", 43, 2.0);
-    let wav = export::mixdown(s.project(), &dir.path().join("m.wav"), &Options::default()).unwrap();
+    // The overlapping voices exceed full scale. Float WAV preserves those samples
+    // and gives this test a reference that would expose measuring before MP3 encoding.
+    let wav_options = Options {
+        bit_depth: Some(32),
+        ..Options::default()
+    };
+    let wav = export::mixdown(s.project(), &dir.path().join("m.wav"), &wav_options).unwrap();
+    assert!(wav.clipped > 0);
     for kbps in [128, 320] {
         let out = dir.path().join(format!("m{kbps}.mp3"));
         let rep = export::mixdown(s.project(), &out, &mp3_options(kbps)).unwrap();
-        let d = mp3::read(&out).unwrap();
-        let (lufs, tp) = export::loudness(&d.left, &d.right, d.rate);
-        let (lufs, tp) = (lufs.unwrap(), tp.unwrap());
-        // The report is the decoded MP3's, not the render's before encoding.
-        assert!((rep.lufs.unwrap() - lufs).abs() < 1e-9, "{kbps} kbps");
-        assert!((rep.true_peak_db.unwrap() - tp).abs() < 1e-9, "{kbps} kbps");
-        let peak = d
+        let decoded = mp3::read(&out).unwrap();
+        assert_eq!(decoded.rate, wav.sample_rate);
+        assert_eq!(decoded.left.len() as u64, wav.frames);
+        assert_eq!(decoded.right.len() as u64, wav.frames);
+
+        let (lufs, tp) = export::loudness(&decoded.left, &decoded.right, decoded.rate);
+        assert_eq!(rep.lufs.unwrap(), lufs.unwrap(), "{kbps} kbps");
+        assert_eq!(rep.true_peak_db.unwrap(), tp.unwrap(), "{kbps} kbps");
+        let peak = decoded
             .left
             .iter()
-            .chain(&d.right)
+            .chain(&decoded.right)
             .fold(0.0f32, |m, x| m.max(x.abs()));
         assert_eq!(rep.peak, peak, "{kbps} kbps");
-        // And close to the WAV's: the encoder changes the sound only a little.
-        assert!(
-            (lufs - wav.lufs.unwrap()).abs() < 0.5,
-            "{kbps} kbps: {lufs} vs {}",
-            wav.lufs.unwrap()
-        );
-        // The decoded MP3 is not the WAV sample for sample.
-        assert_ne!(rep.true_peak_db, wav.true_peak_db, "{kbps} kbps");
+
+        // MP3 input is clipped before encoding, and reports must describe the decoded
+        // signal. A fixed LUFS distance from the unclipped render is not a codec invariant.
+        assert!(lufs.unwrap() < wav.lufs.unwrap(), "{kbps} kbps");
+        assert!(tp.unwrap() < wav.true_peak_db.unwrap(), "{kbps} kbps");
     }
 }
 
@@ -417,6 +423,12 @@ fn main() {
         }
     }
     let lame = mp3::load(None).err();
+    if let Some(why) = &lame
+        && std::env::var_os(mp3::LAME_ENV).is_some_and(|path| !path.is_empty())
+    {
+        eprintln!("cannot load the requested LAME library: {why}");
+        std::process::exit(101);
+    }
     let picked: Vec<_> = TESTS
         .iter()
         .filter(|(name, needs_lame, _)| {

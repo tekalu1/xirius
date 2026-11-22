@@ -21,6 +21,9 @@ MP3 tests list encoder-dependent cases as ignored when LAME is absent. Explicitl
 one of those cases with a nonempty name substring filter, `--exact`, or `--ignored` without
 the encoder fails; it cannot be reported as a successful test. Listing remains successful.
 Build LAME with `scripts/build-lame.ps1` or `scripts/build-lame.sh` to exercise those cases.
+Windows and macOS CI each build LAME once with those scripts and share the library with
+all four test shards through `XIRIUS_LAME`. The check job requires the encoder-dependent
+session and export card cases to pass in the combined JUnit results.
 
 For a focused UI test, first run `python scripts/ci_tests.py --prepare`. Reload tests require
 the host beside the test build, with the same package version and wire protocol; tests never
