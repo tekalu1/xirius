@@ -123,7 +123,7 @@ crate fontdb 0.23.0 MIT
 crate foreign-types 0.5.0 MIT OR Apache-2.0
 crate foreign-types-macros 0.2.4 MIT OR Apache-2.0
 crate foreign-types-shared 0.3.1 MIT OR Apache-2.0
-crate form_urlencoded 1.2.2 MIT OR Apache-2.0
+crate form_urlencoded 1.2.3 MIT OR Apache-2.0
 crate futures 0.3.34 MIT OR Apache-2.0
 crate futures-channel 0.3.34 MIT OR Apache-2.0
 crate futures-concurrency 7.7.1 MIT OR Apache-2.0
@@ -420,7 +420,7 @@ crate unicode-script 0.5.8 MIT OR Apache-2.0
 crate unicode-segmentation 1.13.3 MIT OR Apache-2.0
 crate unicode-vo 0.1.0 MIT OR Apache-2.0
 crate unicode-xid 0.2.6 MIT OR Apache-2.0
-crate url 2.5.8 MIT OR Apache-2.0
+crate url 2.5.9 MIT OR Apache-2.0
 crate usvg 0.46.0 Apache-2.0 OR MIT
 crate utf8_iter 1.0.4 Apache-2.0 OR MIT
 crate uuid 1.28.0 Apache-2.0 OR MIT
@@ -2022,7 +2022,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ==== MIT
-used form_urlencoded 1.2.2
+used form_urlencoded 1.2.3
 
 Copyright (c) 2013-2016 The rust-url developers
 
@@ -2054,7 +2054,7 @@ DEALINGS IN THE SOFTWARE.
 used data-url 0.3.2
 used idna 1.1.0
 used percent-encoding 2.3.2
-used url 2.5.8
+used url 2.5.9
 
 Copyright (c) 2013-2025 The rust-url developers
 
