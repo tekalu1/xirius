@@ -15,7 +15,7 @@ use crate::paint::Colors;
 use crate::studio::Rect;
 
 /// The bar's height and the side of a square icon button on it.
-pub const BAR_H: f32 = 36.0;
+pub const BAR_H: f32 = xirius_vst3::EDITOR_TITLE_HEIGHT;
 pub const BTN: f32 = 28.0;
 
 const PAD: f32 = 4.0;

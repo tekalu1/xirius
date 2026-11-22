@@ -126,7 +126,7 @@ pub(crate) struct Spec {
 
 pub(crate) struct NativePlacement {
     work: [i32; 4],
-    occupied: Vec<[i32; 4]>,
+    occupied: Vec<xirius_vst3::EditorFrame>,
     prefer_origin: bool,
 }
 
@@ -555,7 +555,9 @@ pub(crate) fn device_bounds(
                     Key::Channel => studio.channel.is_some(),
                     Key::Macros => studio.instruments.detached_macros,
                 };
-                visible.then(|| edges(bounds))
+                visible.then(|| {
+                    xirius_vst3::EditorFrame::new(edges(bounds), crate::title_bar::BAR_H as i32)
+                })
             })
             .collect();
         let (x, y) = xirius_vst3::place_editor(
@@ -639,7 +641,10 @@ mod window_tests {
         let top = 40;
         let native = NativePlacement {
             work: [left, top, left + 2 * width, top + height],
-            occupied: vec![[left + width, top, left + 2 * width, top + height]],
+            occupied: vec![xirius_vst3::EditorFrame::new(
+                [left + width, top, left + 2 * width, top + height],
+                63,
+            )],
             prefer_origin: true,
         };
         let to_logical = |value| px(value as f32 / scale);
@@ -652,7 +657,7 @@ mod window_tests {
         assert!(place(title, desired, scale, true, None).is_some());
         // SAFETY: the hidden fixture is alive, and the output is writable.
         assert_ne!(unsafe { GetWindowRect(frame.0, &mut placed) }, 0);
-        assert!(placed.right > native.occupied[0][0]);
+        assert!(placed.right > native.occupied[0].bounds[0]);
 
         assert!(place(title, desired, scale, true, Some(&native)).is_some());
         // SAFETY: the same hidden fixture is still alive.

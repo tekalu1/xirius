@@ -173,6 +173,7 @@ impl From<WirePlacement> for service::Placement {
                     work,
                     restore,
                     replacing: false,
+                    retiring: None,
                 },
             ),
             owner: p.owner,

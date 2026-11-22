@@ -2446,6 +2446,7 @@ mod tests {
         };
         let area = xirius_vst3::EditorArea {
             replacing: false,
+            retiring: None,
             main_window: 123,
             main: [2000, 0, 3000, 800],
             work: [1920, 0, 3840, 1040],

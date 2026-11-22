@@ -5,7 +5,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows_sys::Win32::{Foundation::*, Graphics::Gdi::*, UI::WindowsAndMessaging::*};
 use xirius_design::{Font, FontSize, Pair, Surface, Theme, ink, surface};
 
-pub(crate) const HEIGHT: f32 = 36.0;
+pub(crate) const HEIGHT: f32 = crate::EDITOR_TITLE_HEIGHT;
 /// The approved compact bar retains all three preset controls at this width.
 pub(crate) const MIN_WIDTH: f32 = 360.0;
 const BUTTON: f32 = 28.0;

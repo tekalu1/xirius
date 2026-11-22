@@ -210,6 +210,12 @@ fn prepare_device_kinds(s: &mut Studio, dir: PathBuf, placement: bool) {
         "plugin.add",
         json!({"track":track,"name":entry.name,"uid":entry.uid,"format":"vst3"}),
     ));
+    if placement && std::env::var_os("XIRIUS_TEST_DEVICE_OVERLAP").is_some() {
+        assert!(s.run_command(
+            "plugin.add",
+            json!({"track":track,"name":entry.name,"uid":entry.uid,"format":"vst3"}),
+        ));
+    }
     let effect = if placement { "Reverb" } else { "EQ" };
     assert!(s.run_command("plugin.add", json!({"track":track,"name":effect})));
     let project = s.project();
@@ -227,6 +233,10 @@ fn prepare_device_kinds(s: &mut Studio, dir: PathBuf, placement: bool) {
     crate::shot::run_for(s, 20.0, |s| !s.input_blocked() && s.has_loaded(fx));
     let main = crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap();
     DEVICE_FIXTURE.with_borrow_mut(|fixture| *fixture = Some(entry.uid.clone()));
+    // Leave the existing insert as an effect and offer the fixture as an instrument.
+    let mut catalog = xirius_plugins::Catalog::load(s.song().plugin_cache());
+    catalog.entries[0].kind = xirius_core::model::PluginKind::Instrument;
+    s.use_plugins(catalog);
     if placement {
         s.open_channel(track);
         input_ready(
@@ -238,11 +248,6 @@ fn prepare_device_kinds(s: &mut Studio, dir: PathBuf, placement: bool) {
         );
         return;
     }
-    // The fixture can host either role. Leave the existing insert as an effect and
-    // offer the same binary as an instrument in the channel picker.
-    let mut catalog = xirius_plugins::Catalog::load(s.song().plugin_cache());
-    catalog.entries[0].kind = xirius_core::model::PluginKind::Instrument;
-    s.use_plugins(catalog);
     s.drawer_open = true;
     s.tab = crate::studio::DrawerTab::Mixer;
     s.drawer_size.mixer = Some(680.0);

@@ -455,6 +455,9 @@ impl ToHost {
                     // The position byte was a boolean. Older peers also read 2 as present.
                     o.u8(if area.replacing { 2 } else { 1 });
                     o.u32(x as u32).u32(y as u32);
+                    if let Some(retiring) = area.retiring {
+                        o.u64(retiring as u64);
+                    }
                 } else {
                     o.u8(0);
                 }
@@ -584,6 +587,11 @@ impl ToHost {
                 } else {
                     Some((i.u32()? as i32, i.u32()? as i32))
                 };
+                let retiring = if position == 2 && !i.0.is_empty() {
+                    Some(i.u64()? as isize)
+                } else {
+                    None
+                };
                 ToHost::SetEditorArea {
                     slot,
                     area: xirius_vst3::EditorArea {
@@ -592,6 +600,7 @@ impl ToHost {
                         work: [wl, wt, wr, wb],
                         restore,
                         replacing: position == 2,
+                        retiring,
                     },
                 }
             }
@@ -998,6 +1007,7 @@ mod tests {
                 area: xirius_vst3::EditorArea {
                     main_window: 0x123456,
                     replacing: true,
+                    retiring: Some(0x234567),
                     main: [-1920, -500, -200, 800],
                     work: [-1920, -600, 0, 1040],
                     restore: Some((-1200, -400)),
