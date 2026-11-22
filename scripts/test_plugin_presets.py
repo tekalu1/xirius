@@ -227,9 +227,12 @@ def main():
             hwnd = u.GetWindow(hwnd, 2)
 
     def fixture_label_control(frame):
-        viewport = u.FindWindowExW(frame, 0, "STATIC", None)
-        view = u.FindWindowExW(viewport, 0, "XiriusTestVst3View", None) if viewport else None
+        view = fixture_view(frame)
         return u.FindWindowExW(view, 0, "STATIC", None) if view else None
+
+    def fixture_view(frame):
+        viewport = u.FindWindowExW(frame, 0, "STATIC", None)
+        return u.FindWindowExW(viewport, 0, "XiriusTestVst3View", None) if viewport else None
 
     def fixture_label(frame):
         label = fixture_label_control(frame)
@@ -362,6 +365,11 @@ def main():
                 main = info["main"]
                 frames = set()
 
+                monitor = MonitorInfo()
+                monitor.size = c.sizeof(monitor)
+                assert u.GetMonitorInfoW(u.MonitorFromWindow(main, 2), c.byref(monitor))
+                work = monitor.work
+
                 def expose_row(name):
                     point = info[name]
                     for _ in frames:
@@ -370,10 +378,6 @@ def main():
                             break
                         assert covering in frames, f"another window covers mixer row {name}"
                         bounds = rect(covering)
-                        monitor = MonitorInfo()
-                        monitor.size = c.sizeof(monitor)
-                        assert u.GetMonitorInfoW(u.MonitorFromWindow(main, 2), c.byref(monitor))
-                        work = monitor.work
                         width, height = bounds.right - bounds.left, bounds.bottom - bounds.top
                         corners = ((work.left, work.top), (work.right - width, work.top),
                                    (work.left, work.bottom - height),
@@ -401,6 +405,10 @@ def main():
                 def shown(frame):
                     return u.IsWindow(frame) and u.IsWindowVisible(frame)
 
+                def disjoint(a, b):
+                    return (a.right <= b.left or b.right <= a.left
+                            or a.bottom <= b.top or b.bottom <= a.top)
+
                 open_row("first")
                 first = wait(lambda: builtin("first"), "first instrument")
                 open_row("fx")
@@ -410,8 +418,7 @@ def main():
                 frames.add(fx)
                 wait(lambda: fixture_label(fx), "external FX content")
                 assert shown(first), "FX closed the instrument"
-                a, b = rect(first), rect(fx)
-                assert a.right <= b.left or b.right <= a.left or a.bottom <= b.top or b.bottom <= a.top
+                assert disjoint(rect(first), rect(fx))
                 assert u.MonitorFromWindow(first, 2) == u.MonitorFromWindow(fx, 2)
                 passed("device-kinds-coexist")
 
@@ -433,14 +440,115 @@ def main():
                 passed("device-kinds-replace")
 
                 button(fx, 4)
-                open_row("eq")
+                move_frame(fx, work.left, work.top)
+                move_frame(second, work.left, work.top)
+                eq_row = expose_row("eq")
+                occupied = [rect(fx), rect(second)]
+                click_window(main, *eq_row)
                 eq = wait(lambda: builtin("eq"), "FX alongside pinned FX")
                 assert shown(fx) and shown(second)
+                edge = rect(eq)
+                width, height = edge.right - edge.left, edge.bottom - edge.top
+                assert work.left <= edge.left < edge.right <= work.right
+                assert work.top <= edge.top < edge.bottom <= work.bottom
+                # A full-width or full-height strip is sufficient room, even if
+                # the rectangles would touch after counting the native borders.
+                strips = (min(r.left for r in occupied) - work.left,
+                          work.right - max(r.right for r in occupied),
+                          min(r.top for r in occupied) - work.top,
+                          work.bottom - max(r.bottom for r in occupied))
+                if max(strips[:2]) >= width or max(strips[2:]) >= height:
+                    assert all(disjoint(edge, r) for r in occupied), "new FX overlaps despite a free strip"
+                    passed("device-kinds-full-frame-clearance")
                 passed("device-kinds-pin")
                 button(fx, 4)
                 wait(lambda: not shown(eq), "unpin did not retire the previous normal FX")
                 assert shown(fx) and shown(second)
                 passed("device-kinds-unpin")
+
+                button(fx, 6)
+                channel = wait(lambda: u.FindWindowExW(0, 0, None, info["channel_title"]),
+                               "channel editor")
+                move_frame(channel, work.left, work.top)
+                move_frame(fx, work.right - (rect(fx).right - rect(fx).left),
+                           work.bottom - (rect(fx).bottom - rect(fx).top))
+
+                def channel_point(name, points=None):
+                    if points is None:
+                        points = state().get("channel")
+                    at = points and points.get(name)
+                    if at:
+                        scale = u.GetDpiForWindow(channel) / 96
+                        point = w.POINT(*(round(p * scale) for p in at))
+                        assert u.ClientToScreen(channel, c.byref(point))
+                        return point.x, point.y
+
+                click_window(channel, *wait(lambda: channel_point("instrument"), "+ Instrument"))
+                pick = wait(lambda: channel_point("picker"), "external instrument in channel picker")
+                assert hit_root(*pick) == channel, "channel picker is covered"
+                send([mouse(*pick, flags) for flags in (0xC001, 0x0002, 0x0004)], pause=0)
+
+                def check_fx():
+                    assert shown(fx), "adding an instrument retired the existing FX window"
+                    assert order([fx, main]) == [fx, main], "the existing FX went behind the main window"
+
+                def instrument_card():
+                    check_fx()
+                    points = state().get("channel")
+                    if points and points["loaded"]:
+                        return channel_point("card", points)
+
+                def open_card(at):
+                    assert hit_root(*at) == channel, "new instrument card is covered"
+                    send([mouse(*at, flags) for flags in
+                          (0xC001, 0x0002, 0x0004, 0x0002, 0x0004)])
+
+                open_card(wait(instrument_card, "new instrument card and audio instance", seconds=20))
+
+                def instrument_opened():
+                    check_fx()
+                    frame = new_frame({fx})
+                    return frame if frame and fixture_label(frame) else None
+
+                instrument = wait(instrument_opened, "external instrument from channel card", seconds=20)
+                wait(lambda: not shown(second), "the previous instrument was not replaced")
+                assert order([instrument, fx, main]) == [instrument, fx, main]
+                passed("device-kinds-layer-keeps-fx")
+
+                view = fixture_view(instrument)
+
+                def displayed_bands():
+                    bounds = rect(view)
+                    width, pixels = screenshot()
+                    x = bounds.right - 20
+                    if not 0 <= x < width:
+                        return ()
+                    sample = []
+                    for band in (1, 3, 5, 7):
+                        y = bounds.top + (bounds.bottom - bounds.top) * band // 8
+                        if hit_root(x, y) != instrument:
+                            return ()
+                        at = 4 * (y * width + x)
+                        sample.append(pixels[at:at+3])
+                    return tuple(sample)
+
+                before = wait(lambda: displayed_bands() if u.GetForegroundWindow() == instrument
+                              else None, "visible instrument content")
+                assert len(set(before)) == 4, "fixture did not draw its four color bands"
+
+                # Put the Channel Editor ahead of the instrument without relying on a
+                # click point inside a window that may be completely covered.
+                assert u.SetWindowPos(channel, 0, 0, 0, 0, 0, 0x13)
+                pick = wait(lambda: channel_point("card"), "new instrument card")
+                assert order([channel, instrument]) == [channel, instrument]
+                open_card(pick)
+                wait(lambda: u.GetForegroundWindow() == instrument, "card did not raise the instrument")
+                assert fixture_view(instrument) == view
+                assert displayed_bands() == before, "the raised instrument did not retain its pixels"
+                time.sleep(0.7)  # The close of the title highlight must leave the view painted too.
+                assert displayed_bands() == before, "instrument pixels changed when the highlight ended"
+                assert instrument_opened() == instrument
+                passed("device-kinds-instrument-reselect-painted")
 
             def run_checks():
                 wait(lambda: (out/"input-ready.json").exists() or app.poll() is not None, "fixture setup", 90)

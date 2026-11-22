@@ -109,7 +109,10 @@ foreground window and window order without any further input.
 With `--case device-kinds` and its own results folder, open instruments and FX from
 the mixer. The case checks coexistence during and after loading, non-overlapping
 placement on one monitor, repeat-click foreground and stacking, same-kind replacement
-at the previous position, and the effect of pinning and unpinning.
+at the previous position, and the effect of pinning and unpinning. It also checks
+clearance including the window frames when a full strip is free, that adding an
+instrument from the Channel Editor keeps the FX window open above the studio, and
+that raising the instrument from its card preserves the fixture's painted view.
 Check installed-plugin compatibility in a separate manual pass.
 macOS has no external plugin editor (NSView host) yet and is outside this desktop test's scope.
 

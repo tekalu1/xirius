@@ -2,6 +2,9 @@
 //! output are retained; only a ready plan crosses the command queue.
 use super::*;
 use crate::background::Job;
+use crate::graph::NodeShape;
+use crate::rack_row::{self, Slot};
+use xirius_core::model::PluginKind;
 
 pub(super) struct Update {
     source: Project,
@@ -25,6 +28,45 @@ struct Candidate {
     built: crate::build::Built,
     plan: Option<Box<Plan>>,
     kept_plugins: std::collections::BTreeSet<PluginId>,
+}
+
+/// The flat post-source chain in the order the builder installs it. A split or a keyed
+/// effect has graph wiring of its own and is rebuilt with the track.
+fn plain_inserts(node: &NodeShape) -> Option<Vec<&Plugin>> {
+    let layered = node
+        .rack
+        .as_ref()
+        .map(rack_row::layered)
+        .unwrap_or_default();
+    let row: Vec<_> = node
+        .inserts
+        .iter()
+        .filter(|p| p.kind == PluginKind::Effect && !layered.contains(&p.id.0))
+        .collect();
+    if row
+        .iter()
+        .any(|p| p.sidechain.is_some() || p.note_source.is_some())
+    {
+        return None;
+    }
+    let Some(rack) = &node.rack else {
+        return Some(row);
+    };
+    if rack
+        .fx
+        .iter()
+        .any(|n| matches!(n, xirius_core::rack::RackNode::Split(_)))
+    {
+        return None;
+    }
+    let built: Vec<_> = row.iter().map(|p| p.id.0).collect();
+    rack_row::layout(rack, &built)
+        .into_iter()
+        .map(|slot| match slot {
+            Slot::Plugin(id) => row.iter().find(|p| p.id.0 == id).copied(),
+            Slot::Split { .. } => None,
+        })
+        .collect()
 }
 
 impl SessionHost {
@@ -68,6 +110,11 @@ impl SessionHost {
                 let graph = Graph::of(&snapshot);
                 let scope = Scope::new(&snapshot, Select::All);
                 let structure = Structure::of(&snapshot, &graph, &scope);
+                let reuse = !latency
+                    && !snapshot
+                        .tracks
+                        .values()
+                        .any(|track| track.inserts.iter().any(|p| p.note_source.is_some()));
                 // Existing unkeyed tracks keep their processors while bus indices
                 // remain compatible. Keys use node numbers and require rebuilding.
                 let keep: BTreeMap<_, _> = structure
@@ -75,7 +122,7 @@ impl SessionHost {
                     .iter()
                     .filter_map(|node| {
                         let old = old_structure.tracks.iter().position(|old| old == node)?;
-                        (!latency
+                        (reuse
                             && old_graph.buses == graph.buses
                             && old_timelines.get(&node.id).is_some_and(|old| {
                                 old.matches(&snapshot, &snapshot.tracks[&node.id])
@@ -84,11 +131,51 @@ impl SessionHost {
                         .then_some((node.id, old))
                     })
                     .collect();
+                // A new layer needs a new source. The unchanged FX can still keep their
+                // processors, so the host does not have to transfer their open editors.
+                let keep_inserts: BTreeMap<_, _> = structure
+                    .tracks
+                    .iter()
+                    .filter_map(|node| {
+                        if !reuse
+                            || keep.contains_key(&node.id)
+                            || builder.unavailable().contains_key(&node.id)
+                        {
+                            return None;
+                        }
+                        let (index, old) = old_structure
+                            .tracks
+                            .iter()
+                            .enumerate()
+                            .find(|(_, old)| old.id == node.id)?;
+                        if old.rack.as_ref().and_then(|r| r.source.as_ref())
+                            == node.rack.as_ref().and_then(|r| r.source.as_ref())
+                        {
+                            return None;
+                        }
+                        let row = plain_inserts(node)?;
+                        let previous = plain_inserts(old)?;
+                        (!row.is_empty()
+                            && row == previous
+                            && !shape.automation.tracks.get(index)?.inserts.is_empty())
+                        .then(|| {
+                            (
+                                node.id,
+                                (index, row.iter().map(|p| p.id).collect::<Vec<_>>()),
+                            )
+                        })
+                    })
+                    .collect();
                 let kept_plugins: std::collections::BTreeSet<_> = snapshot
                     .tracks
                     .iter()
                     .filter(|(id, _)| keep.contains_key(id))
                     .flat_map(|(_, t)| t.inserts.iter().map(|x| x.id))
+                    .chain(
+                        keep_inserts
+                            .values()
+                            .flat_map(|(_, ids)| ids.iter().copied()),
+                    )
                     .collect();
                 if let Err(error) = builder
                     .plugins_mut()
@@ -114,7 +201,7 @@ impl SessionHost {
                     }
                     std::thread::sleep(Duration::from_millis(2));
                 }
-                builder.keep_live_tracks(keep);
+                builder.keep_live_tracks(keep, keep_inserts);
                 let mut built = builder.build(&snapshot, Select::All);
                 built.warnings.extend(builder.plugins().opening_warnings());
                 if !built.warnings.is_empty() {

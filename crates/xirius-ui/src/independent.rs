@@ -117,10 +117,17 @@ pub(crate) struct Spec {
     /// The display `initial` is on, where the caller knows it (from [`screens`]); else the
     /// display whose bounds hold its origin.
     pub display: Option<DisplayId>,
+    pub native: Option<NativePlacement>,
     pub min_size: Option<Size<Pixels>>,
     pub resizable: bool,
     pub positions: Option<Positions>,
     pub restore: bool,
+}
+
+pub(crate) struct NativePlacement {
+    work: [i32; 4],
+    /// Replacements use their previous origin, with only the work-area clamp.
+    occupied: Vec<[i32; 4]>,
 }
 
 fn offscreen() -> bool {
@@ -219,12 +226,15 @@ pub(crate) fn open<V: Render + 'static>(
                 // GPUI applies its initial placement, which only an activation does, and
                 // these windows are shown without one (a parked window is never activated
                 // either). Place and size it now, so it opens as asked.
-                if !place(
+                if let Some(placed) = place(
                     &title,
                     initial,
                     scale.unwrap_or_else(|| window.scale_factor()),
                     matches!(spec.kind, Kind::Device(_)),
+                    spec.native.as_ref(),
                 ) {
+                    initial = placed;
+                } else {
                     window.resize(initial.size);
                 }
                 if let Some((key, positions)) = spec_key.zip(positions.as_ref()) {
@@ -247,9 +257,21 @@ pub(crate) fn open<V: Render + 'static>(
 
 /// Applies the size and origin before showing the window. Device windows use their
 /// frame origin so it agrees with the origin used by the external editor host.
-fn place(title: &str, bounds: Bounds<Pixels>, scale: f32, frame_origin: bool) -> bool {
+fn place(
+    title: &str,
+    bounds: Bounds<Pixels>,
+    scale: f32,
+    frame_origin: bool,
+    native: Option<&NativePlacement>,
+) -> Option<Bounds<Pixels>> {
     #[cfg(not(windows))]
-    let _ = (title, bounds, scale, frame_origin);
+    let _ = (
+        title,
+        bounds,
+        scale,
+        frame_origin,
+        native.map(|p| (&p.work, &p.occupied)),
+    );
     #[cfg(windows)]
     if let Some(hwnd) = crate::park::own_handle(title) {
         use windows_sys::Win32::Foundation::{POINT, RECT};
@@ -271,30 +293,58 @@ fn place(title: &str, bounds: Bounds<Pixels>, scale: f32, frame_origin: bool) ->
                 || GetWindowRect(hwnd as _, &mut frame) == 0
                 || GetClientRect(hwnd as _, &mut client) == 0
             {
-                return false;
+                return None;
             }
             let physical = |px| (f32::from(px) * scale).round() as i32;
             let want_x = physical(bounds.origin.x);
             let want_y = physical(bounds.origin.y);
             let border_width = frame.right - frame.left - client.right;
             let border_height = frame.bottom - frame.top - client.bottom;
-            let (x, y) = if frame_origin {
+            let (mut x, mut y) = if frame_origin {
                 (want_x, want_y)
             } else {
                 (frame.left + want_x - at.x, frame.top + want_y - at.y)
             };
-            return SetWindowPos(
+            let mut width = physical(bounds.size.width) + border_width;
+            let mut height = physical(bounds.size.height) + border_height;
+            if let Some(native) = native {
+                let [l, t, r, b] = native.work;
+                width = width.min(r - l);
+                height = height.min(b - t);
+                (x, y) = xirius_vst3::place_beside(
+                    (x, y),
+                    (width, height),
+                    native.work,
+                    &native.occupied,
+                    (24.0 * scale).round() as i32,
+                );
+            }
+            let placed = SetWindowPos(
                 hwnd as _,
                 std::ptr::null_mut(),
                 x,
                 y,
-                physical(bounds.size.width) + border_width,
-                physical(bounds.size.height) + border_height,
+                width,
+                height,
                 SWP_NOZORDER | SWP_NOACTIVATE,
             ) != 0;
+            return placed.then(|| {
+                let logical = |value| px(value as f32 / scale);
+                Bounds::new(
+                    if frame_origin {
+                        point(logical(x), logical(y))
+                    } else {
+                        bounds.origin
+                    },
+                    gpui::size(
+                        logical(width - border_width),
+                        logical(height - border_height),
+                    ),
+                )
+            });
         }
     }
-    false
+    None
 }
 
 /// Makes the main window the owner: the window is always in front of it, and goes with it
@@ -410,13 +460,12 @@ pub(crate) fn device_bounds(
     id: PluginId,
     mut initial: Bounds<Pixels>,
     source: u64,
-) -> (Bounds<Pixels>, Option<DisplayId>) {
+) -> (Bounds<Pixels>, Option<DisplayId>, Option<NativePlacement>) {
     if offscreen() {
-        return (initial, None);
+        return (initial, None, None);
     }
     let positions = studio.instruments.positions.borrow();
     let previous = studio.normal_view_before(id);
-    let mut occupied = Vec::new();
     #[cfg(windows)]
     let screens = screens(cx);
     #[cfg(windows)]
@@ -466,50 +515,65 @@ pub(crate) fn device_bounds(
         })
         .or_else(|| main.display(cx));
     let Some(display) = display else {
-        return (initial, None);
+        return (initial, None, None);
     };
     let work = display.visible_bounds();
     initial = fit_bounds(initial, work);
-    if previous.is_some() {
-        return (initial, Some(display.id()));
-    }
     #[cfg(windows)]
-    if let Some(screen) = screens.iter().find(|s| s.id == display.id()) {
-        occupied.extend(
-            xirius_vst3::visible_editors(
-                crate::device_window::hwnd_of(main),
-                &studio.editor_stack(),
-            )
-            .into_iter()
-            .map(|edges| edges.map(|v| (v as f32 / screen.scale).round() as i32)),
-        );
+    {
+        let native = screens
+            .iter()
+            .find(|s| s.id == display.id())
+            .map(|&screen| {
+                let occupied = if previous.is_some() {
+                    Vec::new()
+                } else {
+                    xirius_vst3::visible_editors(
+                        crate::device_window::hwnd_of(main),
+                        &studio.editor_stack(),
+                    )
+                };
+                NativePlacement {
+                    work: screen.work,
+                    occupied,
+                }
+            });
+        (initial, Some(display.id()), native)
     }
-    let to_int = |value: Pixels| f32::from(value).round() as i32;
-    let edges = |bounds: Bounds<Pixels>| {
-        [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()].map(to_int)
-    };
     #[cfg(not(windows))]
-    occupied.extend(positions.iter().filter_map(|(key, &bounds)| {
-        let visible = match *key {
-            Key::Device(other) => {
-                other != id
-                    && studio.instruments.detached.contains(&other)
-                    && !studio.instruments.pending.contains(&other)
-            }
-            Key::Channel => studio.channel.is_some(),
-            Key::Macros => studio.instruments.detached_macros,
+    {
+        if previous.is_some() {
+            return (initial, Some(display.id()), None);
+        }
+        let to_int = |value: Pixels| f32::from(value).round() as i32;
+        let edges = |bounds: Bounds<Pixels>| {
+            [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()].map(to_int)
         };
-        visible.then(|| edges(bounds))
-    }));
-    let (x, y) = xirius_vst3::place_beside(
-        (to_int(initial.origin.x), to_int(initial.origin.y)),
-        (to_int(initial.size.width), to_int(initial.size.height)),
-        edges(work),
-        &occupied,
-        24,
-    );
-    initial.origin = point(px(x as f32), px(y as f32));
-    (initial, Some(display.id()))
+        let occupied: Vec<_> = positions
+            .iter()
+            .filter_map(|(key, &bounds)| {
+                let visible = match *key {
+                    Key::Device(other) => {
+                        other != id
+                            && studio.instruments.detached.contains(&other)
+                            && !studio.instruments.pending.contains(&other)
+                    }
+                    Key::Channel => studio.channel.is_some(),
+                    Key::Macros => studio.instruments.detached_macros,
+                };
+                visible.then(|| edges(bounds))
+            })
+            .collect();
+        let (x, y) = xirius_vst3::place_beside(
+            (to_int(initial.origin.x), to_int(initial.origin.y)),
+            (to_int(initial.size.width), to_int(initial.size.height)),
+            edges(work),
+            &occupied,
+            24,
+        );
+        initial.origin = point(px(x as f32), px(y as f32));
+        (initial, Some(display.id()), None)
+    }
 }
 
 pub(crate) fn fit_bounds(mut bounds: Bounds<Pixels>, work: Bounds<Pixels>) -> Bounds<Pixels> {
@@ -524,6 +588,84 @@ pub(crate) fn fit_bounds(mut bounds: Bounds<Pixels>, work: Bounds<Pixels>) -> Bo
         work.origin.y + work.size.height - bounds.size.height,
     );
     bounds
+}
+
+#[cfg(all(test, windows))]
+mod window_tests {
+    use super::*;
+    use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, GetClientRect, GetSystemMetrics, GetWindowRect,
+        SM_XVIRTUALSCREEN, WS_OVERLAPPEDWINDOW,
+    };
+
+    struct HiddenFrame(HWND);
+    impl Drop for HiddenFrame {
+        fn drop(&mut self) {
+            // SAFETY: this thread created and owns the window.
+            unsafe { DestroyWindow(self.0) };
+        }
+    }
+
+    #[test]
+    fn the_full_native_frame_fits_in_the_gap_at_fractional_scale() {
+        let title = "Xirius physical placement regression";
+        let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<_>>();
+        // SAFETY: built-in window class, no parent, and created hidden off the desktop.
+        let (frame, left) = unsafe {
+            let left = GetSystemMetrics(SM_XVIRTUALSCREEN) - 2500;
+            let frame = CreateWindowExW(
+                0,
+                wide("STATIC").as_ptr(),
+                wide(title).as_ptr(),
+                WS_OVERLAPPEDWINDOW,
+                left,
+                40,
+                720,
+                510,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            );
+            assert!(!frame.is_null());
+            (HiddenFrame(frame), left)
+        };
+        let mut before = RECT::default();
+        let mut client = RECT::default();
+        // SAFETY: the hidden fixture is alive, and the two outputs are writable.
+        unsafe {
+            assert_ne!(GetWindowRect(frame.0, &mut before), 0);
+            assert_ne!(GetClientRect(frame.0, &mut client), 0);
+        }
+        let scale = 1.75;
+        let width = 700 + before.right - before.left - client.right;
+        let height = 455 + before.bottom - before.top - client.bottom;
+        let top = 40;
+        let native = NativePlacement {
+            work: [left, top, left + 2 * width, top + height],
+            occupied: vec![[left + width, top, left + 2 * width, top + height]],
+        };
+        let to_logical = |value| px(value as f32 / scale);
+        let desired = Bounds::new(
+            point(to_logical(left + width - 700), to_logical(top)),
+            gpui::size(px(400.0), px(260.0)),
+        );
+        let mut placed = RECT::default();
+        // With only the client width in the placement check, this origin looked clear.
+        assert!(place(title, desired, scale, true, None).is_some());
+        // SAFETY: the hidden fixture is alive, and the output is writable.
+        assert_ne!(unsafe { GetWindowRect(frame.0, &mut placed) }, 0);
+        assert!(placed.right > native.occupied[0][0]);
+
+        assert!(place(title, desired, scale, true, Some(&native)).is_some());
+        // SAFETY: the same hidden fixture is still alive.
+        assert_ne!(unsafe { GetWindowRect(frame.0, &mut placed) }, 0);
+        assert_eq!(
+            [placed.left, placed.top, placed.right, placed.bottom],
+            [left, top, left + width, top + height]
+        );
+    }
 }
 
 #[cfg(test)]

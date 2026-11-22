@@ -46,7 +46,7 @@ WINDOW_TESTS = {
     "xirius-vst3": {"editor_caption", "editor_resize", "vendor_editor_windows"},
 }
 # Unit tests inside a library that open windows.
-WINDOW_UNIT_TESTS = ["mixer::editor_tests"]
+WINDOW_UNIT_TESTS = ["mixer::editor_tests", "independent::window_tests"]
 # The integration tests that need a real ARA plugin, by package and target: the variable that
 # names the plugin's file.
 PLUGIN_TESTS = {

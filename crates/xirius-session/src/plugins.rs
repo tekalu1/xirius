@@ -791,7 +791,7 @@ impl PluginLoader {
         self.fresh_stock.clear();
     }
 
-    /// The processor is carried by TrackSlot::Keep, so retain its controller and
+    /// The processor is carried by the next plan, so retain its controller and
     /// meters without opening a replacement or taking another audio lease.
     pub(crate) fn keep_built(&mut self, ids: impl IntoIterator<Item = PluginId>) {
         for id in ids {

@@ -184,7 +184,7 @@ impl Windows {
                 |(x, y)| point(px(x), px(y)),
             );
             let initial = Bounds::new(origin, size(px(dimensions.0), px(dimensions.1)));
-            let (initial, display) = {
+            let (initial, display, native) = {
                 let s = studio.borrow();
                 let source = s
                     .mixer
@@ -208,6 +208,7 @@ impl Windows {
                 title: pending.title.clone(),
                 initial,
                 display,
+                native,
                 min_size: None,
                 resizable: false,
                 positions: None,

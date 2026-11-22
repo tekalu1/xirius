@@ -68,6 +68,41 @@ fn report(editor: &Editor) -> String {
     }
 }
 
+#[test]
+fn updating_the_editor_stack_leaves_the_plugin_viewport_clean() {
+    use windows_sys::Win32::Graphics::Gdi::{GetUpdateRect, ValidateRect};
+
+    let mut editor = fixture()
+        .open_editor_at("Stack test", Placement::offscreen())
+        .expect("open fixture");
+    editor.pump(Duration::from_millis(30));
+    let viewport = editor.viewport_hwnd() as HWND;
+    let child = unsafe { GetWindow(viewport, GW_CHILD) };
+    assert!(!child.is_null());
+    // Clear the paint regions from opening before sending the host's stack update.
+    unsafe {
+        ValidateRect(viewport, std::ptr::null());
+        ValidateRect(child, std::ptr::null());
+    }
+    let before = report(&editor);
+    editor.set_bar(xirius_vst3::EditorBar {
+        stack: vec![editor.hwnd() as u64],
+        raise_ticket: 1,
+        ..Default::default()
+    });
+    editor.raise();
+    assert_eq!(
+        editor.take_actions().last(),
+        Some(&xirius_vst3::EditorAction::EditorRaised(1))
+    );
+    assert_eq!(report(&editor), before);
+    // SAFETY: these windows are still owned by this test's GUI thread.
+    unsafe {
+        assert_eq!(GetUpdateRect(viewport, std::ptr::null_mut(), 0), 0);
+        assert_eq!(GetUpdateRect(child, std::ptr::null_mut(), 0), 0);
+    }
+}
+
 /// A drag of the border from `edge` to the outer rect `to`, as the system sends it: the
 /// window procedure adjusts the rect, then the window takes it.
 fn drag(editor: &mut Editor, edge: u32, mut to: RECT) -> RECT {

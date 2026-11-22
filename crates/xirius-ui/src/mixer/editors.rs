@@ -631,9 +631,9 @@ impl Studio {
             match action {
                 EditorAction::EditorRaised(ticket) => self.mixer.editor_raises.ack(id, ticket),
                 EditorAction::EditorTouched { window, time } => {
-                    new_editor |= !self.mixer.editor_touches.contains_key(&id);
                     let entry = self.mixer.editor_touches.entry(id).or_default();
                     if time >= entry.1 {
+                        new_editor |= entry.0 != window;
                         *entry = (window, time);
                     }
                 }
