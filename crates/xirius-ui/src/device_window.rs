@@ -955,7 +955,24 @@ impl DeviceWindow {
         });
         let bounds = cx.observe_window_bounds(window, move |view, window, cx| {
             if let Some((positions, key)) = &place {
-                positions.borrow_mut().insert(*key, window.bounds());
+                let bounds = window.bounds();
+                #[cfg(windows)]
+                let bounds = if matches!(key, Key::Device(_))
+                    && let Some(area) = xirius_vst3::EditorArea::from_window(hwnd_of(window))
+                {
+                    // The device reopens at its outer frame. GPUI reports the client origin.
+                    let scale = window.scale_factor();
+                    Bounds::new(
+                        point(
+                            px(area.main[0] as f32 / scale),
+                            px(area.main[1] as f32 / scale),
+                        ),
+                        bounds.size,
+                    )
+                } else {
+                    bounds
+                };
+                positions.borrow_mut().insert(*key, bounds);
             }
             if let Some(id) = view.id {
                 let viewport = window.viewport_size();

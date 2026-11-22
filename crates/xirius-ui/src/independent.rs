@@ -126,7 +126,7 @@ pub(crate) struct Spec {
 
 pub(crate) struct NativePlacement {
     work: [i32; 4],
-    /// Replacements use their previous origin, with only the work-area clamp.
+    /// Reopened and replacement editors use their remembered origin, with only the work-area clamp.
     occupied: Vec<[i32; 4]>,
 }
 
@@ -525,7 +525,7 @@ pub(crate) fn device_bounds(
             .iter()
             .find(|s| s.id == display.id())
             .map(|&screen| {
-                let occupied = if previous.is_some() {
+                let occupied = if previous.is_some() || positions.contains_key(&Key::Device(id)) {
                     Vec::new()
                 } else {
                     xirius_vst3::visible_editors(

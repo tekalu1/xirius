@@ -980,16 +980,24 @@ fn run_place(link: &Link) -> Value {
     ];
     let mut rows = Vec::new();
     let mut moves = Vec::new();
+    let neighbors = [rect(hs[1]), rect(hs[2])];
     for k in 0..3 {
         let r = rect(hs[k]);
         let c = client(hs[k]);
         let (size_want, origin_want) = want[k];
         let size_ok = k == 0 || near([c[0], c[1]], size_want);
+        let avoids_other_editors = (k == 0).then(|| {
+            let [x, y, w, h] = r;
+            neighbors.iter().all(|&[l, t, width, height]| {
+                x + w <= l || y + h <= t || l + width <= x || t + height <= y
+            })
+        });
         rows.push(json!({
             "window": NAMES[k], "scale": scale, "main_rect": mr, "main_client_origin": mo,
             "requested_size_physical": size_want, "requested_origin_physical": origin_want,
             "rect": r, "client": c, "client_origin": client_origin(hs[k]),
             "size_ok": size_ok, "origin_ok": near(client_origin(hs[k]), origin_want),
+            "avoids_other_editors": avoids_other_editors,
         }));
     }
     for k in 0..3 {
