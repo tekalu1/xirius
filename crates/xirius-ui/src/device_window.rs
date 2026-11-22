@@ -283,7 +283,7 @@ impl Windows {
                         size(px(win.body.0), px(win.body.1 + crate::title_bar::BAR_H)),
                     )
                 });
-            let (initial, display) = {
+            let (initial, display, native) = {
                 let s = studio.borrow();
                 let source = s
                     .instruments
@@ -297,6 +297,7 @@ impl Windows {
                 title,
                 initial,
                 display,
+                native,
                 min_size: None,
                 resizable: true,
                 positions: Some(positions.clone()),
@@ -481,6 +482,7 @@ impl Windows {
             title: "Xirius · Macro Controls".into(),
             initial: Bounds::new(origin, size(px(w), px(h))),
             display: None,
+            native: None,
             min_size: None,
             resizable: false,
             positions: Some(positions.clone()),
@@ -571,6 +573,7 @@ impl Windows {
                 |(bounds, _)| bounds,
             ),
             display: beside.map(|(_, display)| display),
+            native: None,
             min_size: Some(size(px(least), px(CHANNEL_MIN_H))),
             resizable: true,
             positions: beside.is_none().then(|| positions.clone()),
@@ -779,6 +782,61 @@ struct DeviceWindow {
 
 fn surface_geometry(s: &Studio, width: f32, height: f32) -> Geometry {
     s.settled_geometry(width, height)
+}
+
+#[cfg(windows)]
+pub(crate) fn channel_input_points(
+    studio: &Rc<RefCell<Studio>>,
+    fixture: &str,
+    cx: &mut App,
+) -> Option<serde_json::Value> {
+    use crate::channel::{Part, Tool, part_at};
+    use crate::mixer::flow::Pick;
+    use crate::studio::Rect;
+
+    cx.windows().into_iter().find_map(|handle| {
+        handle
+            .downcast::<DeviceWindow>()?
+            .update(cx, |view, window, _| {
+                if !Rc::ptr_eq(&view.studio, studio)
+                    || view.id.is_some()
+                    || view.macros
+                    || view.preset_save
+                {
+                    return None;
+                }
+                view.with(window, |s, g| {
+                    let v = s.channel_view(g)?;
+                    let center = |r: Rect| [r.x + r.w / 2.0, r.y + r.h / 2.0];
+                    let instrument = v.tools.iter().find(|(tool, _)| *tool == Tool::Instrument);
+                    let picker = s.popup.as_ref().and_then(|popup| {
+                        popup.layout(g.size).cells.into_iter().find_map(|cell| {
+                            (cell.enabled && cell.text == fixture && cell.action.is_some())
+                                .then(|| center(cell.rect))
+                        })
+                    });
+                    let p = s.project();
+                    let track = p.tracks.get(&s.channel.as_ref()?.track)?;
+                    let plugin = track.inserts.iter().find(|plugin| {
+                        plugin.kind == xirius_core::model::PluginKind::Instrument
+                            && plugin.name == fixture
+                    });
+                    let card = plugin.and_then(|plugin| {
+                        let pick = Pick::Plugin(plugin.id);
+                        let [x, y] =
+                            center(v.flow.cards.iter().find(|card| card.pick == pick)?.rect);
+                        (part_at(&v, x, y) == Some(Part::Card(pick))).then_some([x, y])
+                    });
+                    Some(serde_json::json!({
+                        "instrument": instrument.map(|(_, r)| center(*r)),
+                        "picker": picker, "card": card,
+                        "loaded": plugin.is_some_and(|plugin| s.has_loaded(plugin.id)),
+                    }))
+                })
+            })
+            .ok()
+            .flatten()
+    })
 }
 
 /// The work area wins when a device's natural minimum is larger than the display.

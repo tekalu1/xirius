@@ -184,9 +184,19 @@ pub fn place_beside(
             }
         }
     }
-    let [l, t, _, _] = occupied[0];
+    let [l, t, r, _] = occupied[0];
     let offset = gap.saturating_mul(3);
     let shifted = clamp((l.saturating_add(offset), t.saturating_add(offset)));
+    let title_bottom = t.saturating_add(offset);
+    if shifted.1 < title_bottom {
+        // When the work area's lower edge prevents a full vertical step, keep
+        // the right end of the earlier title bar above the new window's edge.
+        let close_left = r.saturating_sub(offset);
+        let x = close_left.saturating_sub(width);
+        if x >= left {
+            return clamp((x.min(l.saturating_sub(offset)), shifted.1));
+        }
+    }
     if shifted == (l, t) {
         clamp((l.saturating_sub(offset), t.saturating_sub(offset)))
     } else {
@@ -285,6 +295,13 @@ mod tests {
             ),
             (320, 0)
         );
+    }
+
+    #[test]
+    fn a_cascade_at_the_bottom_keeps_the_older_close_button_exposed() {
+        let old = [200, 100, 700, 600];
+        let (x, y) = place_beside((200, 100), (500, 500), [0, 0, 750, 600], &[old], 12);
+        assert!(y >= old[1] + 36 || x + 500 <= old[2] - 36);
     }
 
     #[test]

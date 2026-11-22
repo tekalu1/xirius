@@ -431,7 +431,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             // SAFETY: the timer and paint belong to this frame.
             unsafe {
                 KillTimer(hwnd, FRAME_FLASH_TIMER);
-                InvalidateRect(hwnd, std::ptr::null(), 0);
+                InvalidateRect(
+                    hwnd,
+                    &crate::editor_chrome::focus_bounds(hwnd, st.chrome_scale.get()),
+                    0,
+                );
             }
             return 0;
         }
@@ -1181,13 +1185,25 @@ impl Editor {
         self.state.native_frame
     }
     pub fn refresh_bar(&self) {
-        let size = self.size();
-        self.state.layout(size.0, size.1);
-        // SAFETY: invalidate only our own frame, on its GUI thread.
+        let bar = self
+            ._shared
+            .editor_bar
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let scale = self.state.chrome_scale.get();
+        let mut bounds = RECT::default();
+        // SAFETY: this frame and its controls belong to the host GUI thread.
+        unsafe {
+            GetClientRect(self.hwnd, &mut bounds);
+        }
+        self.state.chrome.layout(bounds.right, scale, &bar);
+        bounds.bottom = crate::editor_chrome::height(scale);
+        // SAFETY: the rectangle includes the chrome controls and ends above the viewport.
         unsafe {
             windows_sys::Win32::Graphics::Gdi::RedrawWindow(
                 self.hwnd,
-                std::ptr::null(),
+                &bounds,
                 std::ptr::null_mut(),
                 windows_sys::Win32::Graphics::Gdi::RDW_INVALIDATE
                     | windows_sys::Win32::Graphics::Gdi::RDW_ALLCHILDREN,
@@ -1196,12 +1212,20 @@ impl Editor {
     }
 
     pub fn set_bar(&self, bar: crate::EditorBar) {
-        *self
+        let mut old = self
             ._shared
             .editor_bar
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = bar;
-        self.refresh_bar();
+            .unwrap_or_else(|e| e.into_inner());
+        // A raise updates the stacking protocol even when the chrome stays the same.
+        old.stack.clone_from(&bar.stack);
+        old.stack_base = bar.stack_base;
+        old.raise_ticket = bar.raise_ticket;
+        if *old != bar {
+            *old = bar;
+            drop(old);
+            self.refresh_bar();
+        }
     }
 
     pub fn take_actions(&self) -> Vec<crate::EditorAction> {
@@ -1463,7 +1487,10 @@ impl Editor {
                     self.state.flashing.set(true);
                     windows_sys::Win32::Graphics::Gdi::InvalidateRect(
                         self.hwnd,
-                        std::ptr::null(),
+                        &crate::editor_chrome::focus_bounds(
+                            self.hwnd,
+                            self.state.chrome_scale.get(),
+                        ),
                         0,
                     );
                 }

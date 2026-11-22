@@ -49,6 +49,8 @@ pub struct TrackSpec {
     pub name: String,
     pub source: Box<dyn Processor>,
     pub inserts: Vec<Box<dyn Processor>>,
+    /// Index of the previous track providing this unchanged, unkeyed insert chain.
+    pub keep_inserts_from: Option<usize>,
     /// Linear amplitude.
     pub gain: f32,
     /// -1.0 (left) ..= 1.0 (right).
@@ -131,6 +133,7 @@ impl TrackSpec {
             name: name.into(),
             source,
             inserts: Vec::new(),
+            keep_inserts_from: None,
             gain: 1.0,
             pan: 0.0,
             mute: false,
@@ -805,6 +808,7 @@ pub struct Plan {
     tracks: Vec<Option<Box<TrackNode>>>,
     /// For each track slot, the index in the previous plan to take the node from on swap.
     keep_from: Vec<Option<usize>>,
+    keep_inserts_from: Vec<Option<usize>>,
     buses: Vec<BusNode>,
     master: MasterNode,
     /// Scratch for pre-fader sends: holds the post-insert signal while the fader is applied.
@@ -1015,6 +1019,7 @@ impl Plan {
         let track_count = spec.tracks.len();
         let mut tracks = Vec::with_capacity(track_count);
         let mut keep_from = Vec::with_capacity(track_count);
+        let mut keep_inserts_from = Vec::with_capacity(track_count);
         let mut routes = Vec::with_capacity(track_count);
         let mut track_timing = Vec::with_capacity(track_count);
         let mut track_keys = Vec::with_capacity(track_count);
@@ -1040,6 +1045,7 @@ impl Plan {
                     );
                     tracks.push(None);
                     keep_from.push(Some(old));
+                    keep_inserts_from.push(None);
                     track_keys.push(Vec::new());
                     track_places.push(Vec::new());
                 }
@@ -1065,12 +1071,23 @@ impl Plan {
                         .set_offline(setup.mode == crate::processor::RenderMode::Offline);
                     prepare_all(&mut t.inserts, &setup);
                     track_places.push(key_places(&track_keys[i], &mut t.inserts, n));
+                    let inserts = if let Some(old) = t.keep_inserts_from {
+                        previous
+                            .as_ref()
+                            .filter(|p| p.setup == setup)
+                            .and_then(|p| p.automation.tracks.get(old))
+                            .filter(|_| !keyed && t.inserts.is_empty())
+                            .map(|chain| chain.inserts.clone())
+                            .ok_or(PlanError::CannotKeep { track: i })?
+                    } else {
+                        t.inserts.iter().map(|p| p.latency()).collect()
+                    };
                     track_timing.push(crate::automation_time::Chain {
                         input: t.source.latency(),
-                        inserts: t.inserts.iter().map(|p| p.latency()).collect(),
+                        inserts,
                     });
                     routes.push(Route {
-                        latency: t.source.latency() + latency_of(&t.inserts),
+                        latency: t.source.latency() + track_timing[i].inserts.iter().sum::<u32>(),
                         output: t.output,
                         sends: t.sends.iter().map(|s| s.bus).collect(),
                         pad_outputs: t
@@ -1079,7 +1096,7 @@ impl Plan {
                             .map(|&(_, _, b)| (b, t.source.latency()))
                             .collect(),
                     });
-                    let pure = t.source.timeline_only() && t.inserts.is_empty();
+                    let pure = t.source.timeline_only() && track_timing[i].inserts.is_empty();
                     // Only a track with state to keep ahead is lent out; a pure timeline has its
                     // own cache, and a MIDI track makes no audio.
                     let prefetch = (t.prefetch
@@ -1092,6 +1109,7 @@ impl Plan {
                         .flatten()
                         .map(Box::new);
                     let layer_delays = t.source.multi().map(|m| m.pad_delays()).unwrap_or_default();
+                    keep_inserts_from.push(t.keep_inserts_from);
                     tracks.push(Some(Box::new(TrackNode {
                         unavailable: t.unavailable,
                         live: t.live,
@@ -1442,6 +1460,7 @@ impl Plan {
             setup,
             tracks,
             keep_from,
+            keep_inserts_from,
             buses,
             master: MasterNode {
                 branches: crate::split::Cells::of(&master_inserts),
@@ -1608,8 +1627,8 @@ impl Plan {
         self.buses.get(i).map(|b| b.name.as_str())
     }
 
-    /// Moves the kept tracks out of `old` into this plan. Runs on the audio thread: it only
-    /// moves boxes between slots that already exist.
+    /// Moves processors out of the retiring plan. Retained insert chains are recalled
+    /// from the prefetch worker if lent, then moved without preparation or allocations.
     pub fn take_kept_from(&mut self, old: &mut Plan) {
         for (slot, from) in self.tracks.iter_mut().zip(self.keep_from.iter()) {
             if let Some(from) = *from {
@@ -1621,6 +1640,17 @@ impl Plan {
                     for k in &mut c.keys {
                         k.acc = usize::MAX;
                     }
+                }
+            }
+        }
+        for (slot, from) in self.tracks.iter_mut().zip(&self.keep_inserts_from) {
+            if let Some(from) = *from
+                && let Some(old) = old.tracks.get_mut(from).and_then(Option::as_mut)
+                && let Some(new) = slot.as_mut().and_then(|t| t.chain.as_mut())
+            {
+                Self::discard_prefetch(old);
+                if let Some(chain) = old.chain.as_mut() {
+                    std::mem::swap(&mut new.inserts, &mut chain.inserts);
                 }
             }
         }

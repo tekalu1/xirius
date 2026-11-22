@@ -24,6 +24,7 @@ pub const DEVICE_KINDS: &[Shot] = &[Shot {
 
 thread_local! {
     static WAIT: RefCell<Option<(PathBuf, Instant)>> = const { RefCell::new(None) };
+    static DEVICE_FIXTURE: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 fn prepare(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut App) {
@@ -211,6 +212,12 @@ fn prepare_device_kinds(s: &mut Studio, window: &Window, dir: PathBuf) {
     let eq = track_data.inserts.last().unwrap().id;
     s.prepare_song();
     crate::shot::run_for(s, 20.0, |s| !s.input_blocked() && s.has_loaded(fx));
+    // The fixture can host either role. Leave the existing insert as an effect and
+    // offer the same binary as an instrument in the channel picker.
+    let mut catalog = xirius_plugins::Catalog::load(s.song().plugin_cache());
+    catalog.entries[0].kind = xirius_core::model::PluginKind::Instrument;
+    s.use_plugins(catalog);
+    DEVICE_FIXTURE.with_borrow_mut(|fixture| *fixture = Some(entry.name.clone()));
     s.drawer_open = true;
     s.tab = crate::studio::DrawerTab::Mixer;
     s.drawer_size.mixer = Some(500.0);
@@ -236,6 +243,7 @@ fn prepare_device_kinds(s: &mut Studio, window: &Window, dir: PathBuf) {
         &json!({
             "main":main, "first":at(instruments[0]), "second":at(instruments[1]),
             "fx":at(fx), "eq":at(eq), "fixture":entry.name,
+            "channel_title":crate::device_window::CHANNEL_TITLE,
             "first_title":format!("Xirius · {}", instruments[0]),
             "second_title":format!("Xirius · {}", instruments[1]),
             "eq_title":format!("Xirius · {eq}"),
@@ -360,7 +368,7 @@ fn input_ready(dir: PathBuf, data: &serde_json::Value) {
     WAIT.with_borrow_mut(|wait| *wait = Some((dir, Instant::now())));
 }
 
-pub(crate) fn ready(studio: &Rc<RefCell<Studio>>) -> bool {
+pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, cx: &mut App) -> bool {
     WAIT.with_borrow_mut(|wait| {
         let Some((dir, started)) = wait else {
             return true;
@@ -383,19 +391,24 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>) -> bool {
                 .map(|plugin| format!("Xirius · {}", plugin.id));
             let temp = dir.join("input-state.tmp");
             let undo = s.song.history().into_iter().find(|row| row.current);
-            std::fs::write(
-                &temp,
-                serde_json::to_vec(&json!({
-                    "root":p.root, "editor":editor, "inserts":track_inserts(&p),
-                    "undo":undo.map(|row| row.n)
-                }))
-                .unwrap(),
-            )
-            .unwrap();
+            let mut data = json!({
+                "root":p.root, "editor":editor, "inserts":track_inserts(&p),
+                "undo":undo.map(|row| row.n)
+            });
+            drop(s);
+            DEVICE_FIXTURE.with_borrow(|fixture| {
+                if let Some(fixture) = fixture {
+                    data["channel"] = json!(crate::device_window::channel_input_points(
+                        studio, fixture, cx
+                    ));
+                }
+            });
+            std::fs::write(&temp, serde_json::to_vec(&data).unwrap()).unwrap();
             std::fs::rename(temp, dir.join("input-state.json")).unwrap();
             std::fs::remove_file(request).unwrap();
         }
         if dir.join("input-done").exists() {
+            DEVICE_FIXTURE.with_borrow_mut(|fixture| *fixture = None);
             *wait = None;
             true
         } else {

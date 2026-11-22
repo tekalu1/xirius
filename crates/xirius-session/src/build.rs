@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use xirius_core::clipfx::{Fade, fade_exponent, pieces};
+use xirius_core::id::PluginId;
 use xirius_core::model::{
     Clip, ClipBody, CtrlKind, CtrlShape, KeyMode, KeySource, Plugin, PluginKind, Project, Track,
     TrackKind,
@@ -176,6 +177,7 @@ pub struct Builder {
     strict_preparation: bool,
     unavailable: BTreeMap<xirius_core::id::TrackId, String>,
     retry_keep: BTreeMap<xirius_core::id::TrackId, usize>,
+    live_inserts: BTreeMap<xirius_core::id::TrackId, (usize, Vec<PluginId>)>,
     rate: u32,
     dir: Option<PathBuf>,
     cache: WavCache,
@@ -204,6 +206,7 @@ impl Builder {
             strict_preparation: false,
             unavailable: BTreeMap::new(),
             retry_keep: BTreeMap::new(),
+            live_inserts: BTreeMap::new(),
             rate,
             dir,
             cache: WavCache::default(),
@@ -386,6 +389,7 @@ impl Builder {
         self.timed.clear();
         self.plugins.set_tempo(tmap.bpm_at(0));
         let kept = std::mem::take(&mut self.retry_keep);
+        let mut live_inserts = std::mem::take(&mut self.live_inserts);
         // A kept processor remembers its source's old graph index. Rebuild the small set of
         // tracks in a note-routed song so a reorder cannot leave that index pointing elsewhere.
         let kept = if p
@@ -450,7 +454,10 @@ impl Builder {
                     .collect();
             }
             spec.live = crate::automation::realtime(t);
-            if !unavailable {
+            if let Some((from, ids)) = live_inserts.remove(id) {
+                self.plugins.keep_built(ids);
+                spec.keep_inserts_from = Some(from);
+            } else if !unavailable {
                 // A layer's plug-ins play inside the multi-instrument (ENG-075).
                 let layered = shape
                     .rack
@@ -516,6 +523,7 @@ impl Builder {
                 spec.unavailable = true;
                 spec.source = Box::new(Silence);
                 spec.inserts.clear();
+                spec.keep_inserts_from = None;
                 spec.keys.clear();
                 spec.timeline = Timeline::default();
                 spec.midi = None;
@@ -642,8 +650,13 @@ impl Builder {
         })
     }
 
-    pub(crate) fn keep_live_tracks(&mut self, tracks: BTreeMap<xirius_core::id::TrackId, usize>) {
+    pub(crate) fn keep_live_tracks(
+        &mut self,
+        tracks: BTreeMap<xirius_core::id::TrackId, usize>,
+        inserts: BTreeMap<xirius_core::id::TrackId, (usize, Vec<PluginId>)>,
+    ) {
         self.retry_keep = tracks;
+        self.live_inserts = inserts;
     }
 
     /// Copy material cache handles, never SDK instances or controller ownership.

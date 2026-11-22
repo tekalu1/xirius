@@ -238,6 +238,67 @@ fn a_plugin_moved_between_processes_is_the_one_that_plays_until_the_new_mix_does
     #[cfg(windows)]
     shut_as_it_plays(&rig, PluginIsolation::Shared);
     let_go(&rig);
+    adding_a_layer_keeps_the_open_fx_frame(&rig);
+}
+
+fn adding_a_layer_keeps_the_open_fx_frame(rig: &Rig) {
+    use xirius_core::id::NodeId;
+    use xirius_core::rack::{Layer, Rack, RackNode, Source};
+
+    let mut song = song(&rig.uid, PluginIsolation::Dedicated, 0.25);
+    let track = Arc::make_mut(song.tracks.get_mut(&TRACK).unwrap());
+    track.kind = TrackKind::Instrument;
+    let mut first = track.inserts[0].clone();
+    first.id = OTHER;
+    first.kind = PluginKind::Instrument;
+    first.format = "builtin".into();
+    first.uid = "sampler".into();
+    first.params.clear();
+    track.inserts.insert(0, first);
+    let layer = |id, instrument| Layer {
+        id: NodeId(id),
+        name: String::new(),
+        instrument,
+        fx: Vec::new(),
+        keys: (0, 127),
+        velocity: (1, 127),
+        transpose: 0,
+        gain_db: 0.0,
+        pan: 0.0,
+        mute: false,
+    };
+    track.rack = Some(Rack {
+        source: Some(Source::Multi {
+            id: NodeId(10),
+            layers: vec![layer(11, OTHER)],
+        }),
+        fx: vec![RackNode::Plugin(PID)],
+    });
+    let (mut host, mut audio) = rig.start_with(&song);
+    host.set_windowed();
+    let server = host.plugins().server_of(PID).unwrap();
+    host.plugin_editor(PID, true, None).unwrap();
+    let pid = server.pid().unwrap();
+    let frame = host_window(pid);
+
+    let track = Arc::make_mut(song.tracks.get_mut(&TRACK).unwrap());
+    let mut instrument = track.inserts[1].clone();
+    instrument.id = PluginId(3);
+    instrument.kind = PluginKind::Instrument;
+    let Source::Multi { layers, .. } = track.rack.as_mut().unwrap().source.as_mut().unwrap() else {
+        unreachable!()
+    };
+    layers.push(layer(12, instrument.id));
+    track.inserts.push(instrument);
+    assert!(!host.sync_later(&song).swapped);
+    swap(&mut host, &mut audio, |_| {});
+    let until = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < until {
+        host.poll();
+        assert_eq!(host_window(pid), frame, "the unchanged FX keeps its HWND");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(status(&host).unwrap().editor_open);
 }
 
 /// From its own host to the shared one (`to`) or into the app, the window closed while the new
