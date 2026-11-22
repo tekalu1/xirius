@@ -113,6 +113,11 @@ at the previous position, and the effect of pinning and unpinning. It also check
 clearance including the window frames when a full strip is free, that adding an
 instrument from the Channel Editor keeps the FX window open above the studio, and
 that raising the instrument from its card preserves the fixture's painted view.
+The case starts a separate app session for window placement. It measures physical frame
+coordinates after activation, including five Reverb reopens, Drum Kit → Sampler replacement,
+Reverb beside a pinned EQ, and Limiter auto-opened from an insert gap beside Sampler.
+Run this portion alone with `--case device-placement` or the Windows test
+`foreground_device_windows_respect_clear_space_and_keep_their_frame_origin`.
 Check installed-plugin compatibility in a separate manual pass.
 macOS has no external plugin editor (NSView host) yet and is outside this desktop test's scope.
 

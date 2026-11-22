@@ -33,11 +33,19 @@ def main():
     parser.add_argument("--out", type=Path, required=True, help="screenshots and result.json")
     parser.add_argument("--case", choices=["A", "E", "F", "G", "cold", "cold-idle",
                                           "effect-seam", "effect-seam-idle", "effect-seam-close",
-                                          "device-kinds"],
+                                          "device-kinds", "device-placement"],
                         help="run one scenario")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("this test requires Windows")
+    if args.case == "device-kinds":
+        run_case(argparse.Namespace(**(vars(args) | {
+            "case": "device-placement", "out": args.out / "placement",
+        })))
+    run_case(args)
+
+
+def run_case(args):
     processes = subprocess.run(
         ["powershell", "-NoProfile", "-Command",
          "Get-CimInstance Win32_Process -Filter \"Name LIKE 'xirius%'\" | Select-Object ProcessId,ExecutablePath | ConvertTo-Json -Compress"],
@@ -304,10 +312,10 @@ def main():
         checks.append({"step":name,"result":"passed","screen":name+".bmp"})
 
     root = Path(__file__).resolve().parents[1]
-    debug = root / "target" / "debug"
-    executable = debug / "xirius-ui.exe"
-    fixture = next(path for path in (debug/"xirius_test_vst3.dll",
-                                     debug/"deps"/"xirius_test_vst3.dll") if path.is_file())
+    executable = Path(os.environ.get("XIRIUS_TEST_UI_EXE", root / "target" / "debug" / "xirius-ui.exe"))
+    binaries = executable.parent
+    fixture = next(path for path in (binaries/"xirius_test_vst3.dll",
+                                     binaries/"deps"/"xirius_test_vst3.dll") if path.is_file())
     with isolated_data(args.work) as temp:
         env = os.environ.copy()
         env.update({"LOCALAPPDATA":temp, "APPDATA":temp, "TEMP":temp, "TMP":temp,
@@ -325,6 +333,7 @@ def main():
         if effect_seam:
             env["XIRIUS_PRESET_INPUT_EFFECT"] = "1"
         cold = args.case in ("cold", "cold-idle")
+        placement = args.case == "device-placement"
         device_kinds = args.case == "device-kinds"
         if cold or warm_idle or device_kinds:
             env.setdefault("XIRIUS_TEST_VST3_EDITOR_OPEN_MS", "2000")
@@ -336,7 +345,7 @@ def main():
         subprocess.run([str(executable), "__scan-plugin", "--bundle", str(fixture),
                         "--out", str(probe)], env=env, check=True, timeout=20)
         entries = json.loads(probe.read_text(encoding="utf-8"))["entries"]
-        if not effect_seam and not device_kinds:
+        if not (effect_seam or device_kinds or placement):
             entries[0]["kind"] = "instrument"
         Path(env["XIRIUS_PLUGIN_CACHE"]).write_text(json.dumps({"version": 2, "bundles": [
             {"path": str(fixture), "fingerprint": "", "entries": entries}]
@@ -346,9 +355,9 @@ def main():
         with (out/"app.log").open("w", encoding="utf-8") as log:
             script = "preset-input-cold" if cold or effect_seam else "preset-input"
             size = "1040,640"
-            if device_kinds:
-                script = "device-kinds-input"
-                size = "1120,760"
+            if device_kinds or placement:
+                script = f"{args.case}-input"
+                size = "1120,900" if device_kinds else "1120,760"
             app = subprocess.Popen([str(executable), "--silent", "--at", "10,10",
                                     "--size", size, "--shot", str(out), "--script", script],
                                    cwd=temp, env=env, stdout=log, stderr=log)
@@ -361,9 +370,152 @@ def main():
                 wait(lambda: not request.exists(), "fixture did not report the track state")
                 return json.loads(reply.read_text(encoding="utf-8"))
 
+            def check_device_placement(info):
+                channel = wait(lambda: u.FindWindowExW(0, 0, None, info["channel_title"]),
+                               "channel editor")
+                dpi = u.GetDpiForWindow(channel)
+                print(f"Device placement at {dpi} DPI", flush=True)
+                scale = dpi / 96
+                monitor = MonitorInfo()
+                monitor.size = c.sizeof(monitor)
+                assert u.GetMonitorInfoW(u.MonitorFromWindow(channel, 2), c.byref(monitor))
+                work = monitor.work
+                r = rect(channel)
+                channel_width = min(r.right - r.left, (work.right - work.left) // 2)
+                channel_x = work.right - channel_width
+                # Raise the test window without taking focus. The following click must
+                # be what gives the Channel Editor the foreground.
+                assert u.SetWindowPos(info["main"], 0, 0, 0, 0, 0, 0x13)
+                assert u.SetWindowPos(channel, 0, channel_x, work.top, channel_width,
+                                      r.bottom - r.top, 0x10)
+
+                def points():
+                    return state().get("channel") or {}
+
+                def visible(title):
+                    hwnd = u.FindWindowExW(0, 0, None, title)
+                    return hwnd if hwnd and u.IsWindowVisible(hwnd) else None
+
+                def foreground(name):
+                    def opened():
+                        device = points().get("devices", {}).get(name)
+                        hwnd = device and visible(device["title"])
+                        return hwnd if hwnd and u.GetForegroundWindow() == hwnd else None
+                    return wait(opened, f"{name} opened and activated")
+
+                def at_channel(label, name=None):
+                    def locate():
+                        data = points()
+                        if name is not None:
+                            data = data.get("devices", {}).get(name, {})
+                        return data.get(label)
+                    at = wait(locate, f"channel point {name or label}")
+                    point = w.POINT(*(round(value * scale) for value in at))
+                    assert u.ClientToScreen(channel, c.byref(point))
+                    return point.x, point.y
+
+                def card(name):
+                    at = at_channel("card", name)
+                    # Expose the card without moving any frame or taking focus.
+                    assert u.SetWindowPos(channel, 0, 0, 0, 0, 0, 0x13)
+                    wait(lambda: hit_root(*at) == channel, f"{name} card is covered at {at}",
+                         seconds=3, detail=lambda: window_title(hit_root(*at)))
+                    send([mouse(*at, flags) for flags in
+                          (0xC001, 0x0002, 0x0004, 0x0002, 0x0004)])
+                    return foreground(name)
+
+                def title_button(hwnd, from_right):
+                    client = w.RECT()
+                    assert u.GetClientRect(hwnd, c.byref(client))
+                    point = w.POINT(client.right - round(from_right * scale), round(18 * scale))
+                    assert u.ClientToScreen(hwnd, c.byref(point))
+                    click_window(hwnd, point.x, point.y)
+
+                def close(hwnd):
+                    title_button(hwnd, 18)
+                    wait(lambda: not u.IsWindowVisible(hwnd), "device closed from its title bar")
+
+                def edges(hwnd):
+                    r = rect(hwnd)
+                    return r.left, r.top, r.right, r.bottom
+
+                def disjoint(a, b):
+                    return a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1]
+
+                failures = []
+
+                def check(label, condition, detail):
+                    print(f"{label}: {detail}", flush=True)
+                    if condition:
+                        passed(label)
+                    else:
+                        failures.append(f"{label}: {detail}")
+                        screenshot(label)
+
+                reverb = card("Reverb")
+                move_frame(reverb, work.left + 100, work.top + 160)
+                expected = edges(reverb)
+                origins = []
+                for _ in range(5):
+                    close(reverb)
+                    reverb = card("Reverb")
+                    origins.append(edges(reverb)[:2])
+                check("device-placement-reopen", all(at == expected[:2] for at in origins),
+                      f"expected {expected[:2]} on all five opens, got {origins}")
+                close(reverb)
+
+                # Leave only a narrow vertical margin beneath the EQ for the Reverb frame.
+                click_window(channel, *at_channel("insert"))
+                click_window(channel, *at_channel("pick_eq"))
+                eq = foreground("EQ")
+                reverb_size = expected[2] - expected[0], expected[3] - expected[1]
+                eq_bottom = work.bottom - reverb_size[1] - 4
+                assert channel_x - work.left >= reverb_size[0], (channel_x, reverb_size)
+                assert eq_bottom > expected[1]
+                assert u.SetWindowPos(eq, 0, work.left, work.top, channel_x - work.left,
+                                      eq_bottom - work.top, 0x14)
+                assert edges(eq)[3] == eq_bottom
+                title_button(eq, 48)
+                reverb = card("Reverb")
+                reverb_frame = edges(reverb)
+                check("device-placement-pinned-eq",
+                      u.IsWindowVisible(eq) and disjoint(reverb_frame, edges(eq))
+                      and disjoint(reverb_frame, edges(channel)),
+                      f"Reverb {reverb_frame}, pinned EQ {edges(eq)}, channel {edges(channel)}")
+                # Expose the pin and close buttons even on a failing build.
+                close(reverb)
+                close(eq)
+
+                drum_kit = card("Drum Kit")
+                # Leave room for the wider replacement at the inherited origin.
+                move_frame(drum_kit, work.left + 24, work.top + 28)
+                before = edges(drum_kit)[:2]
+                sampler = card("Sampler")
+                wait(lambda: not u.IsWindowVisible(drum_kit), "Drum Kit was replaced")
+                check("device-placement-replace", edges(sampler)[:2] == before,
+                      f"Drum Kit at {before}, Sampler at {edges(sampler)[:2]}")
+                move_frame(sampler, work.left + 24, work.top + 28)
+
+                click_window(channel, *at_channel("seam"))
+                click_window(channel, *at_channel("pick_limiter"))
+                limiter = foreground("Limiter")
+                inserts = state()["inserts"][info["track"]]["plugins"]
+                after = inserts.index(info["fixture_uid"]) + 1
+                assert [name.lower() for name in inserts[after:after + 2]] == ["limiter", "reverb"], inserts
+                limiter_frame, sampler_frame = edges(limiter), edges(sampler)
+                assert work.bottom - sampler_frame[3] >= limiter_frame[3] - limiter_frame[1]
+                check("device-placement-seam", u.IsWindowVisible(sampler)
+                      and disjoint(limiter_frame, sampler_frame)
+                      and disjoint(limiter_frame, edges(channel)),
+                      f"Limiter {limiter_frame}, Sampler {sampler_frame}, channel {edges(channel)}")
+                assert not failures, "\n".join(failures)
+
             def check_device_kinds(info):
                 main = info["main"]
                 frames = set()
+                assert u.SetWindowPos(main, 0, 0, 0, 0, 0, 0x13)
+                # The first frame can still be rendering when input-ready.json is written.
+                state()
 
                 monitor = MonitorInfo()
                 monitor.size = c.sizeof(monitor)
@@ -371,7 +523,7 @@ def main():
                 work = monitor.work
 
                 def expose_row(name):
-                    point = info[name]
+                    point = wait(lambda: state()["mixer"][name], f"visible mixer row {name}")
                     for _ in frames:
                         covering = hit_root(*point)
                         if covering == main:
@@ -388,9 +540,11 @@ def main():
                         move_frame(covering, x, y)
                     return point
 
-                def open_row(name):
-                    point = expose_row(name)
-                    click_window(main, *point)
+                def open_row(name, *, select=False):
+                    # External editors and reselects need a click on the selected row.
+                    if select:
+                        click_window(main, *expose_row(name))
+                    click_window(main, *expose_row(name))
 
                 def builtin(name):
                     frame = u.FindWindowExW(0, 0, None, info[name + "_title"])
@@ -410,8 +564,11 @@ def main():
                             or a.bottom <= b.top or b.bottom <= a.top)
 
                 open_row("first")
+                state()
+                if not builtin("first"):
+                    open_row("first")
                 first = wait(lambda: builtin("first"), "first instrument")
-                open_row("fx")
+                open_row("fx", select=True)
                 wait(lambda: loading_frame(app.pid, info["fixture"]), "FX loading window")
                 assert shown(first), "loading FX closed the instrument"
                 fx = wait(lambda: new_frame(set()), "external FX")
@@ -425,15 +582,16 @@ def main():
                 open_row("fx")
                 wait(lambda: u.GetForegroundWindow() == fx, "repeated FX click did not raise it")
                 assert order([fx, main]) == [fx, main]
-                open_row("first")
+                open_row("first", select=True)
                 wait(lambda: u.GetForegroundWindow() == first, "repeated instrument click did not raise it")
                 assert builtin("first") == first and shown(fx)
                 assert order([first, fx, main]) == [first, fx, main]
                 passed("device-kinds-raise")
 
-                second_row = expose_row("second")
+                move_frame(first, work.left, work.top)
+                move_frame(fx, work.right - (rect(fx).right - rect(fx).left), work.top)
                 before = origin(first)
-                click_window(main, *second_row)
+                open_row("second")
                 second = wait(lambda: builtin("second"), "replacement instrument")
                 wait(lambda: not shown(first), "previous instrument still visible")
                 assert origin(second) == before and shown(fx)
@@ -442,9 +600,9 @@ def main():
                 button(fx, 4)
                 move_frame(fx, work.left, work.top)
                 move_frame(second, work.left, work.top)
-                eq_row = expose_row("eq")
+                expose_row("eq")
                 occupied = [rect(fx), rect(second)]
-                click_window(main, *eq_row)
+                open_row("eq")
                 eq = wait(lambda: builtin("eq"), "FX alongside pinned FX")
                 assert shown(fx) and shown(second)
                 edge = rect(eq)
@@ -532,21 +690,27 @@ def main():
                         sample.append(pixels[at:at+3])
                     return tuple(sample)
 
-                before = wait(lambda: displayed_bands() if u.GetForegroundWindow() == instrument
-                              else None, "visible instrument content")
-                assert len(set(before)) == 4, "fixture did not draw its four color bands"
+                # The loading overlay can still tint the bands after the editor gets focus.
+                # Match the fixture's paint colors in the desktop bitmap's BGR order.
+                bands = tuple(bytes.fromhex(color) for color in ("302018", "805020", "20a0e0", "f0f0f0"))
+                wait(lambda: u.GetForegroundWindow() == instrument and displayed_bands() == bands,
+                     "visible instrument content", detail=displayed_bands)
 
-                # Put the Channel Editor ahead of the instrument without relying on a
-                # click point inside a window that may be completely covered.
-                assert u.SetWindowPos(channel, 0, 0, 0, 0, 0, 0x13)
+                # Activate the Channel Editor through its exposed title bar.
+                bounds = rect(channel)
+                x = (bounds.left + bounds.right) // 2
+                y = bounds.top + round(17 * u.GetDpiForWindow(channel) / 96)
+                click_window(channel, x, y)
+                wait(lambda: u.GetForegroundWindow() == channel, "channel editor did not activate")
                 pick = wait(lambda: channel_point("card"), "new instrument card")
                 assert order([channel, instrument]) == [channel, instrument]
                 open_card(pick)
                 wait(lambda: u.GetForegroundWindow() == instrument, "card did not raise the instrument")
                 assert fixture_view(instrument) == view
-                assert displayed_bands() == before, "the raised instrument did not retain its pixels"
+                wait(lambda: displayed_bands() == bands, "the raised instrument did not retain its pixels",
+                     seconds=2, detail=displayed_bands)
                 time.sleep(0.7)  # The close of the title highlight must leave the view painted too.
-                assert displayed_bands() == before, "instrument pixels changed when the highlight ended"
+                assert displayed_bands() == bands, "instrument pixels changed when the highlight ended"
                 assert instrument_opened() == instrument
                 passed("device-kinds-instrument-reselect-painted")
 
@@ -555,6 +719,9 @@ def main():
                 assert (out/"input-ready.json").exists(), "fixture app exited during setup; read app.log"
                 info = json.loads((out/"input-ready.json").read_text(encoding="utf-8"))
                 main_hwnd = info["main"]
+                if placement:
+                    check_device_placement(info)
+                    return
                 if device_kinds:
                     check_device_kinds(info)
                     return

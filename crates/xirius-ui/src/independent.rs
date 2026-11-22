@@ -126,8 +126,8 @@ pub(crate) struct Spec {
 
 pub(crate) struct NativePlacement {
     work: [i32; 4],
-    /// Reopened and replacement editors use their remembered origin, with only the work-area clamp.
     occupied: Vec<[i32; 4]>,
+    prefer_origin: bool,
 }
 
 fn offscreen() -> bool {
@@ -270,7 +270,7 @@ fn place(
         bounds,
         scale,
         frame_origin,
-        native.map(|p| (&p.work, &p.occupied)),
+        native.map(|p| (&p.work, &p.occupied, p.prefer_origin)),
     );
     #[cfg(windows)]
     if let Some(hwnd) = crate::park::own_handle(title) {
@@ -311,12 +311,13 @@ fn place(
                 let [l, t, r, b] = native.work;
                 width = width.min(r - l);
                 height = height.min(b - t);
-                (x, y) = xirius_vst3::place_beside(
+                (x, y) = xirius_vst3::place_editor(
                     (x, y),
                     (width, height),
                     native.work,
                     &native.occupied,
                     (24.0 * scale).round() as i32,
+                    native.prefer_origin,
                 );
             }
             let placed = SetWindowPos(
@@ -466,6 +467,9 @@ pub(crate) fn device_bounds(
     }
     let positions = studio.instruments.positions.borrow();
     let previous = studio.normal_view_before(id);
+    let prefer_origin = previous.is_some() || positions.contains_key(&Key::Device(id));
+    #[cfg(windows)]
+    let retiring = previous.and_then(|old| studio.device_window_handle(old));
     #[cfg(windows)]
     let screens = screens(cx);
     #[cfg(windows)]
@@ -486,14 +490,11 @@ pub(crate) fn device_bounds(
         initial.origin = bounds.origin;
     }
     #[cfg(windows)]
-    let display = if let Some(old) = previous {
-        studio
-            .device_window_handle(old)
-            .and_then(native)
-            .map(|(origin, id)| {
-                initial.origin = origin;
-                id
-            })
+    let display = if previous.is_some() {
+        retiring.and_then(native).map(|(origin, id)| {
+            initial.origin = origin;
+            id
+        })
     } else {
         native(source as isize).map(|(_, id)| id)
     };
@@ -524,27 +525,19 @@ pub(crate) fn device_bounds(
         let native = screens
             .iter()
             .find(|s| s.id == display.id())
-            .map(|&screen| {
-                let occupied = if previous.is_some() || positions.contains_key(&Key::Device(id)) {
-                    Vec::new()
-                } else {
-                    xirius_vst3::visible_editors(
-                        crate::device_window::hwnd_of(main),
-                        &studio.editor_stack(),
-                    )
-                };
-                NativePlacement {
-                    work: screen.work,
-                    occupied,
-                }
+            .map(|&screen| NativePlacement {
+                work: screen.work,
+                occupied: xirius_vst3::visible_editors_except(
+                    crate::device_window::hwnd_of(main),
+                    &studio.editor_stack(),
+                    retiring,
+                ),
+                prefer_origin,
             });
         (initial, Some(display.id()), native)
     }
     #[cfg(not(windows))]
     {
-        if previous.is_some() {
-            return (initial, Some(display.id()), None);
-        }
         let to_int = |value: Pixels| f32::from(value).round() as i32;
         let edges = |bounds: Bounds<Pixels>| {
             [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()].map(to_int)
@@ -555,6 +548,7 @@ pub(crate) fn device_bounds(
                 let visible = match *key {
                     Key::Device(other) => {
                         other != id
+                            && Some(other) != previous
                             && studio.instruments.detached.contains(&other)
                             && !studio.instruments.pending.contains(&other)
                     }
@@ -564,12 +558,13 @@ pub(crate) fn device_bounds(
                 visible.then(|| edges(bounds))
             })
             .collect();
-        let (x, y) = xirius_vst3::place_beside(
+        let (x, y) = xirius_vst3::place_editor(
             (to_int(initial.origin.x), to_int(initial.origin.y)),
             (to_int(initial.size.width), to_int(initial.size.height)),
             edges(work),
             &occupied,
             24,
+            prefer_origin,
         );
         initial.origin = point(px(x as f32), px(y as f32));
         (initial, Some(display.id()), None)
@@ -645,6 +640,7 @@ mod window_tests {
         let native = NativePlacement {
             work: [left, top, left + 2 * width, top + height],
             occupied: vec![[left + width, top, left + 2 * width, top + height]],
+            prefer_origin: true,
         };
         let to_logical = |value| px(value as f32 / scale);
         let desired = Bounds::new(

@@ -10,7 +10,8 @@
 //!   layers and 720 with; the Macro Controls cannot be resized;
 //! - a window that is closed and opened again comes back where it was, at the size it had.
 //!
-//! The last test is a normal launch (not parked): the windows show on the screen briefly.
+//! The normal-launch tests show windows on the screen. The placement input test also
+//! needs a dedicated desktop so it can activate each window through mouse clicks.
 //!
 //! This opens real windows: it is not part of `scripts/ci_tests.py`'s runs (its name ends in
 //! `_window`).
@@ -205,4 +206,25 @@ fn in_a_normal_launch_the_windows_open_where_and_as_big_as_asked_and_come_back()
         assert_eq!(m["same_place"], true, "{m}");
         assert_eq!(m["same_size"], true, "{m}");
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn foreground_device_windows_respect_clear_space_and_keep_their_frame_origin() {
+    let dir = tempfile::Builder::new()
+        .prefix("xirius-ui-placement-input-")
+        .tempdir()
+        .unwrap();
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let status = Command::new("python")
+        .arg(repo.join("scripts/test_plugin_presets.py"))
+        .args(["--case", "device-placement", "--work"])
+        .arg(dir.path().join("work"))
+        .arg("--out")
+        .arg(dir.path().join("results"))
+        .env("XIRIUS_TEST_UI_EXE", env!("CARGO_BIN_EXE_xirius-ui"))
+        .current_dir(repo)
+        .status()
+        .expect("the desktop input driver runs");
+    assert!(status.success(), "the desktop placement input test failed");
 }

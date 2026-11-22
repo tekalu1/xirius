@@ -410,6 +410,11 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     #[cfg(windows)]
     ("device-place", device_window::verify_shots::PLACE_SHOTS),
     #[cfg(windows)]
+    (
+        "device-placement-input",
+        preset_input_shots::DEVICE_PLACEMENT,
+    ),
+    #[cfg(windows)]
     ("device-verify", device_window::verify_shots::SHOTS),
     ("devices", devices_shots::SHOTS),
     ("draw-length", draw_length_shots::SHOTS),
