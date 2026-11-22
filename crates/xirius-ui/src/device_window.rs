@@ -355,7 +355,22 @@ impl Windows {
             && std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_none()
         {
             cx.defer(move |cx| {
-                if !cfg!(windows) || (source != 0 && Studio::editor_foreground() == source) {
+                #[cfg(windows)]
+                if source != 0 && Studio::editor_foreground() == source {
+                    let _ = handle.update(cx, |_, window, _| {
+                        // GPUI's first activation reapplies its hidden window's initial
+                        // client-based placement. The native frame is already in place.
+                        // SAFETY: the active source and the target belong to this UI.
+                        unsafe {
+                            windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(
+                                hwnd_of(window) as _,
+                            );
+                        }
+                    });
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = source;
                     let _ = handle.update(cx, |_, window, _| window.activate_window());
                 }
             });
@@ -808,31 +823,63 @@ pub(crate) fn channel_input_points(
                 view.with(window, |s, g| {
                     let v = s.channel_view(g)?;
                     let center = |r: Rect| [r.x + r.w / 2.0, r.y + r.h / 2.0];
-                    let instrument = v.tools.iter().find(|(tool, _)| *tool == Tool::Instrument);
-                    let picker = s.popup.as_ref().and_then(|popup| {
-                        popup.layout(g.size).cells.into_iter().find_map(|cell| {
-                            let Some(crate::popup::Action::Pick(uid)) = cell.action else {
-                                return None;
-                            };
-                            (cell.enabled && uid == fixture_uid).then(|| center(cell.rect))
+                    let tool = |kind| {
+                        v.tools
+                            .iter()
+                            .find(|(tool, _)| *tool == kind)
+                            .map(|(_, r)| center(*r))
+                    };
+                    let popup = s.popup.as_ref().map(|popup| popup.layout(g.size));
+                    let picker = |uid: &str| {
+                        popup.as_ref()?.cells.iter().find_map(|cell| {
+                            (cell.enabled
+                                && matches!(&cell.action,
+                                Some(crate::popup::Action::Pick(to)) if to == uid))
+                            .then(|| center(cell.rect))
                         })
-                    });
+                    };
                     let p = s.project();
                     let track = p.tracks.get(&s.channel.as_ref()?.track)?;
                     let plugin = track.inserts.iter().find(|plugin| {
                         plugin.kind == xirius_core::model::PluginKind::Instrument
                             && plugin.uid == fixture_uid
                     });
-                    let card = plugin.and_then(|plugin| {
-                        let pick = Pick::Plugin(plugin.id);
+                    let card = |id| {
+                        let pick = Pick::Plugin(id);
                         let [x, y] =
                             center(v.flow.cards.iter().find(|card| card.pick == pick)?.rect);
                         (part_at(&v, x, y) == Some(Part::Card(pick))).then_some([x, y])
+                    };
+                    let fixture = track.inserts.iter().find(|p| p.uid == fixture_uid);
+                    let seam = fixture.and_then(|p| {
+                        let (index, gap) = v
+                            .flow
+                            .gaps
+                            .iter()
+                            .enumerate()
+                            .find(|(_, gap)| gap.after == Some(Pick::Plugin(p.id)))?;
+                        let [x, y] = center(gap.button);
+                        (part_at(&v, x, y) == Some(Part::Gap(index))).then_some([x, y])
                     });
+                    let devices: serde_json::Map<_, _> = track
+                        .inserts
+                        .iter()
+                        .filter(|p| p.format == "builtin")
+                        .map(|p| {
+                            (
+                                p.name.clone(),
+                                serde_json::json!({
+                                    "card": card(p.id), "title": format!("Xirius · {}", p.id),
+                                }),
+                            )
+                        })
+                        .collect();
                     Some(serde_json::json!({
-                        "instrument": instrument.map(|(_, r)| center(*r)),
-                        "picker": picker, "card": card,
+                        "instrument": tool(Tool::Instrument),
+                        "picker": picker(fixture_uid), "card": plugin.and_then(|p| card(p.id)),
                         "loaded": plugin.is_some_and(|plugin| s.has_loaded(plugin.id)),
+                        "insert": tool(Tool::Insert), "seam": seam, "devices": devices,
+                        "pick_eq": picker("builtin:eq"), "pick_limiter": picker("builtin:limiter"),
                     }))
                 })
             })

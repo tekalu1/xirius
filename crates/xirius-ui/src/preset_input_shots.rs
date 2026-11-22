@@ -6,6 +6,7 @@ use crate::{
 use gpui::{App, Window};
 use serde_json::json;
 use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Instant};
+use xirius_core::id::{PluginId, TrackId};
 
 pub const SHOTS: &[Shot] = &[Shot {
     name: "preset-input",
@@ -22,9 +23,20 @@ pub const DEVICE_KINDS: &[Shot] = &[Shot {
     acts: &[Act::Stage(Play::Window(prepare), 2)],
 }];
 
+pub const DEVICE_PLACEMENT: &[Shot] = &[Shot {
+    name: "device-placement-input",
+    acts: &[Act::Stage(Play::Window(prepare), 3)],
+}];
+
+struct DeviceMixerRows {
+    track: TrackId,
+    ids: [PluginId; 4],
+}
+
 thread_local! {
     static WAIT: RefCell<Option<(PathBuf, Instant)>> = const { RefCell::new(None) };
     static DEVICE_FIXTURE: RefCell<Option<String>> = const { RefCell::new(None) };
+    static DEVICE_MIXER_ROWS: RefCell<Option<DeviceMixerRows>> = const { RefCell::new(None) };
 }
 
 fn prepare(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut App) {
@@ -47,8 +59,8 @@ fn prepare(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut
         prepare_cold(&mut s, window, dir);
         return;
     }
-    if stage == 2 {
-        prepare_device_kinds(&mut s, window, dir);
+    if stage >= 2 {
+        prepare_device_kinds(&mut s, dir, stage == 3);
         return;
     }
     crate::plugin_reload_shots::prepare(&mut s, 0);
@@ -177,7 +189,7 @@ fn prepare(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut
     );
 }
 
-fn prepare_device_kinds(s: &mut Studio, window: &Window, dir: PathBuf) {
+fn prepare_device_kinds(s: &mut Studio, dir: PathBuf, placement: bool) {
     let track = s
         .project()
         .tracks
@@ -198,7 +210,8 @@ fn prepare_device_kinds(s: &mut Studio, window: &Window, dir: PathBuf) {
         "plugin.add",
         json!({"track":track,"name":entry.name,"uid":entry.uid,"format":"vst3"}),
     ));
-    assert!(s.run_command("plugin.add", json!({"track":track,"name":"EQ"})));
+    let effect = if placement { "Reverb" } else { "EQ" };
+    assert!(s.run_command("plugin.add", json!({"track":track,"name":effect})));
     let project = s.project();
     let track_data = &project.tracks[&track];
     let layers = crate::channel::keys::layers(track_data);
@@ -209,44 +222,47 @@ fn prepare_device_kinds(s: &mut Studio, window: &Window, dir: PathBuf) {
         .find(|p| p.uid == entry.uid)
         .unwrap()
         .id;
-    let eq = track_data.inserts.last().unwrap().id;
+    let effect = track_data.inserts.last().unwrap().id;
     s.prepare_song();
     crate::shot::run_for(s, 20.0, |s| !s.input_blocked() && s.has_loaded(fx));
+    let main = crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap();
+    DEVICE_FIXTURE.with_borrow_mut(|fixture| *fixture = Some(entry.uid.clone()));
+    if placement {
+        s.open_channel(track);
+        input_ready(
+            dir,
+            &json!({
+                "main":main, "track":track, "fixture_uid":entry.uid,
+                "channel_title":crate::device_window::CHANNEL_TITLE,
+            }),
+        );
+        return;
+    }
     // The fixture can host either role. Leave the existing insert as an effect and
     // offer the same binary as an instrument in the channel picker.
     let mut catalog = xirius_plugins::Catalog::load(s.song().plugin_cache());
     catalog.entries[0].kind = xirius_core::model::PluginKind::Instrument;
     s.use_plugins(catalog);
-    DEVICE_FIXTURE.with_borrow_mut(|fixture| *fixture = Some(entry.uid.clone()));
     s.drawer_open = true;
     s.tab = crate::studio::DrawerTab::Mixer;
-    s.drawer_size.mixer = Some(500.0);
+    s.drawer_size.mixer = Some(680.0);
     s.mixer.wide.insert(track);
     s.mixer.set_insert_offset(track, 0);
     s.browser.open = false;
-    let viewport = window.viewport_size();
-    let g = s.settled_geometry(
-        viewport.width.into(),
-        f32::from(viewport.height)
-            - xirius_design::Layout::TOP_BAR_H
-            - xirius_design::Layout::BOTTOM_BAR_H,
-    );
-    let main = crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap();
-    let at = |id| {
-        let point = s
-            .mixer_center(&g, crate::mixer::MixerHit::Open(track, id))
-            .unwrap_or_else(|| panic!("mixer row for {id} is not visible"));
-        screen_point(main, window, point)
-    };
+    DEVICE_MIXER_ROWS.with_borrow_mut(|mixer| {
+        *mixer = Some(DeviceMixerRows {
+            track,
+            ids: [instruments[0], instruments[1], fx, effect],
+        });
+    });
     input_ready(
         dir,
         &json!({
-            "main":main, "first":at(instruments[0]), "second":at(instruments[1]),
-            "fx":at(fx), "eq":at(eq), "fixture":entry.name,
+            "main":main, "fixture":entry.name,
             "channel_title":crate::device_window::CHANNEL_TITLE,
             "first_title":format!("Xirius · {}", instruments[0]),
             "second_title":format!("Xirius · {}", instruments[1]),
-            "eq_title":format!("Xirius · {eq}"),
+            "eq_title":format!("Xirius · {effect}"),
         }),
     );
 }
@@ -368,7 +384,7 @@ fn input_ready(dir: PathBuf, data: &serde_json::Value) {
     WAIT.with_borrow_mut(|wait| *wait = Some((dir, Instant::now())));
 }
 
-pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, cx: &mut App) -> bool {
+pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, window: &Window, cx: &mut App) -> bool {
     WAIT.with_borrow_mut(|wait| {
         let Some((dir, started)) = wait else {
             return true;
@@ -395,6 +411,29 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, cx: &mut App) -> bool {
                 "root":p.root, "editor":editor, "inserts":track_inserts(&p),
                 "undo":undo.map(|row| row.n)
             });
+            DEVICE_MIXER_ROWS.with_borrow(|mixer| {
+                if let Some(mixer) = mixer {
+                    let viewport = window.viewport_size();
+                    let g = s.settled_geometry(
+                        viewport.width.into(),
+                        f32::from(viewport.height)
+                            - xirius_design::Layout::TOP_BAR_H
+                            - xirius_design::Layout::BOTTOM_BAR_H,
+                    );
+                    let main = crate::device_window::hwnd_of(window);
+                    let points: serde_json::Map<_, _> = ["first", "second", "fx", "eq"]
+                        .into_iter()
+                        .zip(mixer.ids)
+                        .map(|(name, id)| {
+                            let point = s
+                                .mixer_center(&g, crate::mixer::MixerHit::Open(mixer.track, id))
+                                .map(|point| screen_point(main, window, point));
+                            (name.to_string(), json!(point))
+                        })
+                        .collect();
+                    data["mixer"] = json!(points);
+                }
+            });
             drop(s);
             DEVICE_FIXTURE.with_borrow(|fixture| {
                 if let Some(fixture) = fixture {
@@ -409,6 +448,7 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, cx: &mut App) -> bool {
         }
         if dir.join("input-done").exists() {
             DEVICE_FIXTURE.with_borrow_mut(|fixture| *fixture = None);
+            DEVICE_MIXER_ROWS.with_borrow_mut(|mixer| *mixer = None);
             *wait = None;
             true
         } else {

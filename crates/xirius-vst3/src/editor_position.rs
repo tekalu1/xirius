@@ -131,10 +131,22 @@ fn monitor_work((x, y): (i32, i32)) -> Option<[i32; 4]> {
 /// reachable even on monitors too small for the windows to fit side by side.
 pub fn place_beside(
     origin: (i32, i32),
+    size: (i32, i32),
+    work: [i32; 4],
+    occupied: &[[i32; 4]],
+    gap: i32,
+) -> (i32, i32) {
+    place_editor(origin, size, work, occupied, gap, false)
+}
+
+/// A saved or inherited origin wins when the whole frame fits there.
+pub fn place_editor(
+    origin: (i32, i32),
     (width, height): (i32, i32),
     [left, top, right, bottom]: [i32; 4],
     occupied: &[[i32; 4]],
     gap: i32,
+    prefer_origin: bool,
 ) -> (i32, i32) {
     let max_x = right.saturating_sub(width).max(left);
     let max_y = bottom.saturating_sub(height).max(top);
@@ -150,7 +162,7 @@ pub fn place_beside(
             x >= r || y >= b || x.saturating_add(width) <= l || y.saturating_add(height) <= t
         })
     };
-    if occupied.is_empty() {
+    if occupied.is_empty() || (prefer_origin && clear(origin)) {
         return origin;
     }
     for direction in 0..4 {
@@ -208,6 +220,16 @@ pub fn place_beside(
 /// the host. The loading placeholders and temporary preset forms have their own policy.
 #[cfg(target_os = "windows")]
 pub fn visible_editors(main: isize, external: &[u64]) -> Vec<[i32; 4]> {
+    visible_editors_except(main, external, None)
+}
+
+/// As above, excluding the editor that will close once its replacement is open.
+#[cfg(target_os = "windows")]
+pub fn visible_editors_except(
+    main: isize,
+    external: &[u64],
+    retiring: Option<isize>,
+) -> Vec<[i32; 4]> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GW_HWNDNEXT, GW_OWNER, GetTopWindow, GetWindow, GetWindowTextW, IsWindowVisible,
     };
@@ -217,7 +239,12 @@ pub fn visible_editors(main: isize, external: &[u64]) -> Vec<[i32; 4]> {
         (unsafe { IsWindowVisible(hwnd) != 0 && GetWindowRect(hwnd, &mut r) != 0 })
             .then_some([r.left, r.top, r.right, r.bottom])
     };
-    let mut bounds: Vec<_> = external.iter().filter_map(|&id| rect(id as HWND)).collect();
+    let mut bounds: Vec<_> = external
+        .iter()
+        .map(|&id| id as isize)
+        .filter(|&hwnd| Some(hwnd) != retiring)
+        .filter_map(|hwnd| rect(hwnd as HWND))
+        .collect();
     if main == 0 {
         return bounds;
     }
@@ -225,7 +252,8 @@ pub fn visible_editors(main: isize, external: &[u64]) -> Vec<[i32; 4]> {
     unsafe {
         let mut hwnd = GetTopWindow(std::ptr::null_mut());
         while !hwnd.is_null() {
-            if GetWindow(hwnd, GW_OWNER) == main as HWND
+            if Some(hwnd as isize) != retiring
+                && GetWindow(hwnd, GW_OWNER) == main as HWND
                 && let Some(r) = rect(hwnd)
             {
                 let mut title = [0u16; 64];
@@ -271,6 +299,22 @@ mod tests {
             (3340, 740)
         );
     }
+    #[test]
+    fn a_saved_origin_wins_only_while_the_full_frame_is_clear() {
+        let place = |origin| {
+            place_editor(
+                origin,
+                (300, 170),
+                [0, 0, 1200, 800],
+                &[[0, 0, 400, 700]],
+                10,
+                true,
+            )
+        };
+        assert_eq!(place((650, 200)), (650, 200));
+        assert_eq!(place((399, 200)), (410, 0));
+    }
+
     #[test]
     fn placement_checks_sides_in_order_and_avoids_every_editor() {
         let work = [0, 0, 1200, 800];
