@@ -3204,12 +3204,22 @@ mod tests {
     #[test]
     fn an_mp3_card_shows_its_bitrate_and_loudness_over_true_peak() {
         if let Err(why) = mp3::load(None) {
-            eprintln!(
-                "an_mp3_card_shows_its_bitrate_and_loudness_over_true_peak: lame_enc.dll が見つからないため飛ばす: {why}"
+            assert!(
+                std::env::var_os(mp3::LAME_ENV).is_none_or(|path| path.is_empty()),
+                "cannot load the requested LAME library: {why}"
             );
+            eprintln!("MP3 export card test skipped: {why}");
             return;
         }
         let (_tmp, mut s, dir) = saved("mp3");
+        let track = s
+            .project()
+            .tracks
+            .values()
+            .find(|track| track.name == "Keys")
+            .unwrap()
+            .id;
+        crate::instrument::play_tests::give_track_sample(&mut s, track);
         let g = s.geometry(1600.0, 900.0);
         s.open_export(Rect::new(1500.0, -40.0, 28.0, 28.0));
         assert!(view(&s).mp3_error.is_none());

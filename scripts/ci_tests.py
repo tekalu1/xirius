@@ -137,6 +137,29 @@ def prepare():
 
 JUNIT = Path("target/nextest/ci/junit.xml")
 
+MP3_CASES = {
+    ("xirius-session::export_mp3", "each_bitrate_writes_a_constant_bitrate_file"),
+    ("xirius-session::export_mp3", "a_song_above_48k_is_written_at_48k_or_44k1"),
+    ("xirius-session::export_mp3", "id3_tags_name_the_song_and_the_track"),
+    ("xirius-session::export_mp3", "loudness_and_true_peak_are_those_of_the_mp3"),
+    ("xirius-ui", "export::tests::an_mp3_card_shows_its_bitrate_and_loudness_over_true_peak"),
+}
+
+
+def require_mp3_cases(junits):
+    counts = dict.fromkeys(MP3_CASES, 0)
+    for junit in junits:
+        for case in ET.parse(junit).iter("testcase"):
+            key = (case.get("classname"), case.get("name"))
+            if key in counts:
+                if any(case.find(tag) is not None for tag in ("skipped", "failure", "error")):
+                    raise RuntimeError(f"MP3 test did not pass: {' '.join(key)}")
+                counts[key] += 1
+    for key, count in sorted(counts.items()):
+        if count != 1:
+            raise RuntimeError(f"expected one MP3 result for {' '.join(key)}, got {count}")
+    print(f"JUnit confirms {len(counts)} encoder-dependent MP3 tests passed")
+
 
 def flaky_tests(junit):
     """The tests of a nextest junit file that failed and then passed on a retry."""
@@ -198,10 +221,14 @@ def main():
     parser.add_argument("--check-coverage", type=Path, help="check the combined observations")
     parser.add_argument("--expected-shards", type=int, default=0)
     parser.add_argument("--flaky-summary", type=Path, help="list the retried tests of junit files under this directory")
+    parser.add_argument("--check-mp3-junit", type=Path, help="require all encoder-dependent MP3 cases in these JUnit files")
     parser.add_argument("--doctest", action="store_true")
     parser.add_argument("--default-features", action="store_true")
     parser.add_argument("--legacy", action="store_true", help="run the original Cargo test groups")
     args = parser.parse_args()
+    if args.check_mp3_junit:
+        require_mp3_cases(sorted(args.check_mp3_junit.rglob("junit.xml")))
+        return 0
     if args.flaky_summary:
         report_flaky(sorted(args.flaky_summary.rglob("junit.xml")), "all shards")
         return 0

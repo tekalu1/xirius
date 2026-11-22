@@ -518,6 +518,7 @@ source = "mockups/daw-plan.html § 機能のマトリクス/書き出し"
 done_when = "どの OS でも追加のインストールなしに MP3 で書き出せ、ラウドネスとトゥルーピークは MP3 の音で測る。LAME が読めないときは MP3 だけが書き出せず理由が出る"
 status = "partial"
 remaining = "Windows x64 と Linux x86_64（WSL）の LAME と MP3 書き出しを確認済み。Windows のインストーラー・zip と LAME の DLL・ライセンス・ソースの同梱は LIC-019 で実装・検証済み。macOS の libmp3lame.dylib は scripts/build-lame.sh で作れるはずだが実機で作っておらず、Mac の配布物への同梱も未確認"
+note = "Windows と macOS の通常 CI では OS ごとに公式ソースの SHA-256 を検証して LAME を作り、エンコーダーを使うセッションとカードの試験が実行されたことを JUnit で確かめる"
 
 [[item]]
 id = "EXP-049"

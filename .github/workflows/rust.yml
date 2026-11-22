@@ -72,9 +72,43 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+  lame:
+    name: test encoder (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            library: x64/lame_enc.dll
+          - os: macos-latest
+            library: macos/libmp3lame.dylib
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v5
+        with:
+          # Cache source only. The release build scripts verify its digest on every run.
+          path: ${{ runner.temp }}/lame/lame-3.100.tar.gz
+          key: lame-source-${{ runner.os }}-${{ hashFiles('scripts/build-lame.ps1', 'scripts/build-lame.sh') }}
+      - name: build LAME (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-lame.ps1 -Work "$env:RUNNER_TEMP/lame" -NoInstall
+      - name: build LAME (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: WORK="$RUNNER_TEMP/lame" bash scripts/build-lame.sh --no-install
+      - uses: actions/upload-artifact@v7
+        with:
+          name: test-encoder-${{ matrix.os }}
+          path: ${{ runner.temp }}/lame/${{ matrix.library }}
+          retention-days: 3
+          if-no-files-found: error
+
   test:
     name: test (${{ matrix.os }}, ${{ matrix.shard }})
-    needs: build
+    needs: [build, lame]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -82,6 +116,11 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest]
         shard: [1, 2, 3, 4]
+        include:
+          - os: windows-latest
+            library: lame_enc.dll
+          - os: macos-latest
+            library: libmp3lame.dylib
     steps:
       - uses: actions/checkout@v7
       - uses: taiki-e/install-action@v2
@@ -90,7 +129,13 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: tests-${{ matrix.os }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: test-encoder-${{ matrix.os }}
+          path: ${{ runner.temp }}/test-encoder
       - name: run shard without building
+        env:
+          XIRIUS_LAME: ${{ runner.temp }}/test-encoder/${{ matrix.library }}
         run: python scripts/ci_tests.py --run-archive tests.tar.zst --partition slice:${{ matrix.shard }}/4 --coverage-dir coverage
       - uses: actions/upload-artifact@v7
         if: always()
@@ -143,6 +188,8 @@ jobs:
       - name: flaky tests
         if: always()
         run: python scripts/ci_tests.py --flaky-summary junit
+      - name: require MP3 tests in JUnit
+        run: python scripts/ci_tests.py --check-mp3-junit junit
 
   deny:
     name: cargo-deny
