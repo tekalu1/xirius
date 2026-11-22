@@ -787,7 +787,7 @@ fn surface_geometry(s: &Studio, width: f32, height: f32) -> Geometry {
 #[cfg(windows)]
 pub(crate) fn channel_input_points(
     studio: &Rc<RefCell<Studio>>,
-    fixture: &str,
+    fixture_uid: &str,
     cx: &mut App,
 ) -> Option<serde_json::Value> {
     use crate::channel::{Part, Tool, part_at};
@@ -811,15 +811,17 @@ pub(crate) fn channel_input_points(
                     let instrument = v.tools.iter().find(|(tool, _)| *tool == Tool::Instrument);
                     let picker = s.popup.as_ref().and_then(|popup| {
                         popup.layout(g.size).cells.into_iter().find_map(|cell| {
-                            (cell.enabled && cell.text == fixture && cell.action.is_some())
-                                .then(|| center(cell.rect))
+                            let Some(crate::popup::Action::Pick(uid)) = cell.action else {
+                                return None;
+                            };
+                            (cell.enabled && uid == fixture_uid).then(|| center(cell.rect))
                         })
                     });
                     let p = s.project();
                     let track = p.tracks.get(&s.channel.as_ref()?.track)?;
                     let plugin = track.inserts.iter().find(|plugin| {
                         plugin.kind == xirius_core::model::PluginKind::Instrument
-                            && plugin.name == fixture
+                            && plugin.uid == fixture_uid
                     });
                     let card = plugin.and_then(|plugin| {
                         let pick = Pick::Plugin(plugin.id);
