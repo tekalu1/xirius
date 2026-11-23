@@ -380,6 +380,9 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 let h = hwnd.unwrap();
                 let main = crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap();
                 assert!(os::independent(h, main));
+                // Model a neighboring window without activating the test desktop. This
+                // gives Win32 a concrete insert-after target even when no app has focus.
+                let _neighbor = os::Neighbor::above(main);
                 os::sink(h);
                 wait(s, 5.0, |_| os::above(main, h));
                 assert!(os::above(main, h), "the editor was not below Studio");
@@ -545,10 +548,60 @@ fn plugin_status(s: &mut Studio, shot: &str) {
 mod os {
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GW_HWNDPREV, GW_OWNER, GetClassNameW, GetWindow, GetWindowTextW,
-        GetWindowThreadProcessId, HWND_BOTTOM, IsWindowVisible, PostMessageW, SWP_ASYNCWINDOWPOS,
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, WM_CLOSE,
+        CreateWindowExW, DestroyWindow, EnumWindows, GW_HWNDPREV, GW_OWNER, GetClassNameW,
+        GetWindow, GetWindowTextW, GetWindowThreadProcessId, HWND_BOTTOM, IsWindowVisible,
+        PostMessageW, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+        WM_CLOSE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
     };
+
+    pub struct Neighbor(HWND);
+
+    impl Neighbor {
+        pub fn above(main: isize) -> Self {
+            let (x, y) = xirius_vst3::Placement::offscreen().at.unwrap();
+            // SAFETY: STATIC is a system class; this thread creates both test windows.
+            unsafe {
+                let neighbor = Self(CreateWindowExW(
+                    WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                    windows_sys::w!("STATIC"),
+                    std::ptr::null(),
+                    WS_POPUP | WS_VISIBLE,
+                    x,
+                    y,
+                    16,
+                    16,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                ));
+                assert!(
+                    !neighbor.0.is_null(),
+                    "could not create the neighboring window"
+                );
+                if !above(neighbor.0 as isize, main) {
+                    SetWindowPos(
+                        main as HWND,
+                        neighbor.0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                    );
+                }
+                assert!(above(neighbor.0 as isize, main));
+                neighbor
+            }
+        }
+    }
+
+    impl Drop for Neighbor {
+        fn drop(&mut self) {
+            // SAFETY: the test window is released on its creating thread.
+            unsafe { DestroyWindow(self.0) };
+        }
+    }
 
     struct Find<'a> {
         known: &'a [&'a str],

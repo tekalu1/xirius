@@ -301,10 +301,28 @@ mod menu_io_tests {
 
     #[test]
     fn a_scan_status_poll_waits_for_the_session_owner_during_open() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-scan-poll-open-");
+        let song = root.path().join("song");
+        crate::song::Song::empty().save_as(&song).unwrap();
         let (mut s, first) = scanning(root.path());
-        assert!(s.request_open(crate::opening::Request::New));
+        let release = crate::browser_io_tests::Release::new();
+        let gate = release.0.clone();
+        let target = song.clone();
+        let (tx, entered) = mpsc::channel();
+        let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+            if op == "writer" && path == target {
+                let _ = tx.send(());
+                drop(
+                    gate.1
+                        .wait_while(gate.0.lock().unwrap(), |done| !*done)
+                        .unwrap(),
+                );
+            }
+            Ok(())
+        }));
+        assert!(s.request_open_file(crate::studio::FileRequest::Open, &song));
         s.poll_opening();
+        entered.recv_timeout(Duration::from_secs(20)).unwrap();
         assert!(s.opening.is_some());
 
         // The independent scan timer can fire while the open worker owns the session.
@@ -312,6 +330,7 @@ mod menu_io_tests {
         assert_eq!(s.mixer.scan.job.as_deref(), Some(first.as_str()));
         assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
 
+        release.release();
         opened(&mut s, &first);
         same_scan_done(&mut s, &first);
     }
