@@ -300,6 +300,23 @@ mod menu_io_tests {
     }
 
     #[test]
+    fn a_scan_status_poll_waits_for_the_session_owner_during_open() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut s, first) = scanning(root.path());
+        assert!(s.request_open(crate::opening::Request::New));
+        s.poll_opening();
+        assert!(s.opening.is_some());
+
+        // The independent scan timer can fire while the open worker owns the session.
+        s.poll_plugin_scan();
+        assert_eq!(s.mixer.scan.job.as_deref(), Some(first.as_str()));
+        assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
+
+        opened(&mut s, &first);
+        same_scan_done(&mut s, &first);
+    }
+
+    #[test]
     fn a_scan_running_when_an_opening_is_called_off_goes_on_and_nothing_fails() {
         let root = tempfile::tempdir().unwrap();
         let (mut s, first) = scanning(root.path());
@@ -949,6 +966,11 @@ impl Studio {
     /// Poll the scan without asking for another frame when its visible progress is unchanged.
     pub(crate) fn poll_plugin_scan(&mut self) -> bool {
         let loaded = self.poll_catalog();
+        // A running scan still belongs to the session while opening or saving takes it off
+        // the UI thread. The presentation session cannot answer its job status.
+        if self.opening.is_some() || self.saving.is_some() {
+            return loaded;
+        }
         let scan = &mut self.mixer.scan;
         if scan.auto && !scan.checked {
             if self.transport.is_windowed() && scan.cache_current.is_none() {

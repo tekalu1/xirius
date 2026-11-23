@@ -32,6 +32,7 @@ pub(crate) struct Saving {
     pub progress: Arc<SaveProgress>,
     pub target: Option<PathBuf>,
     pub(crate) leaving: Option<Leave>,
+    after_open: Option<crate::opening::Opening>,
     draft: Option<PathBuf>,
     pub(crate) close_when_done: bool,
     /// The person said the song's unwritten changes may be lost (UI-282: 「保存せずに進む」 on
@@ -302,6 +303,10 @@ impl Studio {
             self.launch_save(None, Some(leave));
             return;
         }
+        if matches!(leave, Leave::Close) && self.song.session().plugin_edits_need_save() {
+            self.ask_unsaved(crate::unsaved::Pending::SaveClose);
+            return;
+        }
         self.keep_leaving();
         if !self.song.writes_pending() && self.save_test_delay.is_zero() {
             self.finish_leaving(leave);
@@ -335,6 +340,16 @@ impl Studio {
 
     fn launch_save(&mut self, target: Option<PathBuf>, leaving: Option<Leave>) {
         self.launch_save_with_capture(target, leaving, true, None, None);
+    }
+
+    pub(crate) fn save_before_open(&mut self, open: crate::opening::Opening) {
+        self.launch_save(None, None);
+        self.saving.as_mut().unwrap().after_open = Some(open);
+    }
+
+    pub(crate) fn save_before_close(&mut self) {
+        self.launch_save(None, None);
+        self.saving.as_mut().unwrap().close_when_done = true;
     }
 
     pub(crate) fn save_for_mcp(&mut self, job: xirius_mcp::Job, result: Option<RunResult>) {
@@ -407,6 +422,7 @@ impl Studio {
             progress,
             target: None,
             leaving: None,
+            after_open: None,
             draft: None,
             close_when_done,
             lose_unwritten: false,
@@ -482,6 +498,7 @@ impl Studio {
             progress,
             target: None,
             leaving: None,
+            after_open: None,
             draft: None,
             close_when_done: false,
             lose_unwritten: false,
@@ -665,6 +682,7 @@ impl Studio {
             progress,
             target,
             leaving,
+            after_open: None,
             draft,
             close_when_done,
             lose_unwritten: false,
@@ -775,7 +793,11 @@ impl Studio {
             if save.progress.cancelled() {
                 pull.cancel();
                 self.fail_macro("マクロの操作を中止しました".into());
-                if let Some(mcp) = self.saving.take().unwrap().mcp {
+                let save = self.saving.take().unwrap();
+                if let Some(open) = save.after_open {
+                    self.abandon_state_open(open);
+                }
+                if let Some(mcp) = save.mcp {
                     mcp.job
                         .answer(Err(CmdError::conflict("保存を中止しました")));
                 }
@@ -801,7 +823,7 @@ impl Studio {
                 if waited < xirius_session::ara::STORE_WAIT {
                     return true;
                 }
-                if save.leaving.is_some() || save.close_when_done {
+                if save.leaving.is_some() || save.close_when_done || save.after_open.is_some() {
                     error = Some(PluginStateFailure::EditPending);
                 } else {
                     ara_late = true;
@@ -848,6 +870,9 @@ impl Studio {
             };
             let mut save = self.saving.take().unwrap();
             if let Err(error) = collected {
+                if let Some(open) = save.after_open.take() {
+                    self.abandon_state_open(open);
+                }
                 self.fail_macro(error.to_string());
                 if let Work::States(pull) = &save.work {
                     pull.cancel();
@@ -865,6 +890,12 @@ impl Studio {
                 } else {
                     self.drop_update_install(format!("更新を取りやめました: {error}"));
                 }
+                return true;
+            }
+            if matches!(save.leaving, Some(Leave::Close))
+                && self.song.session().plugin_edits_need_save()
+            {
+                self.ask_unsaved(crate::unsaved::Pending::SaveClose);
                 return true;
             }
             save.captured_states = !ara_late;
@@ -1040,6 +1071,13 @@ impl Studio {
             return true;
         }
         let result = result.map(|_| ());
+        if let Some(open) = save.after_open.take() {
+            if result.is_ok() && failures.is_empty() {
+                self.opening = Some(open);
+            } else {
+                self.abandon_state_open(open);
+            }
+        }
         match result {
             Err(error) if error.io_kind == Some(std::io::ErrorKind::Interrupted) => {
                 // The save was cancelled: the close is not going on, so the update is not

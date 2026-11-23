@@ -39,6 +39,7 @@ struct State {
     loaded: bool,
     dirty: bool,
     editing: bool,
+    editor_handle: u64,
     opening_editor: bool,
     editor_error: Option<String>,
     analysis_archive: Option<CachedArchive>,
@@ -236,14 +237,15 @@ impl RemoteService {
                     None => exchange(&mut input, &mut output, &pending, WireCommand::Poll),
                 };
                 match result {
-                    Ok(Reply::Snapshot(snapshot)) => {
-                        if let Err(e) = publish(&state, snapshot) {
+                    Ok(Reply::Snapshot(snapshot)) => match publish(&state, snapshot) {
+                        Ok(true) => notify(),
+                        Ok(false) => {}
+                        Err(e) => {
                             crash(&state, e.to_string());
                             notify();
                             break;
                         }
-                        notify();
-                    }
+                    },
                     Ok(Reply::Ack) => {
                         if syncing {
                             lock(&state).synced = true;
@@ -310,6 +312,15 @@ impl RemoteService {
     }
     pub fn editing(&self) -> bool {
         lock(&self.state).editing
+    }
+
+    pub fn editor_handle(&self) -> u64 {
+        let state = lock(&self.state);
+        if state.crashed.is_some() {
+            0
+        } else {
+            state.editor_handle
+        }
     }
     pub fn take_editor_error(&self) -> Option<String> {
         lock(&self.state).editor_error.take()
@@ -546,8 +557,10 @@ fn make_source(
     Ok(name)
 }
 
-fn publish(state: &Mutex<State>, snapshot: Snapshot) -> io::Result<()> {
+fn publish(state: &Mutex<State>, snapshot: Snapshot) -> io::Result<bool> {
     let mut state = lock(state);
+    // Heartbeats with the same generation should not rebuild the live timelines.
+    let changed = state.generation != snapshot.generation;
     let mut clips = HashMap::new();
     let mut active = HashMap::new();
     for (key, wire) in snapshot.states {
@@ -585,6 +598,7 @@ fn publish(state: &Mutex<State>, snapshot: Snapshot) -> io::Result<()> {
     state.loaded = snapshot.loaded;
     state.dirty |= snapshot.dirty;
     state.editing = snapshot.editing;
+    state.editor_handle = snapshot.editor_handle;
     state.editor_error = snapshot.editor_error.or(state.editor_error.take());
     if state.editing || state.editor_error.is_some() {
         state.opening_editor = false;
@@ -600,5 +614,5 @@ fn publish(state: &Mutex<State>, snapshot: Snapshot) -> io::Result<()> {
     state.requests.extend(snapshot.requests);
     state.info = snapshot.info;
     state.generation = snapshot.generation;
-    Ok(())
+    Ok(changed)
 }

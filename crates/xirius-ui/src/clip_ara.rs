@@ -58,6 +58,8 @@ pub struct AraUi {
     pub reports: Vec<Report>,
     /// The plugins whose window was open at the last poll.
     pub editing: Vec<String>,
+    #[cfg(windows)]
+    pub(crate) editor_windows: std::collections::HashMap<String, (u64, u64)>,
     /// The tests' plugins, in place of the host's.
     pub fake: Option<Vec<Report>>,
     /// The windows asked for without a host (the tests): the plugin and its clips.
@@ -252,9 +254,10 @@ impl Studio {
     }
 
     /// Between frames: reads the plugins' state, takes the edits of a window that closed into
-    /// the song, and says what a window could not open. True while a badge's ring turns.
+    /// the song, and says what a window could not open. True on changes and while a ring turns.
     pub fn poll_ara(&mut self) -> bool {
         let mut archive_pending = false;
+        let mut changed = false;
         if self.ara.fake.is_none() {
             let Some(host) = self.transport.host() else {
                 if self.ara_without_host() {
@@ -267,12 +270,18 @@ impl Studio {
                 self.ara.open_after_attach.clear();
                 return false;
             }
-            self.ara.reports = host.ara_reports();
+            let reports = host.ara_reports();
+            changed = reports != self.ara.reports;
+            self.ara.reports = reports;
             let editing = host.ara_editing();
+            #[cfg(windows)]
+            let windows = host.ara_editor_windows();
             let errors = host.take_ara_editor_errors();
             archive_pending = host.take_ara_arrived();
             let closed = self.ara.editing.iter().any(|p| !editing.contains(p));
             self.ara.editing = editing;
+            #[cfg(windows)]
+            self.sync_ara_editor_windows(windows);
             if closed {
                 self.pull_plugins();
             }
@@ -283,7 +292,8 @@ impl Studio {
         self.poll_ara_open_after_attach();
         let p = self.project();
         // Keep frames coming for an archive still on its way or a turning badge.
-        archive_pending
+        changed
+            || archive_pending
             || p.ara
                 .clips
                 .keys()
@@ -526,6 +536,11 @@ impl Studio {
         let title = format!("{name} · ARA");
         match host.open_ara_editor(&plugin, &title, place, clips) {
             Ok(()) => {
+                #[cfg(windows)]
+                if let Some((_, time)) = self.ara.editor_windows.get_mut(&plugin) {
+                    *time = crate::mixer::editors::editor_touch_time();
+                    self.raise_editors_over(0);
+                }
                 self.ara_open_requested(&plugin, clips);
                 true
             }

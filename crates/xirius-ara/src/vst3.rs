@@ -285,6 +285,10 @@ impl Window for Editor {
         Editor::raise(self);
     }
 
+    fn native_handle(&self) -> u64 {
+        self.hwnd() as u64
+    }
+
     fn set_caption(&self, caption: Caption) {
         Editor::set_caption(self, caption);
     }

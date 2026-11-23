@@ -34,6 +34,12 @@ use crate::tools::Mods;
 const TRACK: &str = "ARA";
 const RATE: u32 = 48_000;
 const SECONDS: f64 = 8.0;
+const FIXTURE_UID: &str = "xirius-native-ara-fixture";
+const FIXTURE_NAME: &str = "ARA test plugin";
+
+fn fixture() -> bool {
+    cfg!(all(windows, debug_assertions)) && std::env::var_os("XIRIUS_ARA_NATIVE_FIXTURE").is_some()
+}
 
 const fn laid(n: u8) -> Act {
     Act::Stage(Play::Laid(play), n)
@@ -100,11 +106,19 @@ fn entry() -> Option<&'static Entry> {
 }
 
 fn uid() -> &'static str {
-    entry().map_or("", |e| e.uid.as_str())
+    if fixture() {
+        FIXTURE_UID
+    } else {
+        entry().map_or("", |e| e.uid.as_str())
+    }
 }
 
 fn name() -> &'static str {
-    entry().map_or("", |e| e.name.as_str())
+    if fixture() {
+        FIXTURE_NAME
+    } else {
+        entry().map_or("", |e| e.name.as_str())
+    }
 }
 
 /// Where the run keeps its song.
@@ -142,6 +156,29 @@ fn wait(s: &mut Studio, secs: f32, done: impl Fn(&Studio) -> bool) {
         stranger();
         done(s)
     });
+}
+
+fn assert_ready_repaints(s: &mut Studio) {
+    assert_eq!(badge(s), "ready");
+    // Hold the last busy badge on the UI side while the real host is already
+    // idle. The poll consuming Ready must request a frame of its own.
+    let key = clip(s).unwrap().0;
+    let report = s
+        .ara
+        .reports
+        .iter_mut()
+        .find(|r| r.plugin == uid())
+        .unwrap();
+    let (_, phase) = report.phases.iter_mut().find(|(id, _)| *id == key).unwrap();
+    *phase = Phase::Waiting;
+    report.progress = 0.0;
+    assert_eq!(badge(s), "busy:0");
+    assert!(
+        s.poll_ara(),
+        "the final ARA status did not request a repaint"
+    );
+    assert_eq!(badge(s), "ready");
+    eprintln!("ara-check ready_repaints=true");
 }
 
 /// Ends the run when a window of this process shows that is neither the app's nor the plugin's
@@ -185,30 +222,34 @@ fn docs(s: &Studio) -> Vec<String> {
 }
 
 fn play(s: &mut Studio, g: &Geometry, n: u8) {
-    let Some(entry) = plugin().and(entry()) else {
-        panic!("ara-real stage={n}: XIRIUS_ARA_REAL_PLUGIN names no ARA plugin");
-    };
     if n == 0 {
         s.drawer_open = false;
         s.mixer.scan.auto = false;
-        // Preparation and reopening read the catalogue from disk too. Keep this fixture
-        // in the isolated profile, so the run never depends on the user's scan cache.
-        xirius_plugins::CacheFile {
-            bundles: vec![xirius_plugins::BundleRecord {
-                path: entry.path.clone(),
-                fingerprint: xirius_plugins::fingerprint(&entry.path),
+        if fixture() {
+            #[cfg(all(windows, debug_assertions))]
+            xirius_session::ara::register_native_fixture(FIXTURE_UID, FIXTURE_NAME);
+            s.use_plugins(Catalog::default());
+        } else {
+            let entry = entry().expect("XIRIUS_ARA_REAL_PLUGIN names no ARA plugin");
+            // Preparation and reopening read the catalogue from disk too. Keep this fixture
+            // in the isolated profile, so the run never depends on the user's scan cache.
+            xirius_plugins::CacheFile {
+                bundles: vec![xirius_plugins::BundleRecord {
+                    path: entry.path.clone(),
+                    fingerprint: xirius_plugins::fingerprint(&entry.path),
+                    entries: vec![entry.clone()],
+                    failure: None,
+                    probe_ms: 0,
+                }],
+                ..Default::default()
+            }
+            .write(s.song.plugin_cache())
+            .unwrap();
+            s.use_plugins(Catalog {
                 entries: vec![entry.clone()],
-                failure: None,
-                probe_ms: 0,
-            }],
-            ..Default::default()
+                failures: Vec::new(),
+            });
         }
-        .write(s.song.plugin_cache())
-        .unwrap();
-        s.use_plugins(Catalog {
-            entries: vec![entry.clone()],
-            failures: Vec::new(),
-        });
         let dir = dir();
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -334,8 +375,55 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 offscreen && !front,
                 "the window came on a screen or to the front"
             );
+            #[cfg(windows)]
+            {
+                let h = hwnd.unwrap();
+                let main = crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap();
+                assert!(os::independent(h, main));
+                os::sink(h);
+                wait(s, 5.0, |_| os::above(main, h));
+                assert!(os::above(main, h), "the editor was not below Studio");
+                s.raise_editors_over(main as u64);
+                wait(s, 5.0, |_| os::above(h, main));
+                assert!(
+                    os::above(h, main),
+                    "Studio did not restore its independent editor"
+                );
+                os::sink(h);
+                wait(s, 5.0, |_| os::above(main, h));
+                assert!(os::above(main, h));
+                assert!(s.open_ara_editor_for(&[c]));
+                wait(s, 5.0, |_| os::above(h, main));
+                assert!(
+                    os::above(h, main),
+                    "selecting the clip did not raise the editor"
+                );
+                assert!(!crate::park::is_foreground(h));
+                eprintln!("ara-check {shot} independent_raise=true");
+            }
         }
         7 => {
+            #[cfg(all(windows, debug_assertions))]
+            if fixture() {
+                run_ok(s, "project.save", json!({}));
+                wait(s, 30.0, |s| s.saving.is_none());
+                wait(s, 10.0, |s| s.save_mark() != crate::keep::SaveMark::Saving);
+                assert_eq!(s.save_mark(), crate::keep::SaveMark::Saved);
+                let archived = s.project().ara.archives.clone();
+                assert!(s.transport.host().unwrap().edit_ara_fixture(uid(), c));
+                wait(s, 10.0, |s| s.project().ara.archives != archived);
+                assert_ne!(
+                    s.project().ara.archives,
+                    archived,
+                    "the host did not collect the edit"
+                );
+                assert_eq!(
+                    s.save_mark(),
+                    crate::keep::SaveMark::Unsaved,
+                    "ARA edit did not mark the song unsaved"
+                );
+                eprintln!("ara-check {shot} edit_unsaved=true");
+            }
             let h = editor_window().expect("the editor is gone");
             os::close(h);
             wait(s, 30.0, |s| !s.ara.editing.iter().any(|p| p == uid()));
@@ -356,6 +444,9 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 "the song was written without the plugin's archive ({archived} archives)"
             );
             let song = dir().join("song");
+            assert!(s.close_to_home());
+            wait(s, 30.0, Studio::home_shown);
+            assert!(s.home_shown(), "the song did not close: {:?}", s.error);
             run_ok(s, "project.open", json!({ "path": song.to_string_lossy() }));
             wait(s, 30.0, |s| s.opening.is_none() && clip(s).is_some());
             let opened = s.opening.is_none() && s.error.is_none();
@@ -373,6 +464,7 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             eprintln!("ara-check {shot} docs={:?} error={:?}", docs(s), s.error);
             assert!(closed && saved && opened && back, "{:?}", s.error);
             assert_eq!(badge(s), "ready");
+            assert_ready_repaints(s);
         }
         _ => {
             s.popup = None;
@@ -395,6 +487,39 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 badge(s)
             );
             assert!(s.project().ara.clips.is_empty(), "the clip did not let go");
+            run_ok(s, "history.undo", json!({}));
+            wait(s, 30.0, |s| s.saving.is_none() && badge(s) == "ready");
+            assert_eq!(badge(s), "ready", "idle after undo: {:?}", docs(s));
+            assert_ready_repaints(s);
+            wait(s, 10.0, |s| s.save_mark() != crate::keep::SaveMark::Saving);
+            assert_eq!(
+                s.save_mark(),
+                crate::keep::SaveMark::Saved,
+                "undo returns to the saved state"
+            );
+            eprintln!("ara-check {shot} undo_ready=true");
+            run_ok(s, "history.redo", json!({}));
+            wait(s, 10.0, |s| s.project().ara.clips.is_empty());
+            assert!(s.project().ara.clips.is_empty());
+            wait(s, 10.0, |s| s.save_mark() != crate::keep::SaveMark::Saving);
+            assert_eq!(s.save_mark(), crate::keep::SaveMark::Unsaved);
+            eprintln!("ara-check {shot} detach_unsaved=true");
+            assert!(s.close_to_home());
+            wait(s, 10.0, |s| s.unsaved.is_some());
+            assert!(s.unsaved.is_some(), "closing did not ask to save");
+            s.answer_unsaved(false);
+            assert!(s.opening.is_none() && !s.home_shown());
+            assert!(s.close_to_home());
+            wait(s, 10.0, |s| s.unsaved.is_some());
+            assert!(s.unsaved.is_some());
+            s.answer_unsaved(true);
+            wait(s, 30.0, Studio::home_shown);
+            assert!(
+                s.home_shown(),
+                "the song did not close after saving: {:?}",
+                s.error
+            );
+            eprintln!("ara-check {shot} close_prompt=true");
         }
     }
 }
@@ -420,8 +545,9 @@ fn plugin_status(s: &mut Studio, shot: &str) {
 mod os {
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
-        PostMessageW, WM_CLOSE,
+        EnumWindows, GW_HWNDPREV, GW_OWNER, GetClassNameW, GetWindow, GetWindowTextW,
+        GetWindowThreadProcessId, HWND_BOTTOM, IsWindowVisible, PostMessageW, SWP_ASYNCWINDOWPOS,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, WM_CLOSE,
     };
 
     struct Find<'a> {
@@ -463,6 +589,50 @@ mod os {
     pub fn close(hwnd: isize) {
         // SAFETY: a message posted to the plugin host's editor window.
         unsafe { PostMessageW(hwnd as HWND, WM_CLOSE, 0, 0) };
+    }
+
+    pub fn independent(hwnd: isize, main: isize) -> bool {
+        // SAFETY: queries the editor's owner and the two windows' process ids.
+        unsafe {
+            let mut editor_pid = 0;
+            let mut main_pid = 0;
+            GetWindowThreadProcessId(hwnd as HWND, &mut editor_pid);
+            GetWindowThreadProcessId(main as HWND, &mut main_pid);
+            editor_pid != 0
+                && main_pid != 0
+                && editor_pid != main_pid
+                && GetWindow(hwnd as HWND, GW_OWNER).is_null()
+        }
+    }
+
+    pub fn sink(hwnd: isize) {
+        // SAFETY: only changes the parked editor's order, asynchronously and without focus.
+        unsafe {
+            SetWindowPos(
+                hwnd as HWND,
+                HWND_BOTTOM,
+                0,
+                0,
+                0,
+                0,
+                SWP_ASYNCWINDOWPOS | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+            )
+        };
+    }
+
+    pub fn above(hwnd: isize, base: isize) -> bool {
+        let mut cur = base as HWND;
+        for _ in 0..4096 {
+            // SAFETY: only reads the current z-order.
+            cur = unsafe { GetWindow(cur, GW_HWNDPREV) };
+            if cur.is_null() {
+                break;
+            }
+            if cur as isize == hwnd {
+                return true;
+            }
+        }
+        false
     }
 }
 

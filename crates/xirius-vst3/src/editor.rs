@@ -65,6 +65,84 @@ fn frame_style(place: Placement) -> u32 {
         EX_STYLE
     }
 }
+/// Restacks a visible, independent plugin editor without waiting for its UI thread.
+pub fn raise_independent_editor(hwnd: u64, stack: &[u64], base: u64) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::SWP_ASYNCWINDOWPOS;
+    let hwnd = hwnd as HWND;
+    // SAFETY: window queries and the asynchronous raise do not wait for the foreign GUI.
+    unsafe {
+        if IsWindowVisible(hwnd) != 0 {
+            place_in_stack(hwnd, stack, base, 0, SWP_ASYNCWINDOWPOS);
+        }
+    }
+}
+
+unsafe fn place_in_stack(
+    window: HWND,
+    stack: &[u64],
+    stack_base: u64,
+    foreground_from: u64,
+    flags: u32,
+) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GW_HWNDNEXT, GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GetTopWindow, GetWindow, WS_EX_TOPMOST,
+    };
+    // SAFETY: Win32 checks the HWNDs. No process memory is accessed.
+    unsafe {
+        let mut above = Vec::new();
+        let has_base = IsWindow(stack_base as HWND) != 0;
+        let mut cursor = if has_base {
+            GetWindow(stack_base as HWND, GW_HWNDPREV)
+        } else {
+            GetTopWindow(std::ptr::null_mut())
+        };
+        while !cursor.is_null() && above.len() < 4096 {
+            above.push(cursor as u64);
+            cursor = GetWindow(cursor, if has_base { GW_HWNDPREV } else { GW_HWNDNEXT });
+        }
+        let rank = stack.iter().position(|&h| h == window as u64).unwrap_or(0);
+        let foreground = GetForegroundWindow();
+        let ceiling = (foreground_from == 0
+            && has_base
+            && GetWindow(foreground, GW_OWNER) == stack_base as HWND)
+            .then(|| above.iter().position(|&h| h == foreground as u64))
+            .flatten();
+        let after = stack[..rank]
+            .iter()
+            .rev()
+            .find(|h| {
+                above
+                    .iter()
+                    .take(ceiling.unwrap_or(above.len()))
+                    .any(|w| w == *h)
+            })
+            .copied()
+            .or_else(|| ceiling.map(|_| foreground as u64))
+            .or_else(|| {
+                // A background GUI's HWND_TOP can leave its frame below the active
+                // window. Insert after a concrete normal window above the base.
+                if !has_base {
+                    return None;
+                }
+                above.iter().copied().find(|&h| {
+                    h != window as u64
+                        && !stack.contains(&h)
+                        && GetWindowLongPtrW(h as HWND, GWL_EXSTYLE) & WS_EX_TOPMOST as isize == 0
+                })
+            })
+            .map_or(HWND_TOP, |h| h as HWND);
+        SetWindowPos(
+            window,
+            after,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | flags,
+        );
+    }
+}
+
 #[cfg(test)]
 mod key_focus_tests {
     use super::*;
@@ -1412,66 +1490,8 @@ impl Editor {
             .clone();
         // SAFETY: queries do not send messages to another GUI thread. Only our own frame moves.
         unsafe {
-            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GW_HWNDNEXT, GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GetWindow, SetForegroundWindow,
-                WS_EX_TOPMOST,
-            };
-            let mut above = Vec::new();
-            let has_base = IsWindow(bar.stack_base as HWND) != 0;
-            let mut cursor = if has_base {
-                GetWindow(bar.stack_base as HWND, GW_HWNDPREV)
-            } else {
-                windows_sys::Win32::UI::WindowsAndMessaging::GetTopWindow(std::ptr::null_mut())
-            };
-            while !cursor.is_null() && above.len() < 4096 {
-                above.push(cursor as u64);
-                cursor = GetWindow(cursor, if has_base { GW_HWNDPREV } else { GW_HWNDNEXT });
-            }
-            let rank = bar
-                .stack
-                .iter()
-                .position(|&h| h == self.hwnd as u64)
-                .unwrap_or(0);
-            let foreground = GetForegroundWindow();
-            let ceiling = (foreground_from == 0
-                && has_base
-                && GetWindow(foreground, GW_OWNER) == bar.stack_base as HWND)
-                .then(|| above.iter().position(|&h| h == foreground as u64))
-                .flatten();
-            let after = bar.stack[..rank]
-                .iter()
-                .rev()
-                .find(|h| {
-                    above
-                        .iter()
-                        .take(ceiling.unwrap_or(above.len()))
-                        .any(|w| w == *h)
-                })
-                .copied()
-                .or_else(|| ceiling.map(|_| foreground as u64))
-                .or_else(|| {
-                    // A background GUI's HWND_TOP can leave its frame below the active
-                    // window. Insert after a concrete normal window above the base.
-                    if !has_base {
-                        return None;
-                    }
-                    above.iter().copied().find(|&h| {
-                        h != self.hwnd as u64
-                            && !bar.stack.contains(&h)
-                            && GetWindowLongPtrW(h as HWND, GWL_EXSTYLE) & WS_EX_TOPMOST as isize
-                                == 0
-                    })
-                })
-                .map_or(HWND_TOP, |h| h as HWND);
-            SetWindowPos(
-                self.hwnd,
-                after,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            );
+            use windows_sys::Win32::UI::WindowsAndMessaging::{GWL_EXSTYLE, SetForegroundWindow};
+            place_in_stack(self.hwnd, &bar.stack, bar.stack_base, foreground_from, 0);
             if foreground_from != 0
                 && GetForegroundWindow() as u64 == foreground_from
                 && GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE as isize == 0

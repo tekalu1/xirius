@@ -77,6 +77,9 @@ pub trait Window {
     fn is_visible(&self) -> bool;
     /// Brings it above the other windows, without taking the foreground.
     fn raise(&self);
+    fn native_handle(&self) -> u64 {
+        0
+    }
     fn set_caption(&self, _caption: Caption) {}
 }
 
@@ -259,6 +262,7 @@ struct Shared {
     info: Mutex<Option<FactoryInfo>>,
     /// The plugin's editor window is open.
     editing: AtomicBool,
+    editor_handle: AtomicU64,
     /// Why the editor asked for without waiting did not open.
     editor_error: Mutex<Option<String>>,
     notify: Arc<dyn Fn() + Send + Sync>,
@@ -351,6 +355,7 @@ impl Service {
             requests: Mutex::new(Vec::new()),
             info: Mutex::new(None),
             editing: AtomicBool::new(false),
+            editor_handle: AtomicU64::new(0),
             editor_error: Mutex::new(None),
             notify,
         });
@@ -619,6 +624,10 @@ impl Service {
     /// Whether the plugin's editor window is open.
     pub fn editing(&self) -> bool {
         self.shared.editing.load(Ordering::Acquire)
+    }
+
+    pub fn editor_handle(&self) -> u64 {
+        self.shared.editor_handle.load(Ordering::Acquire)
     }
 
     /// The editor's caption colours, as the app's theme changed.
@@ -1890,6 +1899,9 @@ impl Ara {
                 .instance(dc, sys::ROLES_ALL, sys::ROLE_EDITOR_VIEW)
                 .map_err(|e| e.0)?;
             let window = contain::call(|| instance.open_editor(title, place)).map_err(|e| e.0)?;
+            self.shared
+                .editor_handle
+                .store(window.native_handle(), Ordering::Release);
             self.editor = Some(EditorView { window, instance });
             self.shared.editing.store(true, Ordering::Release);
             self.shared.changed();
@@ -1931,6 +1943,7 @@ impl Ara {
 
     fn close_editor(&mut self) {
         if let Some(e) = self.editor.take() {
+            self.shared.editor_handle.store(0, Ordering::Release);
             contain::call(|| drop(e));
             self.shared.editing.store(false, Ordering::Release);
             self.shared.changed();

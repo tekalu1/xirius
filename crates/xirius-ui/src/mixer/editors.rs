@@ -55,6 +55,13 @@ fn cannot(name: &str, why: &str) -> String {
     format!("{name} {why}ため、窓を開けません")
 }
 
+pub(crate) fn editor_touch_time() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
+}
+
 impl Studio {
     pub(crate) fn editor_foreground() -> u64 {
         #[cfg(windows)]
@@ -83,8 +90,36 @@ impl Studio {
             .iter()
             .filter_map(|e| self.mixer.editor_touches.get(&e.id).copied())
             .collect();
+        #[cfg(windows)]
+        windows.extend(self.ara.editor_windows.values().copied());
         windows.sort_by_key(|&(window, time)| std::cmp::Reverse((time, window)));
         windows.into_iter().map(|(window, _)| window).collect()
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn sync_ara_editor_windows(&mut self, live: Vec<(String, u64)>) {
+        let old = std::mem::take(&mut self.ara.editor_windows);
+        let mut opened = false;
+        for (plugin, hwnd) in live {
+            let state = old.get(&plugin).copied().filter(|(h, _)| *h == hwnd);
+            let entry = state.unwrap_or_else(|| {
+                opened = true;
+                (hwnd, editor_touch_time())
+            });
+            self.ara.editor_windows.insert(plugin, entry);
+        }
+        if opened {
+            self.raise_editors_over(0);
+        }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn touch_ara_editor(&mut self, window: u64) {
+        for (hwnd, time) in self.ara.editor_windows.values_mut() {
+            if *hwnd == window {
+                *time = editor_touch_time();
+            }
+        }
     }
 
     fn vst_bar(&self, plugin: &Plugin) -> xirius_vst3::EditorBar {
@@ -151,6 +186,10 @@ impl Studio {
         });
         self.mixer.editor_raises.base = window;
         self.mixer.editor_raises.request(ids);
+        #[cfg(windows)]
+        {
+            self.mixer.editor_raises.ara_pending = !self.ara.editor_windows.is_empty();
+        }
     }
 
     pub(crate) fn finish_editor_open(&mut self) -> bool {
@@ -185,7 +224,8 @@ impl Studio {
     pub(crate) fn pump_editor_raises(&mut self) {
         #[cfg(windows)]
         if self.mixer.editor_raises.activation.is_some()
-            && !self.mixer.editor_raises.pending.is_empty()
+            && (!self.mixer.editor_raises.pending.is_empty()
+                || self.mixer.editor_raises.ara_pending)
         {
             use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
                 GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON, VK_XBUTTON1, VK_XBUTTON2,
@@ -203,6 +243,21 @@ impl Studio {
                 .activation_ready(Self::editor_foreground(), pressed)
             {
                 return;
+            }
+        }
+        #[cfg(windows)]
+        if std::mem::take(&mut self.mixer.editor_raises.ara_pending) {
+            let stack = self.editor_stack();
+            let base = self.editor_stack_base(self.mixer.editor_raises.base);
+            for &hwnd in stack.iter().rev() {
+                if self
+                    .ara
+                    .editor_windows
+                    .values()
+                    .any(|(window, _)| *window == hwnd)
+                {
+                    xirius_vst3::raise_independent_editor(hwnd, &stack, base);
+                }
             }
         }
         let Some((id, ticket)) = self.mixer.editor_raises.next(std::time::Instant::now()) else {
@@ -231,46 +286,65 @@ impl Studio {
         unsafe {
             // SAFETY: queries and a foreground grant; no call waits on a plugin thread.
             use windows_sys::Win32::UI::WindowsAndMessaging::{
-                AllowSetForegroundWindow, GW_HWNDPREV, GW_OWNER, GetForegroundWindow, GetWindow,
-                GetWindowThreadProcessId, IsWindowVisible,
+                AllowSetForegroundWindow, GetForegroundWindow, GetWindowThreadProcessId,
             };
             let foreground = GetForegroundWindow();
             let mut process = 0;
             GetWindowThreadProcessId(foreground, &mut process);
             if process == std::process::id() {
-                if base == 0 {
-                    bar.stack_base = foreground as u64;
-                }
                 if let Some((window, _)) = self.mixer.editor_touches.get(&id)
                     && GetWindowThreadProcessId(*window as _, &mut process) != 0
                 {
                     AllowSetForegroundWindow(process);
                 }
             }
-            let base = bar.stack_base as windows_sys::Win32::Foundation::HWND;
-            let owner = GetWindow(base, GW_OWNER);
-            let root = if owner.is_null() { base } else { owner };
-            if !owner.is_null() && base == foreground {
-                // The active palette is the ceiling for the external editors.
-                bar.stack_base = root as u64;
-            } else if !root.is_null() {
-                // Clicking the main window raises its owned group as well.
-                let mut above = GetWindow(bar.stack_base as _, GW_HWNDPREV);
-                for _ in 0..4096 {
-                    if above.is_null() {
-                        break;
-                    }
-                    if IsWindowVisible(above) != 0 && GetWindow(above, GW_OWNER) == root {
-                        bar.stack_base = above as u64;
-                    }
-                    above = GetWindow(above, GW_HWNDPREV);
-                }
-            }
+            bar.stack_base = self.editor_stack_base(base);
         }
         if let Some(host) = self.transport.host() {
             host.plugin_editor_bar(id, bar);
             host.raise_plugin_editor(id, foreground_from);
         }
+    }
+
+    #[cfg(windows)]
+    fn editor_stack_base(&self, requested: u64) -> u64 {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GW_HWNDPREV, GW_OWNER, GetForegroundWindow, GetWindow, IsWindowVisible,
+        };
+        let mut base = if requested == 0 {
+            let foreground = Self::editor_foreground();
+            if foreground != 0 {
+                foreground
+            } else {
+                crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap_or(0) as u64
+            }
+        } else {
+            requested
+        };
+        // SAFETY: only queries the desktop's window handles and ownership.
+        unsafe {
+            let foreground = GetForegroundWindow();
+            let window = base as windows_sys::Win32::Foundation::HWND;
+            let owner = GetWindow(window, GW_OWNER);
+            let root = if owner.is_null() { window } else { owner };
+            if !owner.is_null() && window == foreground {
+                // The active palette is the ceiling for the external editors.
+                base = root as u64;
+            } else if !root.is_null() {
+                // Clicking the main window raises its owned group as well.
+                let mut above = GetWindow(window, GW_HWNDPREV);
+                for _ in 0..4096 {
+                    if above.is_null() {
+                        break;
+                    }
+                    if IsWindowVisible(above) != 0 && GetWindow(above, GW_OWNER) == root {
+                        base = above as u64;
+                    }
+                    above = GetWindow(above, GW_HWNDPREV);
+                }
+            }
+        }
+        base
     }
 
     /// Where a window of this process opens: over the studio's window and above it, or off
@@ -442,10 +516,7 @@ impl Studio {
     /// Bring an existing window forward through the same stack queue as a newly opened editor.
     pub(crate) fn raise_editor(&mut self, id: PluginId, source: u64) {
         if let Some((_, time)) = self.mixer.editor_touches.get_mut(&id) {
-            *time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_micros() as u64;
+            *time = editor_touch_time();
         }
         if source != 0 {
             self.mixer.editor_raises.foreground = Some((id, source));
@@ -720,6 +791,8 @@ pub(crate) struct RaiseQueue {
     base: u64,
     #[cfg(windows)]
     activation: Option<u64>,
+    #[cfg(windows)]
+    ara_pending: bool,
     foreground: Option<(PluginId, u64)>,
     pending: std::collections::VecDeque<PluginId>,
     flight: Option<(PluginId, u64, std::time::Instant)>,
@@ -741,6 +814,7 @@ impl RaiseQueue {
         }
         if self.activation != Some(foreground) {
             self.pending.clear();
+            self.ara_pending = false;
             self.activation = None;
             return false;
         }

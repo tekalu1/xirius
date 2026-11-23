@@ -66,11 +66,14 @@ pub struct Config {
     /// Restore reports only modification content.
     #[serde(default)]
     pub restore_content_only: bool,
+    /// Opens a native, parked window for the host-process UI tests.
+    #[serde(default)]
+    pub native_editor: bool,
 }
 
 thread_local! {
     /// The configuration of the next document made on this thread.
-    static NEXT: Cell<Config> = const { Cell::new(Config { open_reply_ms: 0, stalled_poll_ms: 0, prepare_ms: 0, editor_ms: 0, analysis_ms: 0, fault_on_analysis: false, fault_on_own_thread: false, hang_in_render: false, tail: 0.0, render_spin_us: 0, restore_content_only: false }) };
+    static NEXT: Cell<Config> = const { Cell::new(Config { open_reply_ms: 0, stalled_poll_ms: 0, prepare_ms: 0, editor_ms: 0, analysis_ms: 0, fault_on_analysis: false, fault_on_own_thread: false, hang_in_render: false, tail: 0.0, render_spin_us: 0, restore_content_only: false, native_editor: false }) };
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -1454,7 +1457,7 @@ static EDITOR_VIEW: Shared<sys::EditorViewInterface> = Shared(sys::EditorViewInt
     notify_hide_region_sequences,
 });
 
-/// The fake's editor window: only a flag.
+/// The fake's editor is normally represented by a flag.
 struct FakeWindow {
     open: Arc<AtomicBool>,
 }
@@ -1470,6 +1473,69 @@ impl Window for FakeWindow {
 impl Drop for FakeWindow {
     fn drop(&mut self) {
         self.open.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(windows)]
+mod native_editor {
+    use super::*;
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, IsWindowVisible, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    };
+
+    pub(super) struct Native(HWND);
+
+    impl Native {
+        pub(super) fn open(title: &str) -> Result<Box<dyn Window>, Error> {
+            let title: Vec<u16> = title.encode_utf16().chain([0]).collect();
+            let (x, y) = Placement::offscreen().at.expect("parked position");
+            // SAFETY: the predefined class and title are valid for this call. The ARA
+            // worker owns the window and pumps its messages.
+            let hwnd = unsafe {
+                CreateWindowExW(
+                    WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                    windows_sys::w!("STATIC"),
+                    title.as_ptr(),
+                    WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                    x,
+                    y,
+                    340,
+                    220,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                )
+            };
+            if hwnd.is_null() {
+                return Err(error("could not create the test editor window"));
+            }
+            Ok(Box::new(Self(hwnd)))
+        }
+    }
+
+    impl Window for Native {
+        fn is_visible(&self) -> bool {
+            // SAFETY: the handle belongs to this worker, or has already closed.
+            unsafe { IsWindowVisible(self.0) != 0 }
+        }
+
+        fn raise(&self) {
+            xirius_vst3::raise_independent_editor(self.native_handle(), &[], 0);
+        }
+
+        fn native_handle(&self) -> u64 {
+            self.0 as u64
+        }
+    }
+
+    impl Drop for Native {
+        fn drop(&mut self) {
+            // SAFETY: the ARA worker created the window and owns its lifetime.
+            unsafe { DestroyWindow(self.0) };
+        }
     }
 }
 
@@ -1579,6 +1645,10 @@ impl Instance for FakeInstance {
         if !self.views {
             violation("an editor opened on an instance without the editor view role");
             return Err(error("not an editor view"));
+        }
+        #[cfg(windows)]
+        if self.renderer.dc.config.native_editor {
+            return native_editor::Native::open(title);
         }
         let open = Arc::new(AtomicBool::new(true));
         lock(&WINDOWS).push((title.to_string(), open.clone()));

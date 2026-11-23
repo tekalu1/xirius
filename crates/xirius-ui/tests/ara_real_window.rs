@@ -21,6 +21,16 @@ fn a_real_ara_plugin_is_attached_edited_kept_and_detached_in_a_parked_window() {
         std::env::var_os("XIRIUS_ARA_REAL_PLUGIN").is_some(),
         "XIRIUS_ARA_REAL_PLUGIN names no plugin"
     );
+    run(false);
+}
+
+#[cfg(all(windows, debug_assertions))]
+#[test]
+fn ara_fixture_restores_raises_and_tracks_edits_in_a_parked_window() {
+    run(true);
+}
+
+fn run(fixture: bool) {
     let dir_tmp = tempfile::Builder::new()
         .prefix("xirius-ara-real-shots-")
         .tempdir()
@@ -43,10 +53,16 @@ fn a_real_ara_plugin_is_attached_edited_kept_and_detached_in_a_parked_window() {
     }
     // Optional program-code dependencies, laid out relative to CommonProgramFiles.
     // The fixture contains no user settings, authorization or license data.
-    if let Some(support) = std::env::var_os("XIRIUS_ARA_REAL_COMMON_FILES") {
+    if !fixture && let Some(support) = std::env::var_os("XIRIUS_ARA_REAL_COMMON_FILES") {
         copy_support(std::path::Path::new(&support), &dir.join("common"));
     }
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"));
+    if fixture {
+        command.env("XIRIUS_ARA_NATIVE_FIXTURE", "1");
+    } else {
+        command.env_remove("XIRIUS_ARA_NATIVE_FIXTURE");
+    }
+    let output = command
         .args(["--park", "--silent", "--script", "ara-real", "--shot"])
         .arg(&dir)
         .env("USERPROFILE", dir.join("profile"))
@@ -74,6 +90,10 @@ fn a_real_ara_plugin_is_attached_edited_kept_and_detached_in_a_parked_window() {
         "saved=true",
         "opened=true",
         "detached=true",
+        "undo_ready=true",
+        "ready_repaints=true",
+        "detach_unsaved=true",
+        "close_prompt=true",
     ] {
         assert!(
             stderr
@@ -81,6 +101,12 @@ fn a_real_ara_plugin_is_attached_edited_kept_and_detached_in_a_parked_window() {
                 .any(|l| l.starts_with("ara-check") && l.contains(check)),
             "{check}: {stderr}"
         );
+    }
+    if cfg!(windows) {
+        assert!(stderr.contains("independent_raise=true"), "{stderr}");
+    }
+    if fixture {
+        assert!(stderr.contains("edit_unsaved=true"), "{stderr}");
     }
     assert!(!stderr.contains("ara-skip"), "{stderr}");
 }

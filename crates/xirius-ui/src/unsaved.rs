@@ -8,6 +8,8 @@ use xirius_design::{FontSize, Layout, Radius, Weight};
 pub(crate) enum Pending {
     Open(Box<crate::opening::Opening>),
     Close,
+    SaveOpen(Box<crate::opening::Opening>),
+    SaveClose,
     /// The song's own record could not be written (UI-288): closing loses the edits since.
     CloseUnwritten,
     /// UI-351: a draft on the start screen's list, to delete once the person says so.
@@ -27,6 +29,8 @@ pub(crate) struct Question {
 }
 pub const TITLE: &str = "保存せずに進みますか";
 pub const PROCEED: &str = "保存せずに進む";
+const SAVE_TITLE: &str = "プラグインの変更を保存しますか";
+const SAVE: &str = "保存";
 /// What the deletion's question ends in, always shown; the song's name before it is cut.
 pub const DELETE_TITLE_TAIL: &str = "を削除しますか";
 pub const DELETE: &str = "削除";
@@ -35,7 +39,7 @@ pub const DELETE_WARNING: &str = "削除すると元に戻せません。";
 
 impl Studio {
     pub(crate) fn ask_unsaved(&mut self, pending: Pending) {
-        if !matches!(pending, Pending::CloseUnwritten | Pending::DeleteDraft(_)) {
+        if matches!(pending, Pending::Open(_) | Pending::Close) {
             self.keep.plugin_state_failed = true;
         }
         self.unsaved = Some(Question {
@@ -56,13 +60,21 @@ impl Studio {
                 }
             }
             Pending::Close if proceed => self.close_without_plugin_state(false),
+            Pending::SaveOpen(open) => {
+                if proceed {
+                    self.save_before_open(*open);
+                } else {
+                    self.abandon_state_open(*open);
+                }
+            }
+            Pending::SaveClose if proceed => self.save_before_close(),
             Pending::CloseUnwritten if proceed => self.close_without_plugin_state(true),
             Pending::DeleteDraft(ask) => {
                 if proceed {
                     self.begin_draft_delete(ask.dir);
                 }
             }
-            Pending::Close | Pending::CloseUnwritten => {
+            Pending::Close | Pending::CloseUnwritten | Pending::SaveClose => {
                 self.drop_update_install("更新を取りやめました".into())
             }
         }
@@ -174,6 +186,10 @@ pub(crate) fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) -> bool {
             }
             DELETE
         }
+        Pending::SaveOpen(_) | Pending::SaveClose => {
+            cells[0] = cells[0].clone().text(SAVE_TITLE);
+            SAVE
+        }
         pending => {
             cells[0] = cells[0].clone().text(TITLE);
             cells.push(Cell::new(line(48.0), Look::Label).text(match pending {
@@ -184,7 +200,12 @@ pub(crate) fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) -> bool {
         }
     };
     cells.push(Cell::new(back, Look::Button).text("戻る"));
-    cells.push(Cell::new(proceed, Look::Danger).text(proceed_label));
+    let look = if proceed_label == SAVE {
+        Look::Button
+    } else {
+        Look::Danger
+    };
+    cells.push(Cell::new(proceed, look).text(proceed_label));
     crate::popup::paint(
         pen,
         &PopupLayout {
@@ -217,6 +238,7 @@ pub(crate) fn said(s: &Studio, g: &Geometry) -> Option<Said> {
             DELETE,
             DRAFT_EXTRA,
         ),
+        Pending::SaveOpen(_) | Pending::SaveClose => (SAVE_TITLE.into(), SAVE, 0.0),
         _ => (TITLE.to_string(), PROCEED, 0.0),
     };
     let (back, proceed) = buttons(g, extra);
