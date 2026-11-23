@@ -1281,6 +1281,8 @@ fn watch_plugin_status(window: &Window, cx: &mut Context<Screen>) {
     cx.spawn_in(window, async move |this, cx| {
         #[cfg(windows)]
         let mut previous_foreground = 0;
+        #[cfg(windows)]
+        let mut previous_ara_foreground = 0;
         loop {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(100))
@@ -1293,7 +1295,22 @@ fn watch_plugin_status(window: &Window, cx: &mut Context<Screen>) {
                 {
                     // GPUI can report activation while Windows still has another
                     // foreground HWND. Sample the OS, including returns to palettes.
-                    let foreground = if studio.mixer.editors.is_empty() {
+                    if !studio.ara.editor_windows.is_empty()
+                        && std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_none()
+                    {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+                        // SAFETY: only reads the foreground window handle.
+                        let foreground = unsafe { GetForegroundWindow() } as u64;
+                        if foreground != previous_ara_foreground {
+                            previous_ara_foreground = foreground;
+                            studio.touch_ara_editor(foreground);
+                        }
+                    } else {
+                        previous_ara_foreground = 0;
+                    }
+                    let foreground = if studio.mixer.editors.is_empty()
+                        && studio.ara.editor_windows.is_empty()
+                    {
                         0
                     } else {
                         Studio::editor_foreground()

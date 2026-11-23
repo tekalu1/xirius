@@ -570,6 +570,13 @@ impl Studio {
                 self.ask_state_open();
                 return true;
             }
+            if open.to_home && !open.discard_states && self.song.session().plugin_edits_need_save()
+            {
+                let mut open = self.opening.take().unwrap();
+                open.pull = None;
+                self.ask_unsaved(crate::unsaved::Pending::SaveOpen(Box::new(open)));
+                return true;
+            }
             let session = self.song.take_session_for_save();
             let started = if let Some(command) = &open.command {
                 open.pending.take();

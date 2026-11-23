@@ -905,6 +905,36 @@ impl Session {
         self.current.clone()
     }
 
+    /// Plugin changes that need an explicit save even when the recovery record is current.
+    pub fn plugin_edits_need_save(&self) -> bool {
+        if self
+            .saved
+            .as_ref()
+            .map_or(!self.current.ara.is_empty(), |saved| {
+                saved.ara != self.current.ara
+            })
+        {
+            return true;
+        }
+        self.current.tracks.iter().any(|(id, track)| {
+            let before = self.saved.as_ref().and_then(|p| p.tracks.get(id));
+            track
+                .inserts
+                .iter()
+                .filter(|p| p.builtin().is_some())
+                .any(|p| {
+                    let preset = before
+                        .and_then(|t| t.inserts.iter().find(|old| old.id == p.id))
+                        .and_then(|old| old.preset.as_deref())
+                        .unwrap_or(crate::xpreset::DEFAULT_PRESET);
+                    p.preset
+                        .as_deref()
+                        .unwrap_or(crate::xpreset::DEFAULT_PRESET)
+                        != preset
+                })
+        })
+    }
+
     pub fn registry(&self) -> &Registry {
         &self.registry
     }

@@ -12,7 +12,7 @@ use crate::service::{self, Phase, Probe, Rendered, Song};
 use crate::shared_audio::SharedAudio;
 
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 
 #[derive(Serialize, Deserialize)]
 pub enum Command {
@@ -94,6 +94,7 @@ pub struct Snapshot {
     pub loaded: bool,
     pub dirty: bool,
     pub editing: bool,
+    pub editor_handle: u64,
     pub editor_error: Option<String>,
     pub analysis_archive: Option<(Vec<u8>, String)>,
     pub requests: Vec<Request>,
@@ -316,6 +317,7 @@ pub fn run_worker() -> io::Result<()> {
                     std::thread::sleep(std::time::Duration::from_millis(stalled_poll_ms));
                 }
                 sent_loaded = service.loaded();
+                let generation = service.generation();
                 let states = service.states();
                 renders.retain(|key, _| states.get(key).is_some_and(|s| s.rendered.is_some()));
                 let mut wire = Vec::with_capacity(states.len());
@@ -361,11 +363,12 @@ pub fn run_worker() -> io::Result<()> {
                     loaded: service.loaded(),
                     dirty: service.take_dirty(),
                     editing: service.editing(),
+                    editor_handle: service.editor_handle(),
                     editor_error: service.take_editor_error(),
                     analysis_archive,
                     requests: service.take_requests(),
                     info: service.info(),
-                    generation: service.generation(),
+                    generation,
                 })
             }
             Command::Store { changed } => {

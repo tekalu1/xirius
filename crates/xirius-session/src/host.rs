@@ -916,6 +916,16 @@ impl SessionHost {
         self.builder.ara().editing()
     }
 
+    pub fn ara_editor_windows(&self) -> Vec<(String, u64)> {
+        self.builder.ara().editor_windows()
+    }
+
+    #[doc(hidden)]
+    #[cfg(all(windows, debug_assertions))]
+    pub fn edit_ara_fixture(&self, plugin: &str, clip: xirius_core::id::ClipId) -> bool {
+        self.builder.ara().edit_fixture(&self.song, plugin, clip.0)
+    }
+
     /// Whether an ARA plugin's archive asked for is still on its way, taking in the ones that
     /// came (a later collect puts them into the song). Never waits. Only the song's plugins
     /// count: a document no clip uses any more is let go of once its last edits came, and not

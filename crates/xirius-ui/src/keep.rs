@@ -7,7 +7,8 @@
 //! - **保存中** for [`FLASH_MS`] after an edit, an explicit save or an automatic save point, and for as long as
 //!   the session's thread is still writing them (PRJ-022);
 //! - **保存済み** when the song has a folder and nothing is failing;
-//! - **未保存** when the song has been edited and has no folder to be recorded in.
+//! - **未保存** when the song has been edited and has no folder to be recorded in,
+//!   or when ARA or a built-in preset differs from the last explicit save.
 //! - **保存できません** after a failed write, until a save succeeds (UI-288).
 //!
 //! A song nobody has saved yet gets a *draft* folder of the app's own at its first edit
@@ -101,6 +102,9 @@ impl Keep {
     pub fn mark(&self, song: &Song, now: u64) -> SaveMark {
         if self.failed.is_some() || self.plugin_state_failed {
             return SaveMark::Failed;
+        }
+        if song.session().plugin_edits_need_save() {
+            return SaveMark::Unsaved;
         }
         if song.record_dir().is_some() && self.failed.is_none() {
             if now < self.flash_until || song.writes_pending() {
@@ -699,6 +703,71 @@ mod tests {
 
     fn add(s: &mut Studio, name: &str) {
         assert!(s.run_command("track.add.audio", json!({ "name": name })));
+    }
+
+    #[test]
+    fn each_factory_preset_change_stays_unsaved_after_the_recovery_write() {
+        let (_tmp, mut s, root) = kept("factory-preset");
+        let save = root.join("saved");
+        for def in xirius_params::BUILTINS {
+            let names = xirius_params::factory_names(def);
+            let Some(preset) = names.first() else {
+                continue;
+            };
+            let (add_track, kind) = if def.kind == xirius_params::Kind::Instrument {
+                ("track.add.midi", "instrument")
+            } else {
+                ("track.add.audio", "effect")
+            };
+            assert!(s.run_command(add_track, json!({"name":def.name})));
+            let track = s
+                .project()
+                .tracks
+                .values()
+                .find(|track| track.name == def.name)
+                .unwrap()
+                .id;
+            assert!(s.run_command(
+                "plugin.add",
+                json!({"track":track,"name":def.name,"kind":kind,"format":"builtin","uid":def.uid}),
+            ));
+            let id = s.project().tracks[&track].inserts.last().unwrap().id;
+            if s.song.dir().as_deref() == Some(save.as_path()) {
+                s.song.save().unwrap();
+            } else {
+                s.song.save_as(&save).unwrap();
+            }
+            assert_eq!(
+                s.keep.mark(&s.song, u64::MAX),
+                SaveMark::Saved,
+                "{}",
+                def.name
+            );
+            assert!(s.load_preset(id, preset), "{}", def.name);
+            s.song.session().store();
+            assert_eq!(
+                s.keep.mark(&s.song, u64::MAX),
+                SaveMark::Unsaved,
+                "{}",
+                def.name
+            );
+            assert!(s.song.undo());
+            s.song.session().store();
+            assert_eq!(
+                s.keep.mark(&s.song, u64::MAX),
+                SaveMark::Saved,
+                "{}",
+                def.name
+            );
+            assert!(s.song.redo());
+            s.song.session().store();
+            assert_eq!(
+                s.keep.mark(&s.song, u64::MAX),
+                SaveMark::Unsaved,
+                "{}",
+                def.name
+            );
+        }
     }
 
     struct Gate(Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);

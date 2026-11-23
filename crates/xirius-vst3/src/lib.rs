@@ -40,6 +40,8 @@ mod process;
 mod serial;
 mod stream;
 
+#[cfg(windows)]
+pub use editor::raise_independent_editor;
 pub use editor::{Caption, Capture, Editor, OFFSCREEN_ENV, Placement, capture_window};
 pub use host::{ComponentHandler, Gesture, HostApplication, HostAttributeList, HostMessage};
 pub use module::{ClassInfo, Module, default_vst3_dir, default_vst3_dirs, find_bundles};

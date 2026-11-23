@@ -35,7 +35,7 @@ use std::time::{Duration, Instant, SystemTime};
 pub use xirius_ara::Phase;
 use xirius_ara::remote_client::RemoteService;
 pub use xirius_ara::service::Loader;
-use xirius_ara::service::{Binary, Caption, Placement, Rendered, Stored};
+use xirius_ara::service::{Caption, Placement, Rendered, Stored};
 use xirius_ara::{ClipSpec, Service, Song, SourceAudio};
 use xirius_core::ara::source_id;
 use xirius_core::model::{Clip, ClipBody, Project, TrackKind};
@@ -69,15 +69,30 @@ fn archive_lock<T>(m: &Mutex<T>, wait: bool) -> Option<MutexGuard<'_, T>> {
     }
 }
 
-fn registered() -> &'static Mutex<HashMap<String, (String, MakeLoader)>> {
-    static MAP: OnceLock<Mutex<HashMap<String, (String, MakeLoader)>>> = OnceLock::new();
+#[derive(Clone)]
+enum Registered {
+    Local(MakeLoader),
+    #[cfg(all(windows, debug_assertions))]
+    NativeFixture,
+}
+
+type Registry = HashMap<String, (String, Registered)>;
+
+fn registered() -> &'static Mutex<Registry> {
+    static MAP: OnceLock<Mutex<Registry>> = OnceLock::new();
     MAP.get_or_init(Default::default)
 }
 
 /// Makes `uid` an ARA plugin named `name`, loaded by `make`, ahead of the catalogue (the
 /// tests' stand-in plugin).
 pub fn register(uid: &str, name: &str, make: MakeLoader) {
-    lock(registered()).insert(uid.to_string(), (name.to_string(), make));
+    lock(registered()).insert(uid.to_string(), (name.to_string(), Registered::Local(make)));
+}
+
+#[doc(hidden)]
+#[cfg(all(windows, debug_assertions))]
+pub fn register_native_fixture(uid: &str, name: &str) {
+    lock(registered()).insert(uid.into(), (name.into(), Registered::NativeFixture));
 }
 
 /// The ARA plugins there are, as (id, name): the registered ones and the catalogue's.
@@ -102,25 +117,6 @@ pub fn find(catalog: &Catalog, uid: &str) -> Option<(String, String)> {
     plugins(catalog)
         .into_iter()
         .find(|(id, _)| id.eq_ignore_ascii_case(uid))
-}
-
-fn loader(catalog: &Catalog, uid: &str) -> Option<Loader> {
-    if let Some((_, make)) = lock(registered()).get(uid) {
-        return Some(make());
-    }
-    let e = catalog.find(uid).filter(|e| e.ara)?;
-    let (path, name, id) = (e.path.clone(), e.name.clone(), e.uid.clone());
-    match e.format.as_str() {
-        "vst3" => Some(Box::new(move || {
-            let b = xirius_ara::vst3::Vst3Binary::load(&path, Some(&name))?;
-            Ok(Box::new(b) as Box<dyn Binary>)
-        })),
-        "clap" => Some(Box::new(move || {
-            let b = xirius_ara::clap::ClapBinary::load(&path, &id)?;
-            Ok(Box::new(b) as Box<dyn Binary>)
-        })),
-        _ => None,
-    }
 }
 
 /// Puts the containment in front of the crash report, once (PLG-058).
@@ -332,6 +328,10 @@ impl ServiceHandle {
     pub fn editing(&self) -> bool {
         service_call!(self, editing())
     }
+
+    pub fn editor_handle(&self) -> u64 {
+        service_call!(self, editor_handle())
+    }
     pub fn take_editor_error(&self) -> Option<String> {
         service_call!(self, take_editor_error())
     }
@@ -425,11 +425,12 @@ impl Doc {
         format: &str,
         path: &Path,
         archive: Option<(Vec<u8>, String)>,
+        fixture: Option<xirius_ara::fake::Config>,
     ) -> Arc<Doc> {
         let restoring = archive.is_some();
         let host = xirius_engine::server::find_host()
             .unwrap_or_else(|| PathBuf::from("xirius-plugin-host"));
-        let service = ServiceHandle::Remote(RemoteService::start(
+        let service = ServiceHandle::Remote(RemoteService::start_with_fixture(
             &host,
             format,
             path,
@@ -437,6 +438,7 @@ impl Doc {
             &name,
             archive,
             Arc::new(crate::processed::bump),
+            fixture,
         ));
         Self::with_service(key, name, service, restoring)
     }
@@ -647,6 +649,9 @@ impl Doc {
             denominator: w.song.denominator,
             clips,
         };
+        if last.as_ref() == Some(&song) {
+            return;
+        }
         self.service.sync(&song);
         let keys: BTreeSet<u64> = song.clips.iter().map(|c| c.key).collect();
         lock(&self.sounds).retain(|k, _| keys.contains(k));
@@ -1086,9 +1091,9 @@ impl Held {
             return Some(d);
         }
         let catalog = catalog();
-        let registered = lock(registered()).contains_key(plugin);
+        let registered = lock(registered()).get(plugin).cloned();
         let entry = catalog.find(plugin).filter(|e| e.ara);
-        if !registered && entry.is_none() {
+        if registered.is_none() && entry.is_none() {
             return None;
         }
         let name = find(&catalog, plugin).map(|(_, n)| n).unwrap_or_else(|| {
@@ -1110,11 +1115,26 @@ impl Held {
             (None, Some(a)) => bytes_of(a),
             (None, None) => archive_of(p, plugin),
         };
-        let doc = if registered {
-            Doc::start(key, name, loader(&catalog, plugin)?, archive)
-        } else {
-            let entry = entry?;
-            Doc::start_remote(key, name, &entry.format, &entry.path, archive)
+        let doc = match registered {
+            Some((_, Registered::Local(make))) => Doc::start(key, name, make(), archive),
+            #[cfg(all(windows, debug_assertions))]
+            Some((_, Registered::NativeFixture)) => Doc::start_remote(
+                key,
+                name,
+                "fake",
+                Path::new(""),
+                archive,
+                Some(xirius_ara::fake::Config {
+                    analysis_ms: 300,
+                    restore_content_only: true,
+                    native_editor: true,
+                    ..Default::default()
+                }),
+            ),
+            None => {
+                let entry = entry?;
+                Doc::start_remote(key, name, &entry.format, &entry.path, archive, None)
+            }
         };
         // The song takes the plugin's last edits back ([`take_archives`]).
         *lock(&doc.stored) = left;
@@ -1215,6 +1235,28 @@ impl Held {
             .collect();
         out.sort();
         out
+    }
+
+    pub fn editor_windows(&self) -> Vec<(String, u64)> {
+        lock(&self.docs)
+            .iter()
+            .filter_map(|(key, doc)| {
+                let hwnd = doc.service.editor_handle();
+                (hwnd != 0).then(|| (key.clone(), hwnd))
+            })
+            .collect()
+    }
+
+    #[cfg(all(windows, debug_assertions))]
+    pub(crate) fn edit_fixture(&self, p: &Project, plugin: &str, key: u64) -> bool {
+        let doc = self.kept(p).into_iter().find(|doc| doc.plugin == plugin);
+        if let Some(doc) = doc
+            && let ServiceHandle::Remote(service) = doc.service()
+        {
+            service.fixture_edit(key, 0.5);
+            return true;
+        }
+        false
     }
 
     /// The editors' caption colours, as the app's theme changed.
