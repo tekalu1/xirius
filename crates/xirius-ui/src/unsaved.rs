@@ -139,6 +139,12 @@ fn buttons(g: &Geometry, extra: f32) -> (Rect, Rect) {
         Rect::new(r.right() - 128.0, r.bottom() - 44.0, 112.0, 28.0),
     )
 }
+#[cfg(windows)]
+pub(crate) fn question_rects(g: &Geometry) -> (Rect, Rect, Rect) {
+    let (back, save) = buttons(g, 0.0);
+    (card(g, 0.0), back, save)
+}
+
 /// The deletion's question: `「name」を削除しますか`, the name cut on its own side to leave
 /// the tail whole when the line is `w` wide. `measure` is how wide a text comes out.
 pub(crate) fn delete_title(name: &str, w: f32, mut measure: impl FnMut(&str) -> f32) -> String {

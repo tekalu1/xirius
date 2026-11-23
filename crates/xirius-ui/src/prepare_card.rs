@@ -421,6 +421,7 @@ impl Studio {
         {
             return;
         }
+        self.poll_plugin_scan();
         let project = self.project();
         if self.transport.retry_preparation(&project, self.song.dir()) {
             let mut card = Card::new(self.transport.start_progress().unwrap_or_default());

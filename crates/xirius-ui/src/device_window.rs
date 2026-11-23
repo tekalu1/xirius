@@ -29,6 +29,8 @@ pub(crate) mod verify_shots;
 pub(crate) struct Windows {
     open: HashMap<PluginId, WindowHandle<DeviceWindow>>,
     channel: Option<WindowHandle<DeviceWindow>>,
+    #[cfg(windows)]
+    channel_hwnd: u64,
     macros: Option<WindowHandle<DeviceWindow>>,
     save: Option<WindowHandle<DeviceWindow>>,
 }
@@ -72,6 +74,18 @@ impl Windows {
                 .update(cx, |_, window, _| hwnd_of(window) as u64)
                 .is_ok_and(|window| window == hwnd)
         })
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn channel_closed(&mut self) -> bool {
+        use windows_sys::Win32::UI::WindowsAndMessaging::IsWindow;
+        // GPUI posts the close to Windows. Wait until the owner has been raised by the OS.
+        // SAFETY: IsWindow only queries the handle, which may already have been destroyed.
+        if self.channel_hwnd != 0 && unsafe { IsWindow(self.channel_hwnd as _) == 0 } {
+            self.channel_hwnd = 0;
+            return true;
+        }
+        false
     }
 
     /// What is under the pointer, frontmost first (UI-353): the window that would see the
@@ -618,14 +632,20 @@ impl Windows {
         match result {
             Ok(handle) => {
                 self.channel = Some(handle);
+                #[cfg(windows)]
+                {
+                    self.channel_hwnd = handle
+                        .update(cx, |_, window, _| hwnd_of(window) as u64)
+                        .unwrap_or_default();
+                }
                 Self::refresh_channel(handle, source, cx);
                 // Showing an owned palette can raise the main window without activating it.
                 #[cfg(windows)]
                 cx.defer(move |cx| {
                     let _ = handle.update(cx, |view, window, _| {
                         view.studio
-                            .borrow()
-                            .raise_ara_editors_over(hwnd_of(window) as u64);
+                            .borrow_mut()
+                            .raise_editors_over(hwnd_of(window) as u64);
                     });
                 });
             }
@@ -888,6 +908,7 @@ pub(crate) fn channel_input_points(
                         })
                         .collect();
                     Some(serde_json::json!({
+                        "close": center(v.bar.close).map(|c| c * window.scale_factor()),
                         "instrument": tool(Tool::Instrument),
                         "picker": picker(fixture_uid), "card": plugin.and_then(|p| card(p.id)),
                         "loaded": plugin.is_some_and(|plugin| s.has_loaded(plugin.id)),

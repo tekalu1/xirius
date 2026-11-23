@@ -97,6 +97,23 @@ pub const SHOTS: &[Shot] = &[
         name: "ara-real09-main",
         acts: &[window(1)],
     },
+    Shot {
+        name: "ara-real-order-on-close",
+        acts: &[window(5)],
+    },
+    Shot {
+        name: "ara-real-save-question",
+        acts: &[
+            window(6),
+            Act::Press(Target::Top(BarButton::SongName)),
+            Act::Press(Target::PopupText("閉じる")),
+            window(7),
+        ],
+    },
+    Shot {
+        name: "ara-real-order-after-question",
+        acts: &[window(8)],
+    },
     // The window closed, the song saved and opened again: the clip has the plugin still.
     Shot {
         name: "ara-real10-closed",
@@ -241,7 +258,7 @@ pub(crate) fn observe_badge(clip: ClipId, badge: &Badge) {
 /// Pause the shot driver while product notifications alone drive the cached drawing.
 pub(crate) fn observing(s: &Studio) -> bool {
     #[cfg(windows)]
-    if observing_stack() {
+    if observing_stack() || observing_order(s) {
         return true;
     }
     PAINT.with_borrow_mut(|pending| {
@@ -670,6 +687,10 @@ fn play_window(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mu
             crate::keymap_shots::click(at, 1, window, cx);
         }
         3 => watch_paint("undo", clip(&studio.borrow()).unwrap()),
+        5..=8 => {
+            #[cfg(windows)]
+            check_order(studio, n, window, cx);
+        }
         _ => unreachable!(),
     }
 }
@@ -749,6 +770,119 @@ fn observing_stack() -> bool {
     })
 }
 
+#[cfg(windows)]
+struct OrderWatch {
+    main: isize,
+    editor: isize,
+    channel: isize,
+    points: Option<[(i32, i32); 3]>,
+    label: &'static str,
+    expires: Instant,
+}
+
+#[cfg(windows)]
+thread_local! {
+    static ORDER: RefCell<Option<OrderWatch>> = const { RefCell::new(None) };
+}
+
+#[cfg(windows)]
+fn check_order(studio: &Rc<RefCell<Studio>>, n: u8, window: &mut Window, cx: &mut App) {
+    let main = crate::device_window::hwnd_of(window);
+    let editor = editor_window().unwrap();
+    let mut channel = 0;
+    let mut points = None;
+    let label = match n {
+        5 => {
+            channel = crate::park::own_handle(crate::device_window::CHANNEL_TITLE).unwrap();
+            // Reproduce the native reactivation leaving Studio above the ownerless frame.
+            os::sink(editor);
+            wait(&mut studio.borrow_mut(), 2.0, |_| os::above(main, editor));
+            assert!(os::above(main, editor));
+            let hit = crate::device_window::channel_input_points(studio, "", cx).unwrap();
+            let [x, y]: [f32; 2] = serde_json::from_value(hit["close"].clone()).unwrap();
+            os::click(channel, x as i32, y as i32);
+            "channel_close"
+        }
+        6 | 7 => {
+            let s = studio.borrow();
+            let g = crate::screen::geometry(&s, window);
+            let (card, back, save) = crate::unsaved::question_rects(&g);
+            let at = [card, back, save].map(|r| {
+                let scale = window.scale_factor();
+                os::client_point(
+                    main,
+                    ((r.x + r.w / 2.0) * scale) as i32,
+                    ((r.y + r.h / 2.0 + xirius_design::Layout::TOP_BAR_H) * scale) as i32,
+                )
+            });
+            points = Some(at);
+            if n == 6 {
+                os::cover(editor, at);
+                drop(s);
+                let mut s = studio.borrow_mut();
+                os::put_behind(main, editor);
+                wait(&mut s, 2.0, |_| {
+                    at.into_iter().all(|p| os::top_at(p) == editor)
+                });
+                assert!(at.into_iter().all(|p| os::top_at(p) == editor));
+                return;
+            }
+            "modal_front"
+        }
+        8 => {
+            let at = {
+                let s = studio.borrow();
+                assert!(s.unsaved.is_some());
+                let g = crate::screen::geometry(&s, window);
+                let (_, back, _) = crate::unsaved::question_rects(&g);
+                (back.x + back.w / 2.0, back.y + back.h / 2.0)
+            };
+            crate::keymap_shots::click(at, 1, window, cx);
+            "modal_restore"
+        }
+        _ => unreachable!(),
+    };
+    ORDER.replace(Some(OrderWatch {
+        main,
+        editor,
+        channel,
+        points,
+        label,
+        expires: Instant::now() + Duration::from_secs(2),
+    }));
+}
+
+#[cfg(windows)]
+fn observing_order(s: &Studio) -> bool {
+    ORDER.with_borrow_mut(|order| {
+        let Some(watch) = order else { return false };
+        stranger();
+        let expected = match watch.points {
+            Some(points) => {
+                s.unsaved.is_some()
+                    && points
+                        .into_iter()
+                        .all(|point| os::top_at(point) == watch.main)
+                    && s.save_mark() == crate::keep::SaveMark::Unsaved
+            }
+            None => {
+                !os::visible(watch.channel)
+                    && s.unsaved.is_none()
+                    && os::above(watch.editor, watch.main)
+            }
+        };
+        if !expected && Instant::now() < watch.expires {
+            return true;
+        }
+        assert_eq!(editor_window(), Some(watch.editor));
+        assert!(os::independent(watch.editor, watch.main));
+        assert!(!crate::park::is_foreground(watch.editor));
+        eprintln!("ara-check {} ordered={expected}", watch.label);
+        *order = None;
+        false
+    })
+}
+
 fn editor_window() -> Option<isize> {
     let title = title();
     crate::park::any_window(&title).filter(|h| crate::park::own_handle(&title) != Some(*h))
@@ -768,12 +902,14 @@ fn plugin_status(s: &mut Studio, shot: &str) {
 
 #[cfg(windows)]
 mod os {
-    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, EnumWindows, GW_HWNDPREV, GW_OWNER, GetClassNameW,
-        GetWindow, GetWindowTextW, GetWindowThreadProcessId, HWND_BOTTOM, IsWindowVisible,
-        PostMessageW, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
-        WM_CLOSE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
+        CreateWindowExW, DestroyWindow, EnumWindows, GW_HWNDNEXT, GW_HWNDPREV, GW_OWNER,
+        GetClassNameW, GetTopWindow, GetWindow, GetWindowRect, GetWindowTextW,
+        GetWindowThreadProcessId, HWND_BOTTOM, IsWindowVisible, PostMessageW, SWP_ASYNCWINDOWPOS,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, WM_CLOSE, WM_LBUTTONDOWN,
+        WM_LBUTTONUP, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
     };
 
     pub struct Neighbor(HWND);
@@ -880,6 +1016,64 @@ mod os {
         }
     }
 
+    pub fn visible(hwnd: isize) -> bool {
+        // SAFETY: only queries the window.
+        unsafe { IsWindowVisible(hwnd as HWND) != 0 }
+    }
+
+    pub fn client_point(hwnd: isize, x: i32, y: i32) -> (i32, i32) {
+        let mut point = POINT { x, y };
+        // SAFETY: point remains valid across the call.
+        assert_ne!(unsafe { ClientToScreen(hwnd as HWND, &mut point) }, 0);
+        (point.x, point.y)
+    }
+
+    pub fn top_at((x, y): (i32, i32)) -> isize {
+        // The windows are offscreen, so walk native z-order and physical frame bounds.
+        // SAFETY: these queries do not deliver messages to any window.
+        unsafe {
+            let mut hwnd = GetTopWindow(std::ptr::null_mut());
+            for _ in 0..4096 {
+                if hwnd.is_null() {
+                    break;
+                }
+                let mut r = RECT::default();
+                if visible(hwnd as isize)
+                    && GetWindowRect(hwnd, &mut r) != 0
+                    && x >= r.left
+                    && x < r.right
+                    && y >= r.top
+                    && y < r.bottom
+                {
+                    return hwnd as isize;
+                }
+                hwnd = GetWindow(hwnd, GW_HWNDNEXT);
+            }
+        }
+        0
+    }
+
+    pub fn cover(hwnd: isize, [center, _, _]: [(i32, i32); 3]) {
+        // SAFETY: moves only the parked test editor without activation or resize.
+        unsafe {
+            let hwnd = hwnd as HWND;
+            let mut r = RECT::default();
+            assert_ne!(GetWindowRect(hwnd, &mut r), 0);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                center.0 - (r.right - r.left) / 2,
+                center.1 - (r.bottom - r.top) / 2,
+                0,
+                0,
+                SWP_ASYNCWINDOWPOS
+                    | SWP_NOACTIVATE
+                    | SWP_NOSIZE
+                    | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOZORDER,
+            );
+        }
+    }
+
     pub fn sink(hwnd: isize) {
         // SAFETY: only changes the parked editor's order, asynchronously and without focus.
         unsafe {
@@ -893,6 +1087,30 @@ mod os {
                 SWP_ASYNCWINDOWPOS | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
             )
         };
+    }
+
+    pub fn click(hwnd: isize, x: i32, y: i32) {
+        let at = (((y as u32) << 16) | (x as u32 & 0xffff)) as LPARAM;
+        // SAFETY: address messages to the parked test window without OS input or focus.
+        unsafe {
+            assert_ne!(PostMessageW(hwnd as HWND, WM_LBUTTONDOWN, 1, at), 0);
+            assert_ne!(PostMessageW(hwnd as HWND, WM_LBUTTONUP, 0, at), 0);
+        }
+    }
+
+    pub fn put_behind(hwnd: isize, after: isize) {
+        // SAFETY: move the parked test frame in z-order without activating it.
+        unsafe {
+            SetWindowPos(
+                hwnd as HWND,
+                after as HWND,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+            );
+        }
     }
 
     pub fn above(hwnd: isize, base: isize) -> bool {
