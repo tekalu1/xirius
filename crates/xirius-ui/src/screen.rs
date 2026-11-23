@@ -601,7 +601,7 @@ impl Screen {
             // A click can raise the main window without changing the foreground window.
             #[cfg(windows)]
             if s.pointer_held {
-                s.raise_ara_editors_over(crate::device_window::hwnd_of(window) as u64);
+                s.raise_editors_over(crate::device_window::hwnd_of(window) as u64);
             }
             s.pointer_held = false;
             s.text_drag = false;
@@ -1298,6 +1298,11 @@ fn watch_plugin_status(window: &Window, cx: &mut Context<Screen>) {
                 };
                 #[cfg(windows)]
                 {
+                    let main = crate::device_window::hwnd_of(_window) as u64;
+                    studio.sync_modal_editor_order(main);
+                    if this.device_windows.channel_closed() {
+                        studio.raise_editors_over(main);
+                    }
                     // GPUI can report activation while Windows still has another
                     // foreground HWND. Sample the OS, including returns to palettes.
                     if !studio.ara.editor_windows.is_empty()
@@ -1323,11 +1328,14 @@ fn watch_plugin_status(window: &Window, cx: &mut Context<Screen>) {
                     if foreground != previous_foreground {
                         previous_foreground = foreground;
                         if foreground != 0
-                            && (foreground == crate::device_window::hwnd_of(_window) as u64
+                            && (foreground == main
                                 || this.device_windows.contains_hwnd(foreground, cx))
                         {
                             studio.studio_window_activated(foreground);
                         }
+                    }
+                    if foreground != 0 && foreground == main {
+                        studio.keep_ara_above_main(main);
                     }
                 }
                 if !studio.finish_editor_open() {
@@ -1743,6 +1751,8 @@ impl Render for Screen {
             {
                 window.request_animation_frame();
             }
+            #[cfg(windows)]
+            studio.sync_modal_editor_order(crate::device_window::hwnd_of(window) as u64);
             studio.follow_playhead(&g);
             if studio.drag_edge_frame(&g) {
                 window.request_animation_frame();

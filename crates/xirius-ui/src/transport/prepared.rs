@@ -262,6 +262,7 @@ pub(super) struct Start {
     latest: std::cell::RefCell<Progress>,
     failures: Arc<Mutex<Option<Vec<xirius_session::build::PreparationFailure>>>>,
     choice: Arc<AtomicU8>,
+    retry_catalog: Arc<Mutex<Option<Arc<Catalog>>>>,
     track_snapshot: Vec<(TrackId, Arc<xirius_core::model::Track>)>,
 }
 impl Start {
@@ -292,6 +293,8 @@ impl Start {
         let failed = failures.clone();
         let choice = Arc::new(AtomicU8::new(0));
         let choosing = choice.clone();
+        let retry_catalog = Arc::new(Mutex::new(None));
+        let catalog_update = retry_catalog.clone();
         let status = progress.clone();
         let config = t.host_config(dir.clone());
         let track_snapshot = p.tracks.iter().map(|(id, t)| (*id, t.clone())).collect();
@@ -376,6 +379,13 @@ impl Start {
                     break;
                 }
                 choosing.store(0, Ordering::Release);
+                if let Some(catalog) = catalog_update
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take()
+                {
+                    host.set_catalog(Some(catalog));
+                }
                 track_failures = host.retry_prepared(&mut audio, &p, &mut observe, || {
                     stopped.load(Ordering::Acquire)
                 })?;
@@ -426,6 +436,7 @@ impl Start {
             latest,
             failures,
             choice,
+            retry_catalog,
             track_snapshot,
         })
     }
@@ -485,7 +496,10 @@ impl Transport {
             && !start.stop.load(Ordering::Acquire)
             && let Ok(mut failed) = start.failures.try_lock()
             && failed.as_ref().is_some_and(|f| !f.is_empty())
+            && let Ok(mut catalog) = start.retry_catalog.try_lock()
         {
+            // A scan may have published a newer catalog while the candidate was waiting.
+            *catalog = self.catalog.clone();
             *failed = None;
             start.choice.store(2, Ordering::Release);
             return true;

@@ -223,6 +223,12 @@ impl Studio {
 
     pub(crate) fn pump_editor_raises(&mut self) {
         #[cfg(windows)]
+        if self.main_modal_visible() {
+            self.mixer.editor_raises.foreground = None;
+            return;
+        }
+
+        #[cfg(windows)]
         if self.mixer.editor_raises.activation.is_some()
             && (!self.mixer.editor_raises.pending.is_empty()
                 || self.mixer.editor_raises.ara_pending)
@@ -287,11 +293,15 @@ impl Studio {
     /// Reconcile ownerless ARA editors when the studio's window group is raised.
     #[cfg(windows)]
     pub(crate) fn raise_ara_editors_over(&self, window: u64) {
-        if self.ara.editor_windows.is_empty() {
+        if self.ara.editor_windows.is_empty() || self.main_modal_visible() {
             return;
         }
+        self.place_ara_editors(self.editor_stack_base(window));
+    }
+
+    #[cfg(windows)]
+    fn place_ara_editors(&self, base: u64) {
         let stack = self.editor_stack();
-        let base = self.editor_stack_base(window);
         for &hwnd in stack.iter().rev() {
             if self
                 .ara
@@ -301,6 +311,33 @@ impl Studio {
             {
                 Self::grant_editor_foreground(hwnd);
                 xirius_vst3::raise_independent_editor(hwnd, &stack, base);
+            }
+        }
+    }
+
+    /// An ownerless ARA frame may still be behind Studio after Windows raises its owned group.
+    #[cfg(windows)]
+    pub(crate) fn keep_ara_above_main(&self, main: u64) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GW_HWNDNEXT, GetWindow};
+        if self.ara.editor_windows.is_empty() || self.main_modal_visible() {
+            return;
+        }
+        let mut window = main as windows_sys::Win32::Foundation::HWND;
+        for _ in 0..4096 {
+            // SAFETY: this query reads the native z-order without sending window messages.
+            window = unsafe { GetWindow(window, GW_HWNDNEXT) };
+            if window.is_null() {
+                return;
+            }
+            if self
+                .ara
+                .editor_windows
+                .values()
+                .any(|&(h, _)| h == window as u64)
+            {
+                // Use the main frame as the floor if clearing the entire palette group failed.
+                self.place_ara_editors(main);
+                return;
             }
         }
     }
@@ -326,9 +363,10 @@ impl Studio {
     #[cfg(windows)]
     fn editor_stack_base(&self, requested: u64) -> u64 {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            GW_HWNDPREV, GW_OWNER, GetForegroundWindow, GetWindow, IsWindowVisible,
+            GW_HWNDPREV, GW_OWNER, GetWindow, IsWindow, IsWindowVisible,
         };
-        let mut base = if requested == 0 {
+        // SAFETY: the owner and validity queries do not send messages to another thread.
+        let base = if requested == 0 || unsafe { IsWindow(requested as _) == 0 } {
             let foreground = Self::editor_foreground();
             if foreground != 0 {
                 foreground
@@ -338,30 +376,100 @@ impl Studio {
         } else {
             requested
         };
-        // SAFETY: only queries the desktop's window handles and ownership.
+        // SAFETY: only reads the native z-order, ownership and visibility.
         unsafe {
-            let foreground = GetForegroundWindow();
             let window = base as windows_sys::Win32::Foundation::HWND;
             let owner = GetWindow(window, GW_OWNER);
-            let root = if owner.is_null() { window } else { owner };
-            if !owner.is_null() && window == foreground {
-                // The active palette is the ceiling for the external editors.
-                base = root as u64;
-            } else if !root.is_null() {
-                // Clicking the main window raises its owned group as well.
-                let mut above = GetWindow(window, GW_HWNDPREV);
-                for _ in 0..4096 {
-                    if above.is_null() {
-                        break;
-                    }
-                    if IsWindowVisible(above) != 0 && GetWindow(above, GW_OWNER) == root {
-                        base = above as u64;
-                    }
-                    above = GetWindow(above, GW_HWNDPREV);
+            let main = if owner.is_null() { window } else { owner };
+            if Self::editor_foreground() != main as u64 {
+                // Windows keeps an active palette above the editors. With no foreground
+                // grant, the main window gives the editors a reachable z-order floor.
+                return main as u64;
+            }
+            let mut top = main;
+            let mut above = GetWindow(main, GW_HWNDPREV);
+            for _ in 0..4096 {
+                if above.is_null() {
+                    break;
                 }
+                if IsWindowVisible(above) != 0 && GetWindow(above, GW_OWNER) == main {
+                    top = above;
+                }
+                above = GetWindow(above, GW_HWNDPREV);
+            }
+            top as u64
+        }
+    }
+
+    #[cfg(windows)]
+    fn main_modal_visible(&self) -> bool {
+        self.unsaved.is_some()
+            || self.preparing.is_some()
+            || self.recovery.is_some()
+            || self.palette.is_some()
+            || self.settings.is_some()
+            || self
+                .opening
+                .as_ref()
+                .is_some_and(|open| open.visible(crate::wait::now()))
+            || self
+                .popup
+                .as_ref()
+                .is_some_and(|popup| popup.kind == crate::popup::PopupKind::Cleanup)
+            || self
+                .saving
+                .as_ref()
+                .map_or_else(|| crate::wait::view().veil.is_some(), |save| save.veil())
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn sync_modal_editor_order(&mut self, main: u64) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GW_HWNDPREV, GetWindow, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            SetWindowPos,
+        };
+        if main == 0 {
+            return;
+        }
+        let modal = self.main_modal_visible();
+        let was_modal = std::mem::replace(&mut self.mixer.editor_raises.modal, modal);
+        if !modal {
+            if was_modal {
+                self.raise_editors_over(main);
+            }
+            return;
+        }
+        self.mixer.editor_raises.foreground = None;
+        let mut above = Vec::new();
+        let stack = self.editor_stack();
+        if stack.is_empty() {
+            return;
+        }
+        // SAFETY: walk the native z-order and move only tracked external editors. No
+        // owner changes, focus transfer, or wait on a plugin's GUI thread is involved.
+        unsafe {
+            let mut hwnd = GetWindow(main as _, GW_HWNDPREV);
+            for _ in 0..4096 {
+                if hwnd.is_null() {
+                    break;
+                }
+                if stack.contains(&(hwnd as u64)) {
+                    above.push(hwnd);
+                }
+                hwnd = GetWindow(hwnd, GW_HWNDPREV);
+            }
+            for hwnd in above {
+                SetWindowPos(
+                    hwnd,
+                    main as _,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_ASYNCWINDOWPOS | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                );
             }
         }
-        base
     }
 
     /// Where a window of this process opens: over the studio's window and above it, or off
@@ -810,6 +918,8 @@ pub(crate) struct RaiseQueue {
     activation: Option<u64>,
     #[cfg(windows)]
     ara_pending: bool,
+    #[cfg(windows)]
+    modal: bool,
     foreground: Option<(PluginId, u64)>,
     pending: std::collections::VecDeque<PluginId>,
     flight: Option<(PluginId, u64, std::time::Instant)>,

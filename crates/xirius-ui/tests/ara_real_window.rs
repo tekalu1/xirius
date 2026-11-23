@@ -105,6 +105,9 @@ fn run(fixture: bool) {
             "independent_raise=true",
             "channel_open raised=true",
             "main_click raised=true",
+            "channel_close ordered=true",
+            "modal_front ordered=true",
+            "modal_restore ordered=true",
         ]);
     }
     if fixture {

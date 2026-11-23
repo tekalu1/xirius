@@ -414,7 +414,7 @@ impl Studio {
     }
     /// The mark the top bar shows.
     pub fn save_mark(&self) -> SaveMark {
-        if self.input_blocked() {
+        if self.unsaved.is_none() && self.input_blocked() {
             return SaveMark::Saving;
         }
         self.keep.mark(&self.song, xirius_core::store::now_ms())

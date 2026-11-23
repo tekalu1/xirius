@@ -495,6 +495,52 @@ fn wait_failed(s: &mut Studio, count: usize) {
 }
 
 #[test]
+fn retry_preparation_uses_the_catalog_published_after_the_failure() {
+    crate::plugin_reload_shots::require_plugin_host();
+    let _records = crate::shot::CrashRecords::new();
+    let entries = xirius_plugins::probe(&crate::plugin_fixture_shots::fixture_path()).unwrap();
+    let entry = &entries[0];
+    let mut s = Studio::new(Song::empty());
+    let track = s
+        .song
+        .run("track.add.audio", serde_json::json!({"name":"Scan"}))
+        .unwrap()["id"]
+        .clone();
+    s.song
+        .run(
+            "plugin.add",
+            serde_json::json!({
+                "track": track, "name": entry.name, "uid": entry.uid, "format": "vst3",
+            }),
+        )
+        .unwrap();
+    s.transport.mode = OutputMode::Device;
+    s.transport.set_drivers(quiet_drivers());
+    s.use_plugins(Catalog::default());
+    s.prepare_song();
+    wait_failed(&mut s, 1);
+
+    s.use_plugins(Catalog {
+        entries,
+        failures: Vec::new(),
+    });
+    s.prepare_retry();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        if let Some(card) = &s.preparing {
+            assert!(
+                card.failure.is_none() && card.failures.is_empty(),
+                "{card:?}"
+            );
+        }
+        assert!(Instant::now() < deadline, "retry watchdog");
+        std::thread::yield_now();
+    }
+    assert!(s.transport.host().unwrap().unavailable_tracks().is_empty());
+}
+
+#[test]
 fn a_window_on_demand_silent_start_blocks_before_its_first_frame_without_decoding_on_ui() {
     let root = crate::shot::TestFolder::new("xirius-ui-prep-silent-");
     let wav = root.path().join("source.wav");
