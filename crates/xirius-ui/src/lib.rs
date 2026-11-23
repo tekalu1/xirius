@@ -364,6 +364,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("all", shot::SCRIPT),
     ("ara", ara_shots::SHOTS),
     ("ara-real", ara_real_shots::SHOTS),
+    ("ara-real-restart", ara_real_shots::RESTART),
     ("arrange-v1", arrange_v1_shots::SHOTS),
     ("audioproc", audioproc_shots::AUDIOPROC),
     ("audioset", audioset_shots::AUDIOSET),

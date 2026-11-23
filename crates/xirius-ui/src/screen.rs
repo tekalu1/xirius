@@ -598,6 +598,11 @@ impl Screen {
         }
         {
             let mut s = self.studio.borrow_mut();
+            // A click can raise the main window without changing the foreground window.
+            #[cfg(windows)]
+            if s.pointer_held {
+                s.raise_ara_editors_over(crate::device_window::hwnd_of(window) as u64);
+            }
             s.pointer_held = false;
             s.text_drag = false;
         }
@@ -2257,6 +2262,11 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
             return;
         }
     }
+    if crate::ara_real_shots::observing(&run.borrow().studio.borrow()) {
+        let next = run.clone();
+        window.on_next_frame(move |window, cx| step(&next, window, cx));
+        return;
+    }
     let mut quit = false;
     let (events, finished) = {
         let mut r = run.borrow_mut();
@@ -2367,7 +2377,7 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
     }
     // Frames being measured are asked for by the screen itself, as in use: a `refresh` would
     // paint every cached view again.
-    if crate::repaint_shots::still_frames() {
+    if crate::repaint_shots::still_frames() || crate::ara_real_shots::observing(&studio.borrow()) {
     } else if !had_events || run.borrow().roll_bench.is_none() {
         window.refresh();
     }
@@ -2403,7 +2413,11 @@ pub fn run(opts: Options) {
                 Place::Centered | Place::Parked => Bounds::centered(None, size(px(w), px(h)), cx),
             };
             let measured = opts.roll_bench.is_some() || opts.mixer_bench.is_some();
-            let initial = if opts.shots.is_some() || measured {
+            let ara_restart = opts
+                .script
+                .first()
+                .is_some_and(|shot| shot.name == crate::ara_real_shots::RESTART[0].name);
+            let initial = if (opts.shots.is_some() || measured) && !ara_restart {
                 Studio::sample()
             } else {
                 Studio::new(crate::song::Song::empty())
@@ -2477,6 +2491,11 @@ pub fn run(opts: Options) {
                 }),
             }));
             let scripted = opts.shots.is_some() || measured;
+            if ara_restart {
+                studio
+                    .borrow_mut()
+                    .start_keeping(crate::ara_real_shots::recent_keep());
+            }
             // What the last window moved when it closed: said once (REC-016).
             if !scripted {
                 studio.borrow_mut().take_left(&crate::notice::left_path());

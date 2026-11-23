@@ -1922,6 +1922,7 @@ fn paint_clip(
                     clip: clip.id,
                 };
             pen.mask(at, |pen| crate::clip_ara::paint_badge(pen, badge, at, hot));
+            crate::ara_real_shots::observe_badge(clip.id, badge);
             name_end = name_end.min(at.x - 2.0);
         }
         let name_r = Rect::new(name_x, r.y + 1.0, (name_end - name_x).max(0.0), name_h);

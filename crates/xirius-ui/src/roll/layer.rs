@@ -1,6 +1,7 @@
 //! Keeps the unchanged song overview out of the roll's redraw work.
 use crate::{
     browser::Browser,
+    clip_ara::Badge,
     draw::{Pen, paint_body},
     paint::Colors,
     studio::{DrawerTab, Geometry, Hit, Studio},
@@ -44,13 +45,15 @@ struct Key {
     rows: Vec<(RowKind, bool, bool)>,
     /// Anything the arrangement's own state shows (selection, lanes, zoom).
     arrange: u64,
+    /// Analysis changes outside the project snapshot.
+    ara_badges: Vec<(ClipId, Badge)>,
     /// The loop band and its shade look different while the range repeats.
     looping: bool,
 }
 
 impl Key {
     /// What the overview shows of `s` laid out by `g`.
-    fn of(s: &Studio, g: Geometry) -> Key {
+    fn of(s: &Studio, project: &Project, g: Geometry) -> Key {
         // When the song's files were last read is not shown: it changes every second.
         let mut browser = s.browser.clone();
         browser.pool_read = None;
@@ -87,6 +90,12 @@ impl Key {
                 })
                 .collect(),
             arrange: s.arrange.generation,
+            ara_badges: project
+                .ara
+                .clips
+                .keys()
+                .filter_map(|&clip| s.ara_badge(clip).map(|badge| (clip, badge)))
+                .collect(),
             looping: s.transport.looping,
         }
     }
@@ -119,8 +128,10 @@ impl Background {
         SYNCS.fetch_add(1, Ordering::Relaxed);
         let s = self.studio.borrow();
         let project = s.project();
-        let key = Key::of(&s, g);
+        let key = Key::of(&s, &project, g);
         if self.key.as_ref() != Some(&key)
+            // A busy ring still turns when its displayed percent is unchanged.
+            || key.ara_badges.iter().any(|(_, badge)| matches!(badge, Badge::Busy(_)))
             || !self
                 .project
                 .as_ref()

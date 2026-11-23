@@ -247,19 +247,7 @@ impl Studio {
         }
         #[cfg(windows)]
         if std::mem::take(&mut self.mixer.editor_raises.ara_pending) {
-            let stack = self.editor_stack();
-            let base = self.editor_stack_base(self.mixer.editor_raises.base);
-            for &hwnd in stack.iter().rev() {
-                if self
-                    .ara
-                    .editor_windows
-                    .values()
-                    .any(|(window, _)| *window == hwnd)
-                {
-                    Self::grant_editor_foreground(hwnd);
-                    xirius_vst3::raise_independent_editor(hwnd, &stack, base);
-                }
-            }
+            self.raise_ara_editors_over(self.mixer.editor_raises.base);
         }
         let Some((id, ticket)) = self.mixer.editor_raises.next(std::time::Instant::now()) else {
             return;
@@ -293,6 +281,27 @@ impl Studio {
         if let Some(host) = self.transport.host() {
             host.plugin_editor_bar(id, bar);
             host.raise_plugin_editor(id, foreground_from);
+        }
+    }
+
+    /// Reconcile ownerless ARA editors when the studio's window group is raised.
+    #[cfg(windows)]
+    pub(crate) fn raise_ara_editors_over(&self, window: u64) {
+        if self.ara.editor_windows.is_empty() {
+            return;
+        }
+        let stack = self.editor_stack();
+        let base = self.editor_stack_base(window);
+        for &hwnd in stack.iter().rev() {
+            if self
+                .ara
+                .editor_windows
+                .values()
+                .any(|(window, _)| *window == hwnd)
+            {
+                Self::grant_editor_foreground(hwnd);
+                xirius_vst3::raise_independent_editor(hwnd, &stack, base);
+            }
         }
     }
 
