@@ -98,11 +98,11 @@ pub const SHOTS: &[Shot] = &[
         acts: &[window(1)],
     },
     Shot {
-        name: "ara-real-order-on-close",
+        name: "ara-real09a-order-on-close",
         acts: &[window(5)],
     },
     Shot {
-        name: "ara-real-save-question",
+        name: "ara-real09b-save-question",
         acts: &[
             window(6),
             Act::Press(Target::Top(BarButton::SongName)),
@@ -111,7 +111,7 @@ pub const SHOTS: &[Shot] = &[
         ],
     },
     Shot {
-        name: "ara-real-order-after-question",
+        name: "ara-real09c-order-after-question",
         acts: &[window(8)],
     },
     // The window closed, the song saved and opened again: the clip has the plugin still.
