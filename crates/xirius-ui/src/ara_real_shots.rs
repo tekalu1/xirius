@@ -16,9 +16,13 @@
 //! `ara-check <shot> …`.
 //! The only input to the plugin's window is a close message sent to its own frame.
 
-use std::path::PathBuf;
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
+use gpui::{App, Window};
 use serde_json::json;
 use xirius_core::id::ClipId;
 use xirius_plugins::{Catalog, Entry};
@@ -27,9 +31,10 @@ use xirius_session::ara::{Phase, Report};
 use crate::ara_shots::run_ok;
 use crate::arrange::probe::{clip_mid, track};
 use crate::clip_ara::Badge;
-use crate::shot::{Act, Play, Shot, run_for};
-use crate::studio::{Geometry, Studio};
+use crate::shot::{Act, Play, Shot, Target, run_for};
+use crate::studio::{Geometry, Hit, Studio};
 use crate::tools::Mods;
+use crate::topbar::BarButton;
 
 const TRACK: &str = "ARA";
 const RATE: u32 = 48_000;
@@ -43,6 +48,10 @@ fn fixture() -> bool {
 
 const fn laid(n: u8) -> Act {
     Act::Stage(Play::Laid(play), n)
+}
+
+const fn window(n: u8) -> Act {
+    Act::Stage(Play::Window(play_window), n)
 }
 
 pub const SHOTS: &[Shot] = &[
@@ -76,15 +85,50 @@ pub const SHOTS: &[Shot] = &[
         name: "ara-real06-window",
         acts: &[laid(6)],
     },
+    Shot {
+        name: "ara-real07-mixer",
+        acts: &[Act::Press(Target::Tab(crate::studio::DrawerTab::Mixer))],
+    },
+    Shot {
+        name: "ara-real08-channel",
+        acts: &[window(0)],
+    },
+    Shot {
+        name: "ara-real09-main",
+        acts: &[window(1)],
+    },
     // The window closed, the song saved and opened again: the clip has the plugin still.
     Shot {
-        name: "ara-real07-reopened",
-        acts: &[laid(7)],
+        name: "ara-real10-closed",
+        acts: &[
+            laid(7),
+            Act::Press(Target::Top(BarButton::SongName)),
+            Act::Press(Target::PopupText("閉じる")),
+        ],
+    },
+    Shot {
+        name: "ara-real11-reopened",
+        acts: &[window(2)],
     },
     // Detached: the badge is gone.
     Shot {
-        name: "ara-real08-detached",
-        acts: &[laid(8)],
+        name: "ara-real12-undo",
+        acts: &[laid(8), window(3), Act::Key("ctrl-z")],
+    },
+    Shot {
+        name: "ara-real13-closed",
+        acts: &[laid(9)],
+    },
+];
+
+pub const RESTART: &[Shot] = &[
+    Shot {
+        name: "ara-real-restart",
+        acts: &[window(4)],
+    },
+    Shot {
+        name: "ara-real-restart-closed",
+        acts: &[laid(8), laid(10)],
     },
 ];
 
@@ -126,6 +170,10 @@ fn dir() -> PathBuf {
     std::env::temp_dir().join("xirius-ara-real-shots")
 }
 
+pub(crate) fn recent_keep() -> crate::keep::Keep {
+    crate::keep::Keep::at(dir().join("recent"))
+}
+
 fn title() -> String {
     format!("{} · ARA", name())
 }
@@ -158,34 +206,84 @@ fn wait(s: &mut Studio, secs: f32, done: impl Fn(&Studio) -> bool) {
     });
 }
 
-fn assert_ready_repaints(s: &mut Studio) {
-    assert_eq!(badge(s), "ready");
-    // Hold the last busy badge on the UI side while the real host is already
-    // idle. The poll consuming Ready must request a frame of its own.
-    let key = clip(s).unwrap().0;
-    let report = s
-        .ara
-        .reports
-        .iter_mut()
-        .find(|r| r.plugin == uid())
-        .unwrap();
-    let (_, phase) = report.phases.iter_mut().find(|(id, _)| *id == key).unwrap();
-    *phase = Phase::Waiting;
-    report.progress = 0.0;
-    assert_eq!(badge(s), "busy:0");
-    assert!(
-        s.poll_ara(),
-        "the final ARA status did not request a repaint"
-    );
-    assert_eq!(badge(s), "ready");
-    eprintln!("ara-check ready_repaints=true");
+struct PaintWatch {
+    label: &'static str,
+    clip: ClipId,
+    painted: Option<Badge>,
+    expires: Instant,
+    ready_at: Option<Instant>,
+}
+
+thread_local! {
+    static PAINT: RefCell<Option<PaintWatch>> = const { RefCell::new(None) };
+    #[cfg(windows)]
+    static STACK: RefCell<Option<StackWatch>> = const { RefCell::new(None) };
+}
+
+fn watch_paint(label: &'static str, clip: ClipId) {
+    PAINT.replace(Some(PaintWatch {
+        label,
+        clip,
+        painted: None,
+        expires: Instant::now() + Duration::from_secs(120),
+        ready_at: None,
+    }));
+}
+
+pub(crate) fn observe_badge(clip: ClipId, badge: &Badge) {
+    PAINT.with_borrow_mut(|watch| {
+        if let Some(watch) = watch.as_mut().filter(|watch| watch.clip == clip) {
+            watch.painted = Some(badge.clone());
+        }
+    });
+}
+
+/// Pause the shot driver while product notifications alone drive the cached drawing.
+pub(crate) fn observing(s: &Studio) -> bool {
+    #[cfg(windows)]
+    if observing_stack() {
+        return true;
+    }
+    PAINT.with_borrow_mut(|pending| {
+        let Some(watch) = pending else { return false };
+        stranger();
+        let now = Instant::now();
+        let model = s.ara_badge(watch.clip);
+        if model == Some(Badge::Ready) {
+            if watch.ready_at.is_none() && watch.label != "undo" {
+                let archive = s.project().ara.archives[uid()].clone();
+                let expected = std::fs::read(dir().join("archive.json")).unwrap();
+                assert_eq!(serde_json::to_vec(&archive).unwrap(), expected);
+            }
+            watch.ready_at.get_or_insert(now);
+        }
+        let ready = watch.painted == Some(Badge::Ready);
+        if !ready
+            && now < watch.expires
+            && watch
+                .ready_at
+                .is_none_or(|at| now - at < Duration::from_secs(3))
+        {
+            return true;
+        }
+        eprintln!(
+            "ara-check {} painted_ready={ready} painted={:?} model={model:?}",
+            watch.label, watch.painted
+        );
+        *pending = None;
+        false
+    })
 }
 
 /// Ends the run when a window of this process shows that is neither the app's nor the plugin's
 /// editor: the plugin asking for someone. Nothing is clicked or typed; the window goes with
 /// the process.
 fn stranger() {
-    if let Some(w) = os::other_window(&[crate::screen::WINDOW_TITLE, title().as_str()]) {
+    if let Some(w) = os::other_window(&[
+        crate::screen::WINDOW_TITLE,
+        crate::device_window::CHANNEL_TITLE,
+        title().as_str(),
+    ]) {
         eprintln!("ara-check stopped window={w}");
         std::process::exit(3);
     }
@@ -221,38 +319,41 @@ fn docs(s: &Studio) -> Vec<String> {
         .collect()
 }
 
+fn load_plugins(s: &mut Studio) {
+    s.mixer.scan.auto = false;
+    if fixture() {
+        #[cfg(all(windows, debug_assertions))]
+        xirius_session::ara::register_native_fixture(FIXTURE_UID, FIXTURE_NAME);
+        s.use_plugins(Catalog::default());
+    } else {
+        let entry = entry().expect("XIRIUS_ARA_REAL_PLUGIN names no ARA plugin");
+        xirius_plugins::CacheFile {
+            bundles: vec![xirius_plugins::BundleRecord {
+                path: entry.path.clone(),
+                fingerprint: xirius_plugins::fingerprint(&entry.path),
+                entries: vec![entry.clone()],
+                failure: None,
+                probe_ms: 0,
+            }],
+            ..Default::default()
+        }
+        .write(s.song.plugin_cache())
+        .unwrap();
+        s.use_plugins(Catalog {
+            entries: vec![entry.clone()],
+            failures: Vec::new(),
+        });
+    }
+}
+
 fn play(s: &mut Studio, g: &Geometry, n: u8) {
     if n == 0 {
         s.drawer_open = false;
-        s.mixer.scan.auto = false;
-        if fixture() {
-            #[cfg(all(windows, debug_assertions))]
-            xirius_session::ara::register_native_fixture(FIXTURE_UID, FIXTURE_NAME);
-            s.use_plugins(Catalog::default());
-        } else {
-            let entry = entry().expect("XIRIUS_ARA_REAL_PLUGIN names no ARA plugin");
-            // Preparation and reopening read the catalogue from disk too. Keep this fixture
-            // in the isolated profile, so the run never depends on the user's scan cache.
-            xirius_plugins::CacheFile {
-                bundles: vec![xirius_plugins::BundleRecord {
-                    path: entry.path.clone(),
-                    fingerprint: xirius_plugins::fingerprint(&entry.path),
-                    entries: vec![entry.clone()],
-                    failure: None,
-                    probe_ms: 0,
-                }],
-                ..Default::default()
-            }
-            .write(s.song.plugin_cache())
-            .unwrap();
-            s.use_plugins(Catalog {
-                entries: vec![entry.clone()],
-                failures: Vec::new(),
-            });
-        }
+        load_plugins(s);
         let dir = dir();
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        s.keep = recent_keep();
         let wav = dir.join("tone.wav");
         let v = tone();
         xirius_session::export::write_wav(&wav, &v, &v, RATE, 24).unwrap();
@@ -297,7 +398,13 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
     let Some(c) = clip(s) else {
         panic!("ara-real stage={n}: the song has no clip");
     };
-    let shot = SHOTS[usize::from(n) - 1].name;
+    let shot = match n {
+        7 => "save",
+        8 => "detach",
+        9 => "undo",
+        10 => "close",
+        _ => SHOTS[usize::from(n) - 1].name,
+    };
     match n {
         1 => {
             s.popup = None;
@@ -439,37 +546,18 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             wait(s, 30.0, |s| s.song.is_saved());
             let saved = s.song.is_saved() && s.error.is_none();
             assert!(saved, "the song was not written: {:?}", s.error);
-            let archives = s.project().ara.archives.clone();
-            let archived = archives.len();
-            // Empty and empty would compare equal: the plugin's archive must be in the song.
-            assert!(
-                archives.contains_key(uid()),
-                "the song was written without the plugin's archive ({archived} archives)"
-            );
-            let song = dir().join("song");
-            assert!(s.close_to_home());
-            wait(s, 30.0, Studio::home_shown);
-            assert!(s.home_shown(), "the song did not close: {:?}", s.error);
-            run_ok(s, "project.open", json!({ "path": song.to_string_lossy() }));
-            wait(s, 30.0, |s| s.opening.is_none() && clip(s).is_some());
-            let opened = s.opening.is_none() && s.error.is_none();
-            let back = clip(s).is_some_and(|c| s.project().ara.clips.contains_key(&c));
-            let kept = s.project().ara.archives.len();
-            assert!(
-                s.project().ara.archives == archives,
-                "the plugin's archive changed through saving and opening"
-            );
-            wait(s, 180.0, |s| badge(s) == "ready");
-            eprintln!(
-                "ara-check {shot} closed={closed} archives={archived} saved={saved} opened={opened} attached={back} archives_after={kept} badge={}",
-                badge(s)
-            );
-            eprintln!("ara-check {shot} docs={:?} error={:?}", docs(s), s.error);
-            assert!(closed && saved && opened && back, "{:?}", s.error);
-            assert_eq!(badge(s), "ready");
-            assert_ready_repaints(s);
+            let project = s.project();
+            let archive = project.ara.archives.get(uid()).expect("saved ARA archive");
+            std::fs::write(
+                dir().join("archive.json"),
+                serde_json::to_vec(archive).unwrap(),
+            )
+            .unwrap();
+            std::fs::write(dir().join("clip-id"), c.to_string()).unwrap();
+            eprintln!("ara-check {shot} closed={closed} saved={saved}");
+            assert!(closed);
         }
-        _ => {
+        8 => {
             s.popup = None;
             s.ctx = None;
             s.select_clip_here(track(s, TRACK), c);
@@ -490,10 +578,10 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 badge(s)
             );
             assert!(s.project().ara.clips.is_empty(), "the clip did not let go");
-            run_ok(s, "history.undo", json!({}));
+        }
+        9 => {
             wait(s, 30.0, |s| s.saving.is_none() && badge(s) == "ready");
             assert_eq!(badge(s), "ready", "idle after undo: {:?}", docs(s));
-            assert_ready_repaints(s);
             wait(s, 10.0, |s| s.save_mark() != crate::keep::SaveMark::Saving);
             assert_eq!(
                 s.save_mark(),
@@ -504,6 +592,13 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             run_ok(s, "history.redo", json!({}));
             wait(s, 10.0, |s| s.project().ara.clips.is_empty());
             assert!(s.project().ara.clips.is_empty());
+            run_ok(s, "history.undo", json!({}));
+            wait(s, 30.0, |s| s.saving.is_none() && badge(s) == "ready");
+            assert!(s.close_to_home());
+            wait(s, 30.0, Studio::home_shown);
+            assert!(s.home_shown());
+        }
+        10 => {
             wait(s, 10.0, |s| s.save_mark() != crate::keep::SaveMark::Saving);
             assert_eq!(s.save_mark(), crate::keep::SaveMark::Unsaved);
             eprintln!("ara-check {shot} detach_unsaved=true");
@@ -524,7 +619,134 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             );
             eprintln!("ara-check {shot} close_prompt=true");
         }
+        _ => unreachable!(),
     }
+}
+
+fn recent_song(s: &Studio, path: &Path) -> Option<Hit> {
+    s.home
+        .as_ref()?
+        .pick
+        .nav()
+        .iter()
+        .enumerate()
+        .find_map(|(i, row)| match &row.act {
+            Some(crate::popup::Action::Pick(dir)) if Path::new(dir) == path => Some(Hit::Home(
+                crate::home::Spot::Row(i, crate::home::row_key(row.act.as_ref())),
+            )),
+            _ => None,
+        })
+}
+
+fn play_window(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) {
+    match n {
+        0 | 1 => {
+            #[cfg(windows)]
+            check_stack(studio, n, window, cx);
+        }
+        2 | 4 => {
+            let restart = n == 4;
+            let (id, at) = {
+                let mut s = studio.borrow_mut();
+                if restart {
+                    load_plugins(&mut s);
+                }
+                let song = dir().join("song");
+                wait(&mut s, 30.0, |s| {
+                    s.opening.is_none() && recent_song(s, &song).is_some()
+                });
+                assert!(
+                    s.home_shown(),
+                    "the start screen did not open: {:?}",
+                    s.error
+                );
+                let g = crate::screen::geometry(&s, window);
+                let hit = recent_song(&s, &song).expect("the song is missing from Recent");
+                let at = s.center_of(&g, hit).expect("the song's row is out of view");
+                let id = std::fs::read_to_string(dir().join("clip-id")).unwrap();
+                (id.parse().unwrap(), at)
+            };
+            watch_paint(if restart { "restart" } else { "reopen" }, id);
+            crate::keymap_shots::click(at, 1, window, cx);
+        }
+        3 => watch_paint("undo", clip(&studio.borrow()).unwrap()),
+        _ => unreachable!(),
+    }
+}
+
+#[cfg(windows)]
+struct StackWatch {
+    _neighbor: os::Neighbor,
+    editor: isize,
+    main: isize,
+    label: &'static str,
+    expires: Instant,
+}
+
+#[cfg(windows)]
+fn check_stack(studio: &Rc<RefCell<Studio>>, n: u8, window: &mut Window, cx: &mut App) {
+    use crate::mixer::MixerHit;
+
+    let editor = editor_window().expect("the editor is gone");
+    let main = crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap();
+    let neighbor = os::Neighbor::above(main);
+    os::sink(editor);
+    let at = {
+        let mut s = studio.borrow_mut();
+        wait(&mut s, 5.0, |_| os::above(main, editor));
+        assert!(os::above(main, editor), "could not cover the editor");
+        let g = crate::screen::geometry(&s, window);
+        let hit = if n == 0 {
+            Hit::Mixer(MixerHit::Editor(track(&s, TRACK)))
+        } else {
+            Hit::Tab(s.tab)
+        };
+        s.center_of(&g, hit).expect("missing click target")
+    };
+    STACK.replace(Some(StackWatch {
+        _neighbor: neighbor,
+        editor,
+        main,
+        label: if n == 0 { "channel_open" } else { "main_click" },
+        expires: Instant::now() + Duration::from_secs(2),
+    }));
+    if n == 0 {
+        // Opening the palette must reconcile the stack before the main window's mouse-up.
+        window.dispatch_event(
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                position: gpui::point(
+                    gpui::px(at.0),
+                    gpui::px(at.1 + xirius_design::Layout::TOP_BAR_H),
+                ),
+                button: gpui::MouseButton::Left,
+                modifiers: gpui::Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+    } else {
+        crate::keymap_shots::click(at, 1, window, cx);
+    }
+}
+
+#[cfg(windows)]
+fn observing_stack() -> bool {
+    STACK.with_borrow_mut(|pending| {
+        let Some(watch) = pending else { return false };
+        stranger();
+        let channel = crate::park::own_handle(crate::device_window::CHANNEL_TITLE).is_some();
+        let raised = os::above(watch.editor, watch.main);
+        if !(channel && raised) && Instant::now() < watch.expires {
+            return true;
+        }
+        assert!(channel, "Channel Editor did not open");
+        assert!(os::independent(watch.editor, watch.main));
+        assert!(!crate::park::is_foreground(watch.editor));
+        eprintln!("ara-check {} raised={raised}", watch.label);
+        *pending = None;
+        false
+    })
 }
 
 fn editor_window() -> Option<isize> {

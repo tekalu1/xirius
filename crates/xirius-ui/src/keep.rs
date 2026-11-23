@@ -705,6 +705,58 @@ mod tests {
         assert!(s.run_command("track.add.audio", json!({ "name": name })));
     }
 
+    fn add_builtin(
+        s: &mut Studio,
+        def: &xirius_params::BuiltinDef,
+    ) -> (xirius_core::id::TrackId, xirius_core::id::PluginId) {
+        let (add_track, kind) = if def.kind == xirius_params::Kind::Instrument {
+            ("track.add.midi", "instrument")
+        } else {
+            ("track.add.audio", "effect")
+        };
+        assert!(s.run_command(add_track, json!({"name":def.name})));
+        let track = s
+            .project()
+            .tracks
+            .values()
+            .find(|track| track.name == def.name)
+            .unwrap()
+            .id;
+        assert!(s.run_command(
+            "plugin.add",
+            json!({"track":track,"name":def.name,"kind":kind,"format":"builtin","uid":def.uid}),
+        ));
+        let id = s.project().tracks[&track].inserts.last().unwrap().id;
+        (track, id)
+    }
+
+    #[test]
+    fn adding_default_builtins_is_saved_in_history() {
+        let (_tmp, mut s, root) = kept("default-builtins");
+        let save = root.join("saved");
+        s.song.save_as(&save).unwrap();
+        let snapshot = std::fs::read(save.join("project.json")).unwrap();
+        let mut added = Vec::new();
+        for def in xirius_params::BUILTINS {
+            added.push(add_builtin(&mut s, def));
+            s.song.session().store();
+            assert_eq!(
+                s.keep.mark(&s.song, u64::MAX),
+                SaveMark::Saved,
+                "{}",
+                def.name
+            );
+        }
+        assert_eq!(std::fs::read(save.join("project.json")).unwrap(), snapshot);
+        drop(s);
+        let mut reopened = Song::empty();
+        reopened.open(&save).unwrap();
+        let project = reopened.project();
+        for (track, id) in added {
+            assert!(project.tracks[&track].inserts.iter().any(|p| p.id == id));
+        }
+    }
+
     #[test]
     fn each_factory_preset_change_stays_unsaved_after_the_recovery_write() {
         let (_tmp, mut s, root) = kept("factory-preset");
@@ -714,24 +766,7 @@ mod tests {
             let Some(preset) = names.first() else {
                 continue;
             };
-            let (add_track, kind) = if def.kind == xirius_params::Kind::Instrument {
-                ("track.add.midi", "instrument")
-            } else {
-                ("track.add.audio", "effect")
-            };
-            assert!(s.run_command(add_track, json!({"name":def.name})));
-            let track = s
-                .project()
-                .tracks
-                .values()
-                .find(|track| track.name == def.name)
-                .unwrap()
-                .id;
-            assert!(s.run_command(
-                "plugin.add",
-                json!({"track":track,"name":def.name,"kind":kind,"format":"builtin","uid":def.uid}),
-            ));
-            let id = s.project().tracks[&track].inserts.last().unwrap().id;
+            let (_, id) = add_builtin(&mut s, def);
             if s.song.dir().as_deref() == Some(save.as_path()) {
                 s.song.save().unwrap();
             } else {

@@ -56,30 +56,34 @@ fn run(fixture: bool) {
     if !fixture && let Some(support) = std::env::var_os("XIRIUS_ARA_REAL_COMMON_FILES") {
         copy_support(std::path::Path::new(&support), &dir.join("common"));
     }
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"));
-    if fixture {
-        command.env("XIRIUS_ARA_NATIVE_FIXTURE", "1");
-    } else {
-        command.env_remove("XIRIUS_ARA_NATIVE_FIXTURE");
-    }
-    let output = command
-        .args(["--park", "--silent", "--script", "ara-real", "--shot"])
-        .arg(&dir)
-        .env("USERPROFILE", dir.join("profile"))
-        .env("LOCALAPPDATA", dir.join("local"))
-        .env("APPDATA", dir.join("roaming"))
-        .env("TEMP", dir.join("temp"))
-        .env("TMP", dir.join("temp"))
-        .env("CommonProgramFiles", dir.join("common"))
-        .env("XIRIUS_EDITOR_OFFSCREEN", "1")
-        .env("XIRIUS_CONFIG_DIR", dir.join("prefs"))
-        .env("XIRIUS_CRASH_DIR", dir.join("crashes"))
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "{stderr}");
-    eprint!("{stderr}");
-    for check in [
+    let run = |script: &str| {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"));
+        if fixture {
+            command.env("XIRIUS_ARA_NATIVE_FIXTURE", "1");
+        } else {
+            command.env_remove("XIRIUS_ARA_NATIVE_FIXTURE");
+        }
+        let output = command
+            .args(["--park", "--silent", "--script", script, "--shot"])
+            .arg(dir.join(script))
+            .env("USERPROFILE", dir.join("profile"))
+            .env("LOCALAPPDATA", dir.join("local"))
+            .env("APPDATA", dir.join("roaming"))
+            .env("TEMP", dir.join("temp"))
+            .env("TMP", dir.join("temp"))
+            .env("CommonProgramFiles", dir.join("common"))
+            .env("XIRIUS_EDITOR_OFFSCREEN", "1")
+            .env("XIRIUS_CONFIG_DIR", dir.join("prefs"))
+            .env("XIRIUS_CRASH_DIR", dir.join("crashes"))
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        eprint!("{stderr}");
+        assert!(output.status.success(), "{script}: {stderr}");
+        stderr
+    };
+    let stderr = run("ara-real") + &run("ara-real-restart");
+    let mut checks = vec![
         "picking=true",
         "attached=true",
         "badge=ready",
@@ -88,25 +92,32 @@ fn run(fixture: bool) {
         "foreground=false",
         "closed=true",
         "saved=true",
-        "opened=true",
         "detached=true",
         "undo_ready=true",
-        "ready_repaints=true",
+        "reopen painted_ready=true",
+        "restart painted_ready=true",
+        "undo painted_ready=true",
         "detach_unsaved=true",
         "close_prompt=true",
-    ] {
-        assert!(
-            stderr
-                .lines()
-                .any(|l| l.starts_with("ara-check") && l.contains(check)),
-            "{check}: {stderr}"
-        );
-    }
+    ];
     if cfg!(windows) {
-        assert!(stderr.contains("independent_raise=true"), "{stderr}");
+        checks.extend([
+            "independent_raise=true",
+            "channel_open raised=true",
+            "main_click raised=true",
+        ]);
     }
     if fixture {
-        assert!(stderr.contains("edit_unsaved=true"), "{stderr}");
+        checks.push("edit_unsaved=true");
     }
+    let missing: Vec<_> = checks
+        .into_iter()
+        .filter(|check| {
+            !stderr
+                .lines()
+                .any(|line| line.starts_with("ara-check") && line.contains(*check))
+        })
+        .collect();
+    assert!(missing.is_empty(), "failed checks: {missing:?}\n{stderr}");
     assert!(!stderr.contains("ara-skip"), "{stderr}");
 }

@@ -619,6 +619,15 @@ impl Windows {
             Ok(handle) => {
                 self.channel = Some(handle);
                 Self::refresh_channel(handle, source, cx);
+                // Showing an owned palette can raise the main window without activating it.
+                #[cfg(windows)]
+                cx.defer(move |cx| {
+                    let _ = handle.update(cx, |view, window, _| {
+                        view.studio
+                            .borrow()
+                            .raise_ara_editors_over(hwnd_of(window) as u64);
+                    });
+                });
             }
             Err(error) => {
                 let mut s = studio.borrow_mut();
