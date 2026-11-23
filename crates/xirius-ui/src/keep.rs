@@ -710,11 +710,15 @@ mod tests {
         def: &xirius_params::BuiltinDef,
     ) -> (xirius_core::id::TrackId, xirius_core::id::PluginId) {
         let (add_track, kind) = if def.kind == xirius_params::Kind::Instrument {
-            ("track.add.midi", "instrument")
+            ("track.add.instrument", "instrument")
         } else {
             ("track.add.audio", "effect")
         };
-        assert!(s.run_command(add_track, json!({"name":def.name})));
+        assert!(
+            s.run_command(add_track, json!({ "name": def.name })),
+            "{}",
+            def.name
+        );
         let track = s
             .project()
             .tracks
