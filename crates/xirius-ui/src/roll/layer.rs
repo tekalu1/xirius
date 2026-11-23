@@ -184,7 +184,7 @@ mod tests {
         let mut s = Studio::sample();
         let g = s.geometry(1440.0, 860.0);
         s.settle_pool();
-        let before = Key::of(&s, g);
+        let before = Key::of(&s, &s.project(), g);
         let read = s.browser.pool_read.expect("read");
         s.browser.pool_read = Some((read.0, read.1 - std::time::Duration::from_secs(2)));
         assert!(!s.follow_pool(), "the files did not change");
@@ -193,6 +193,6 @@ mod tests {
             s.browser.pool_read.is_some_and(|r| r.1 > read.1),
             "read again"
         );
-        assert!(Key::of(&s, g) == before);
+        assert!(Key::of(&s, &s.project(), g) == before);
     }
 }
