@@ -291,12 +291,11 @@ impl Studio {
             let foreground = GetForegroundWindow();
             let mut process = 0;
             GetWindowThreadProcessId(foreground, &mut process);
-            if process == std::process::id() {
-                if let Some((window, _)) = self.mixer.editor_touches.get(&id)
-                    && GetWindowThreadProcessId(*window as _, &mut process) != 0
-                {
-                    AllowSetForegroundWindow(process);
-                }
+            if process == std::process::id()
+                && let Some((window, _)) = self.mixer.editor_touches.get(&id)
+                && GetWindowThreadProcessId(*window as _, &mut process) != 0
+            {
+                AllowSetForegroundWindow(process);
             }
             bar.stack_base = self.editor_stack_base(base);
         }
