@@ -2216,7 +2216,9 @@ title = "オーディオクリップの ARA の付け外し（Ctrl+M・Ctrl+Alt+
 area = "EDT"
 phase = "v1.1"
 source = "mockups/context-matrix.md § 4/S02"
-done_when = "clip.ara.attach・detach が動き、イベント FX が無い。S02 のオーディオのクリップの右クリックのメニューに ARA の付け外しの行が出て、clip.ara.* と 1 対 1 で動く（2026-10-15 に CTX-057 から移した）"
+done_when = "clip.ara.attach・detach が動き、イベント FX が無い。S02 のオーディオのクリップの右クリックのメニューに ARA の付け外しの行が出て、clip.ara.* と 1 対 1 で動く（2026-10-15 に CTX-057 から移した）。候補を選んで付けると、用意ができ次第そのクリップの編集窓が開き、音高を編集しても保存・再読込で編集が残る"
+status = "partial"
+remaining = "実プラグインの編集窓で音高を変更し、保存・再読込後の音で確かめる"
 
 [[item]]
 id = "PLG-017"

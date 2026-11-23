@@ -62,11 +62,11 @@ fn a_real_ara_plugin_is_attached_edited_kept_and_detached_in_a_parked_window() {
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
+    eprint!("{stderr}");
     for check in [
         "picking=true",
         "attached=true",
         "badge=ready",
-        "asked=true",
         "editing=true",
         "offscreen=true",
         "foreground=false",

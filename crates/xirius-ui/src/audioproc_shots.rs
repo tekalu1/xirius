@@ -1,10 +1,10 @@
 //! `--script audioproc`: the audio processing of 1.0 (EDT-007, EDT-015, EDT-016, EDT-038,
 //! EXP-003, EXP-004) on a loop of a real WAV at 100 BPM on the Vocal track of a song at 120:
-//! its right-click menu with the fields and 「処理 ›」, following the song's tempo while the
+//! its right-click menu with the fields and 「オーディオ ›」, following the song's tempo while the
 //! sound is made and after, a sound that cannot be made, Alt on the right edge, the speed,
 //! transposed, normalized, reversed, bounced, the track's menu, frozen in the mixer and
 //! refused, the song made faster, and a file with a tempo of its own put in. The menus are
-//! opened and chosen by real pointer events on the window; nothing takes the PC's focus.
+//! opened and chosen through the window's menu handlers without taking the PC's focus.
 //!
 //! The file is three minutes long (the clip shows its first four bars) so that making its
 //! stretched sound takes a few seconds and the shot sees it working.
@@ -12,6 +12,7 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -38,12 +39,12 @@ const fn windowed(n: u8) -> Act {
 }
 
 pub const AUDIOPROC: &[Shot] = &[
-    // The right button on the loop: the fields at the head, 「処理 ›」 and 「バウンス ›」.
+    // The right button on the loop: the audio and bounce menus.
     Shot {
         name: "ap01-menu",
         acts: &[Act::Reset, laid(0), windowed(1)],
     },
-    // 「処理 ›」 chosen: its rows in the menu's place.
+    // 「オーディオ ›」 chosen: its rows in the menu's place.
     Shot {
         name: "ap02-process",
         acts: &[Act::Reset, laid(0), windowed(1), windowed(2)],
@@ -335,6 +336,15 @@ fn stage(s: &mut Studio, g: &Geometry, n: u8) {
 /// The loop at bar 13 of Vocal, made by the command the browser's drop runs, at the file's
 /// tempo; the player's session started (silent) so the clip can say how its sound is made.
 fn setup(s: &mut Studio, g: &Geometry) {
+    static STAGE: AtomicUsize = AtomicUsize::new(0);
+    let song = shots_dir().join(format!("song-{}", STAGE.fetch_add(1, Ordering::Relaxed)));
+    let sample = write_loop("sample.wav", 120.0, 12.0);
+    crate::ara_shots::run_ok(s, "project.save-as", json!({"path": song}));
+    crate::shot::run_for(s, 10.0, |s| !s.input_blocked());
+    assert!(s.song.is_saved() && s.error.is_none(), "{:?}", s.error);
+    for name in ["vocal_take1.wav", "guitar_di.wav"] {
+        std::fs::copy(&sample, song.join(name)).unwrap();
+    }
     let ppq = i64::from(s.project().ppq);
     let bar = ppq * 4;
     s.arrange_run("tempo.set", json!({ "at": 0, "bpm": 120 }));
@@ -348,8 +358,9 @@ fn setup(s: &mut Studio, g: &Geometry) {
                 "file": path.to_string_lossy() }),
     );
     s.arrange_run("clip.tempo.set", json!({ "ids": ids(s), "bpm": LOOP_BPM }));
-    let (p, dir) = (s.project(), s.song().dir());
-    let _ = s.transport.start_host(&p, dir);
+    s.prepare_song();
+    crate::shot::run_for(s, 15.0, |s| !s.input_blocked());
+    assert!(!s.input_blocked() && s.error.is_none(), "{:?}", s.error);
     wait_peaks(s, &loop_path());
 }
 
@@ -389,23 +400,14 @@ fn press(p: (f32, f32), button: MouseButton, window: &mut Window, cx: &mut App) 
 }
 
 /// Presses the row `label` of the menu that is open.
-fn choose(studio: &Rc<RefCell<Studio>>, label: &str, window: &mut Window, cx: &mut App) {
-    let p = {
-        let s = studio.borrow();
-        let g = crate::screen::geometry(&s, window);
-        let layout = s.popup.as_ref().expect("menu").layout(g.size);
-        let cell = layout
-            .cells
-            .iter()
-            .find(|c| c.text == label && !matches!(c.look, crate::popup::Look::Input))
-            .unwrap_or_else(|| panic!("missing row {label}"));
-        assert!(cell.live(), "disabled row {label}");
-        (
-            cell.rect.x + cell.rect.w / 2.0,
-            cell.rect.y + cell.rect.h / 2.0,
-        )
-    };
-    press(p, MouseButton::Left, window, cx);
+fn choose(studio: &Rc<RefCell<Studio>>, label: &str, window: &Window) {
+    let mut s = studio.borrow_mut();
+    let g = crate::screen::geometry(&s, window);
+    assert!(
+        s.context_choose(&g, label),
+        "could not choose {label}: {:?}",
+        s.error
+    );
 }
 
 /// Plays the stages of [`AUDIOPROC`] that press the window.
@@ -428,16 +430,28 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
         }
     };
     if let Some(spot) = spot {
-        press(spot, MouseButton::Right, window, cx);
-        assert!(studio.borrow().context_open(), "the menu opened");
+        let mut s = studio.borrow_mut();
+        let g = crate::screen::geometry(&s, window);
+        assert!(s.scene_context(&g, spot.0, spot.1), "no menu at {spot:?}");
         return;
     }
     match n {
-        2 => choose(studio, "処理", window, cx),
-        3 => choose(studio, "曲のテンポに合わせる", window, cx),
+        2 => choose(
+            studio,
+            crate::context::layout::Category::Audio.label(),
+            window,
+        ),
+        3 => {
+            choose(
+                studio,
+                crate::context::layout::Category::Audio.label(),
+                window,
+            );
+            choose(studio, "曲のテンポに合わせる", window);
+        }
         4 => {
-            choose(studio, "バウンス", window, cx);
-            choose(studio, "新しいトラックにバウンス", window, cx);
+            choose(studio, "バウンス", window);
+            choose(studio, "新しいトラックにバウンス", window);
             let s = studio.borrow();
             assert!(s.job.is_some(), "the bounce runs");
             let g = crate::screen::geometry(&s, window);
@@ -464,7 +478,7 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
             assert!(job.progress.cancelled(), "the square stopped it");
         }
         6 => {
-            choose(studio, "トラックをフリーズ", window, cx);
+            choose(studio, "トラックをフリーズ", window);
             assert!(studio.borrow().job.is_some(), "the freeze runs");
         }
         _ => {}

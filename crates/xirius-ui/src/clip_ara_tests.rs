@@ -8,6 +8,7 @@ use xirius_plugins::{Catalog, Entry};
 
 use super::*;
 use crate::arrange::probe::{clip_mid, track};
+use crate::context::layout::Category;
 use crate::studio::Hit;
 use crate::tools::Mods;
 
@@ -108,7 +109,7 @@ fn row(s: &Studio, label: &str) -> crate::context::Row {
         .unwrap_or_else(|| panic!("no row {label}: {:?}", labels(s)))
 }
 
-/// A right press on the Vocal clip, then 「処理」.
+/// A right press on the Vocal clip, then the category for its ARA actions.
 fn processing(s: &mut Studio, g: &Geometry) {
     s.popup = None;
     let (x, y) = clip_mid(s, g, "Vocal", 0);
@@ -120,10 +121,11 @@ fn processing(s: &mut Studio, g: &Geometry) {
         s,
         g,
         if attached {
-            "クリップ"
+            Category::Clip
         } else {
-            "オーディオ"
-        },
+            Category::Audio
+        }
+        .label(),
     );
 }
 
@@ -207,6 +209,13 @@ fn processing_ends_with_the_attach_row_and_its_key_opens_the_list() {
     assert!(s.popup.is_none());
     assert_eq!(s.song.steps(), n + 1);
     assert_eq!(s.project().ara.clips[&c].plugin, UID);
+    s.ara.fake = Some(vec![report(c, Phase::Rendering, 1.0)]);
+    s.poll_ara();
+    assert!(s.ara.opened.is_empty());
+    s.ara.fake = Some(vec![report(c, Phase::Ready, 1.0)]);
+    s.poll_ara();
+    s.poll_ara();
+    assert_eq!(s.ara.opened, [(UID.to_string(), vec![c])]);
 }
 
 /// The ARA row of 「処理」 for what is selected, and what Ctrl+M says of it.

@@ -1,7 +1,7 @@
 //! `--script ara-real`: a real ARA plugin on a clip, as a person uses it (EDT-023, PLG-036,
 //! PLG-055; the approved screens of 2026-11-03): attached from the clip's right-click menu and
-//! the list, the badge while it analyses and when it is done, its window from a double click,
-//! the window closed and the song saved and opened again with the plugin's edits, and detached.
+//! the list, the badge while it analyses and when it is done, its automatically opened window,
+//! the window closed and the song saved and opened again with its archive, and detached.
 //!
 //! Needs `XIRIUS_ARA_REAL_PLUGIN` set to the plugin's `.vst3`; without it, or when it names no
 //! ARA plugin, the run fails at its first stage (it never passes by skipping). Each stage fails
@@ -11,10 +11,10 @@
 //! is played to a speaker. The song is a tone written into a folder of its own under the temp
 //! folder; no song of the user's is opened.
 //!
-//! The plugin must not need anyone: a window of the app's process other than the app's and the
-//! plugin's editor (an activation, a question) ends the run at once, untouched, and the run
-//! says which window it was. Each stage writes what it saw to stderr as `ara-check <shot> …`.
-//! The only input to a window is the close message sent to the plugin's own editor.
+//! An unexpected dialog in the app or plugin host (activation or a question) ends the run
+//! without interacting with it. Each stage writes its observations to stderr as
+//! `ara-check <shot> …`.
+//! The only input to the plugin's window is a close message sent to its own frame.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -40,7 +40,7 @@ const fn laid(n: u8) -> Act {
 }
 
 pub const SHOTS: &[Shot] = &[
-    // 処理 › of the tone's clip, with the row that adds the plugin.
+    // オーディオ › of the tone's clip, with the row that adds the plugin.
     Shot {
         name: "ara-real01-menu",
         acts: &[Act::Reset, laid(0), laid(1)],
@@ -60,8 +60,7 @@ pub const SHOTS: &[Shot] = &[
         name: "ara-real04-ready",
         acts: &[laid(4)],
     },
-    // A double click on the clip. The stage only asks: the plugin's window is owned by the
-    // app's, so it opens while the app's window takes its messages between the shots.
+    // Picking the plugin also asks for its editor.
     Shot {
         name: "ara-real05-open",
         acts: &[laid(5)],
@@ -264,14 +263,13 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             s.ctx = None;
             let (x, y) = clip_mid(s, g, TRACK, 0);
             assert!(s.scene_context(g, x, y));
-            assert!(s.context_choose(g, "処理"));
-            let last = s.context_rows().into_iter().rfind(|r| !r.gap);
-            eprintln!(
-                "ara-check {shot} last={:?} key={:?}",
-                last.as_ref().map(|r| r.label.clone()),
-                last.as_ref().map(|r| r.key.clone())
+            assert!(s.context_choose(g, crate::context::layout::Category::Audio.label()));
+            assert!(
+                s.context_rows()
+                    .iter()
+                    .any(|row| row.label == crate::clip_ara::ADD && row.enabled),
+                "the audio menu has no enabled ARA add row"
             );
-            assert_eq!(last.map(|r| r.label).as_deref(), Some(crate::clip_ara::ADD));
         }
         2 => {
             assert!(s.context_choose(g, crate::clip_ara::ADD));
@@ -302,18 +300,16 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
         4 => {
             wait(s, 180.0, |s| badge(s) == "ready");
             eprintln!("ara-check {shot} badge={}", badge(s));
+            plugin_status(s, shot);
             assert_eq!(badge(s), "ready");
         }
         5 => {
-            let (x, y) = clip_mid(s, g, TRACK, 0);
-            let asked = s.arrange_open(g, x, y, Mods::NONE);
-            eprintln!("ara-check {shot} asked={asked}");
-            assert!(asked, "the double click did not ask for the window");
+            eprintln!("ara-check {shot} docs={:?}", docs(s));
         }
         6 => {
             wait(s, 30.0, |s| s.ara.editing.iter().any(|p| p == uid()));
             let editing = s.ara.editing.iter().any(|p| p == uid());
-            let hwnd = crate::park::own_handle(&title());
+            let hwnd = editor_window();
             let (mut offscreen, mut front) = (false, false);
             if let Some(h) = hwnd {
                 let edge = xirius_vst3::Placement::offscreen().at.map_or(0, |(x, _)| x);
@@ -332,6 +328,7 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 hwnd.is_some()
             );
             eprintln!("ara-check {shot} docs={:?} error={:?}", docs(s), s.error);
+            plugin_status(s, shot);
             assert!(editing && hwnd.is_some(), "the window did not open");
             assert!(
                 offscreen && !front,
@@ -339,23 +336,14 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             );
         }
         7 => {
-            if let Some(h) = crate::park::own_handle(&title()) {
-                os::close(h);
-            }
+            let h = editor_window().expect("the editor is gone");
+            os::close(h);
             wait(s, 30.0, |s| !s.ara.editing.iter().any(|p| p == uid()));
             let closed = !s.ara.editing.iter().any(|p| p == uid());
-            // The window's edits come into the song once the plugin wrote its archive
-            // (`take_archives`, at a later frame). The script edits nothing in the plugin's
-            // window (the plugin takes no edit from the host), so it stands in for the
-            // plugin's notice that its document changed: the save asks for the archive, waits
-            // for it, and writes it, and the song keeps it byte for byte through opening it
-            // again.
+            // Save through the same path as a real edit, waiting for the plugin's archive.
             let pending = |s: &Studio| s.transport.host().is_some_and(|h| h.take_ara_arrived());
             wait(s, 10.0, |s| !pending(s));
             assert!(!pending(s), "the plugin's archive asked for did not come");
-            if let Some(h) = s.transport.host() {
-                h.mark_ara_changed();
-            }
             run_ok(s, "project.save", json!({}));
             wait(s, 30.0, |s| s.song.is_saved());
             let saved = s.song.is_saved() && s.error.is_none();
@@ -411,6 +399,23 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
     }
 }
 
+fn editor_window() -> Option<isize> {
+    let title = title();
+    crate::park::any_window(&title).filter(|h| crate::park::own_handle(&title) != Some(*h))
+}
+
+fn plugin_status(s: &mut Studio, shot: &str) {
+    let status = xirius_session::commands::run(
+        s.song.session_mut(),
+        s.transport.host_mut(),
+        "plugin.status",
+        &Default::default(),
+        &Default::default(),
+    )
+    .unwrap();
+    eprintln!("ara-check {shot} plugin.status={}", status.data);
+}
+
 #[cfg(windows)]
 mod os {
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
@@ -456,7 +461,7 @@ mod os {
 
     /// Asks the window to close, as its close box does.
     pub fn close(hwnd: isize) {
-        // SAFETY: a message posted to the plugin's own window, of this process.
+        // SAFETY: a message posted to the plugin host's editor window.
         unsafe { PostMessageW(hwnd as HWND, WM_CLOSE, 0, 0) };
     }
 }

@@ -2,7 +2,7 @@
 
 ARA のホスト（`docs/ara-host.md`）を、SDK の試験用のプラグインと本物の ARA のプラグインで確かめた結果。対象は少数に絞る（PLG-049）: SDK の TestPlugIn、市販の ARA プラグイン、外部の歌声編集ソフトと連携する ARA ブリッジ。
 
-試験の音は、試験の中で作った音（220・247・262・294 Hz の正弦波を 0.6 秒ずつ、間に 0.4 秒の無音を挟んで並べた 4 秒、48 kHz）。利用者の曲は使わない。どのプラグインも、試験の間に窓（認証・編集の窓を含む）を出さなかった。
+文書と曲の層の試験の音は、試験の中で作った音（220・247・262・294 Hz の正弦波を 0.6 秒ずつ、間に 0.4 秒の無音を挟んで並べた 4 秒、48 kHz）。利用者の曲は使わない。これらの試験ではプラグインの窓は出なかった。
 
 ## 手順
 
@@ -10,8 +10,9 @@ ARA のホスト（`docs/ara-host.md`）を、SDK の試験用のプラグイン
 | --- | --- | --- |
 | TestPlugIn の通し | `cargo test -p xirius-ara --test test_plugin -- --ignored` | `XIRIUS_ARA_TEST_PLUGIN` に `ARATestPlugIn.vst3` |
 | 本物のプラグインの通し | `cargo test -p xirius-session --test ara_real -- --ignored` | `XIRIUS_ARA_REAL_PLUGIN` に ARA の VST3 の束 |
+| 本物のプラグインの編集窓 | `cargo test -p xirius-ui --test ara_real_window -- --ignored` | 同上。必要なら `XIRIUS_ARA_REAL_COMMON_FILES` も指定する |
 
-どちらも `#[ignore]` で CI では流れず、Release の前に `python scripts/ci_tests.py --plugins` で流す。環境変数が無い・ファイルが無いときは失敗する（飛ばして通ったことにしない）。`ara_real` は 2 つに分かれる。
+いずれも `#[ignore]` で CI では流れず、Release の前に `python scripts/ci_tests.py --plugins` で流す。環境変数が無い・ファイルが無いときは失敗する（飛ばして通ったことにしない）。編集窓の試験では、クリップの右クリックから候補を選び、編集窓が自動で開くことを確かめる。窓を閉じた後に保存・再読込し、アーカイブが戻ったことを確かめてからプラグインを外す。音符の操作は別途手作業で試す。`ara_real` は 2 つに分かれる。
 
 1. 文書の層: 読み込み → 解析の終わりを待つ → 音符を読む → 描いた音の大きさ → archive を取る → 同じ archive で 2 つ目の文書を開き、音と音符が戻り、開いただけで「変わった」にならないこと。
 2. 曲の層（ユーザーの手順）: クリップに付ける（`clip.ara.attach`）→ 解析 → 再生（描いた音が鳴る・再生で曲が変わらない）→ 保存して開き直す（別の曲のレート 44.1 kHz で開き直し、archive が曲から戻る・編集が残って鳴る・開いただけで曲が変わらない）→ 外す（`clip.ara.detach`。元の音に戻り、文書が畳まれる）。
