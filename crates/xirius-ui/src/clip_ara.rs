@@ -2,10 +2,10 @@
 //! the rows of the clip's menu, the list that picks the plugin, the badge after the clip's
 //! name, and the plugin's own window.
 //!
-//! - 「処理」 ends with 「ARA プラグインを追加…」 (Ctrl+M). It opens the list menu of the ARA
-//!   plugins; picking one attaches it, even when there is only one. A clip with changed tempo,
+//! - 「オーディオ」 includes 「ARA プラグインを追加…」 (Ctrl+M). It opens the list of ARA
+//!   plugins; picking one attaches it and opens its editor once ready. A clip with changed tempo,
 //!   speed, pitch or direction, or on a frozen track, has the row dim with its reason.
-//! - An attached clip has 「〈名前〉で編集」 and 「〈名前〉を外す」 (Ctrl+Alt+M) there instead, and
+//! - An attached clip has 「〈名前〉で編集」 and 「〈名前〉を外す」 (Ctrl+Alt+M) in 「クリップ」, and
 //!   a badge after its name: a turning ring and the plugin's percent while it analyses (the
 //!   ring alone while it renders, or when the clip is too narrow), the plugin's mark when done,
 //!   the same mark in the warning colour when the plugin went down, and the mark struck through
@@ -52,6 +52,8 @@ const NONE_FOUND: &str = "ARA に対応したプラグインが見つかりま�
 pub struct AraUi {
     /// The clips the open list attaches its plugin to.
     pub pick: Vec<ClipId>,
+    /// Editors to open once the clips just attached from the list are ready.
+    open_after_attach: Vec<(String, Vec<ClipId>)>,
     /// The plugins' state, read at the last poll.
     pub reports: Vec<Report>,
     /// The plugins whose window was open at the last poll.
@@ -252,18 +254,23 @@ impl Studio {
     /// Between frames: reads the plugins' state, takes the edits of a window that closed into
     /// the song, and says what a window could not open. True while a badge's ring turns.
     pub fn poll_ara(&mut self) -> bool {
+        let mut archive_pending = false;
         if self.ara.fake.is_none() {
             let Some(host) = self.transport.host() else {
+                if self.ara_without_host() {
+                    self.ara.open_after_attach.clear();
+                }
                 return false;
             };
             let attached = !self.project().ara.clips.is_empty();
             if !attached && self.ara.editing.is_empty() && self.ara.reports.is_empty() {
+                self.ara.open_after_attach.clear();
                 return false;
             }
             self.ara.reports = host.ara_reports();
             let editing = host.ara_editing();
             let errors = host.take_ara_editor_errors();
-            let pending = host.take_ara_arrived();
+            archive_pending = host.take_ara_arrived();
             let closed = self.ara.editing.iter().any(|p| !editing.contains(p));
             self.ara.editing = editing;
             if closed {
@@ -272,16 +279,43 @@ impl Studio {
             if let Some((_, why)) = errors.first() {
                 self.warn(format!("プラグインの窓を開けません（{why}）"), None);
             }
-            // An archive on its way comes in at a later frame: keep them coming.
-            if pending {
-                return true;
+        }
+        self.poll_ara_open_after_attach();
+        let p = self.project();
+        // Keep frames coming for an archive still on its way or a turning badge.
+        archive_pending
+            || p.ara
+                .clips
+                .keys()
+                .any(|c| matches!(self.ara_badge(*c), Some(Badge::Busy(_))))
+    }
+
+    fn poll_ara_open_after_attach(&mut self) {
+        if self.ara.open_after_attach.is_empty() {
+            return;
+        }
+        let project = self.project();
+        for (plugin, mut clips) in std::mem::take(&mut self.ara.open_after_attach) {
+            clips.retain(|clip| {
+                project
+                    .ara
+                    .clips
+                    .get(clip)
+                    .is_some_and(|a| a.plugin.eq_ignore_ascii_case(&plugin))
+                    && matches!(self.ara_badge(*clip), Some(Badge::Busy(_) | Badge::Ready))
+            });
+            if clips.is_empty() {
+                continue;
+            }
+            if clips
+                .iter()
+                .all(|c| self.ara_badge(*c) == Some(Badge::Ready))
+            {
+                self.open_ara_editor_for(&clips);
+            } else {
+                self.ara.open_after_attach.push((plugin, clips));
             }
         }
-        let p = self.project();
-        p.ara
-            .clips
-            .keys()
-            .any(|c| matches!(self.ara_badge(*c), Some(Badge::Busy(_))))
     }
 
     /// The tests' restart of the plugins that went down.
@@ -421,7 +455,7 @@ impl Studio {
         list
     }
 
-    /// A plugin picked in the list: it is attached to the clips the list was opened for.
+    /// Attaches the plugin chosen in the list and opens its editor after preparation.
     pub(crate) fn ara_picked(&mut self, to: &str) {
         if to == crate::mixer::scan::RESCAN {
             if let Err(e) = self.start_plugin_scan() {
@@ -433,14 +467,14 @@ impl Studio {
             self.stop_plugin_scan();
             return;
         }
-        let ids: Vec<String> = std::mem::take(&mut self.ara.pick)
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        if ids.is_empty() {
-            return;
+        let clips = std::mem::take(&mut self.ara.pick);
+        let ids: Vec<String> = clips.iter().map(ToString::to_string).collect();
+        if !ids.is_empty() && self.ara_attach_to(&ids, to) {
+            self.ara
+                .open_after_attach
+                .retain(|(plugin, _)| !plugin.eq_ignore_ascii_case(to));
+            self.ara.open_after_attach.push((to.to_string(), clips));
         }
-        self.ara_attach_to(&ids, to);
     }
 
     /// `clip.ara.attach` with its plugin. The name is the window's own catalog's, so the step
@@ -485,12 +519,16 @@ impl Studio {
         }
         let place = self.editor_placement();
         let Some(host) = self.transport.host() else {
-            self.ara.opened.push((plugin, clips.to_vec()));
+            self.ara.opened.push((plugin.clone(), clips.to_vec()));
+            self.ara_open_requested(&plugin, clips);
             return true;
         };
         let title = format!("{name} · ARA");
         match host.open_ara_editor(&plugin, &title, place, clips) {
-            Ok(()) => true,
+            Ok(()) => {
+                self.ara_open_requested(&plugin, clips);
+                true
+            }
             Err(e) if e.contains("not open") => {
                 self.warn(NOT_READY.into(), None);
                 false
@@ -500,6 +538,12 @@ impl Studio {
                 false
             }
         }
+    }
+
+    fn ara_open_requested(&mut self, plugin: &str, clips: &[ClipId]) {
+        self.ara.open_after_attach.retain(|(waiting, attached)| {
+            !waiting.eq_ignore_ascii_case(plugin) || !attached.iter().any(|c| clips.contains(c))
+        });
     }
 
     /// Says why a badge cannot be opened, in a brief note.

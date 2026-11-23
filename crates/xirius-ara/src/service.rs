@@ -1877,6 +1877,13 @@ impl Ara {
 
     fn edit(&mut self, title: &str, place: Placement, keys: &[u64]) -> Result<(), String> {
         if self.editor.is_none() {
+            // A Win32 owner in Studio couples the editor to Studio's message queue.
+            // The host places its independent frame using the supplied screen area.
+            #[cfg(windows)]
+            let place = Placement {
+                owner: None,
+                ..place
+            };
             let dc = self.doc.controller_ref();
             let mut instance = self
                 .binary

@@ -195,12 +195,19 @@ impl RemoteService {
                             &pending,
                             WireCommand::Store { changed },
                         );
-                        let value = match &answer {
-                            Ok(Reply::Archive(a)) => a.clone(),
-                            _ => None,
-                        };
-                        let _ = reply.send(value);
-                        answer
+                        match answer {
+                            Ok(Reply::Archive { edited, analysis }) => {
+                                if let Some(analysis) = analysis {
+                                    lock(&state).analysis_archive = Some(Arc::new(analysis));
+                                }
+                                let _ = reply.send(edited);
+                                continue;
+                            }
+                            other => {
+                                let _ = reply.send(None);
+                                other
+                            }
+                        }
                     }
                     Some(Job::Notes(key, modification, reply)) => {
                         let answer = exchange(

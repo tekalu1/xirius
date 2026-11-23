@@ -3030,6 +3030,7 @@ impl Studio {
         self.selected_clip = None;
         // The devices' windows were of the song that closed (M-par-2).
         self.instruments.forget_song();
+        self.ara = Default::default();
         crate::instrument::window::forget_turns(self);
         self.chain_presets.forget();
         self.collapsed.clear();

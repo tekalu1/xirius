@@ -1,9 +1,8 @@
-//! `--script clip-menu-rows`: the 1.0 rows of the clip menus (CTX-057): 処理 › and バウンス › of
-//! an audio clip (S02), バウンス › and the MIDI file of a MIDI clip (S03), and バウンス › of
-//! several clips (S04). 処理 › ends with ARA's row (EDT-023). Nothing is chosen but the
-//! submenus. Silent; no OS input.
+//! `--script clip-menu-rows`: オーディオ › and バウンス › on an audio clip (S02), MIDI
+//! export on a MIDI clip (S03), and バウンス › on several clips (S04). Silent; no OS input.
 
 use crate::arrange::probe::{clip_mid, track};
+use crate::context::layout::Category;
 use crate::shot::{Act, Play, Shot};
 use crate::studio::{Geometry, Studio};
 
@@ -12,7 +11,7 @@ const fn laid(n: u8) -> Act {
 }
 
 pub const SHOTS: &[Shot] = &[
-    // An audio clip: 処理 › with ノーマライズ, 逆再生 and テンポを検出.
+    // An audio clip: オーディオ › with ノーマライズ, 逆再生 and テンポを検出.
     Shot {
         name: "cmr01-audio-process",
         acts: &[Act::Reset, laid(0), laid(1)],
@@ -22,7 +21,7 @@ pub const SHOTS: &[Shot] = &[
         name: "cmr02-audio-bounce",
         acts: &[laid(2)],
     },
-    // A MIDI clip: バウンス › and MIDI ファイルとして書き出す… in the menu.
+    // A MIDI clip: its file export under 書き出し ›.
     Shot {
         name: "cmr03-midi-menu",
         acts: &[laid(3)],
@@ -61,17 +60,16 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
     match n {
         1 => {
             menu(s, g, "Vocal");
-            assert!(s.context_choose(g, "処理"));
-            assert_eq!(
-                labels(s),
-                [
-                    "戻る",
-                    "ノーマライズ",
-                    "逆再生",
-                    "テンポを検出",
-                    crate::clip_ara::ADD
-                ]
-            );
+            assert!(s.context_choose(g, Category::Audio.label()));
+            let rows = labels(s);
+            for label in [
+                "ノーマライズ",
+                "逆再生",
+                "テンポを検出",
+                crate::clip_ara::ADD,
+            ] {
+                assert!(rows.iter().any(|r| r == label), "{rows:?}");
+            }
         }
         2 => {
             menu(s, g, "Vocal");
@@ -79,6 +77,7 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
         }
         3 => {
             menu(s, g, "Keys");
+            assert!(s.context_choose(g, Category::Export.label()));
             let rows = labels(s);
             assert!(rows.iter().any(|r| r == "バウンス"), "{rows:?}");
             assert!(rows.iter().any(|r| r == "MIDI ファイルとして書き出す…"));

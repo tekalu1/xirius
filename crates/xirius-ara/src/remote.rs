@@ -12,7 +12,7 @@ use crate::service::{self, Phase, Probe, Rendered, Song};
 use crate::shared_audio::SharedAudio;
 
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 pub enum Command {
@@ -55,7 +55,10 @@ pub enum Reply {
     Ack,
     Error(String),
     Snapshot(Snapshot),
-    Archive(Option<(Vec<u8>, String)>),
+    Archive {
+        edited: Option<(Vec<u8>, String)>,
+        analysis: Option<(Vec<u8>, String)>,
+    },
     Notes(Vec<Note>),
     Probe(Option<Probe>),
 }
@@ -350,12 +353,7 @@ pub fn run_worker() -> io::Result<()> {
                         },
                     ));
                 }
-                let analysis = service.analysis_archive();
-                let analysis_archive = match (&last_analysis, &analysis) {
-                    (Some(old), Some(new)) if Arc::ptr_eq(old, new) => None,
-                    _ => analysis.as_ref().map(|a| (**a).clone()),
-                };
-                last_analysis = analysis;
+                let analysis_archive = new_analysis(&mut last_analysis, service.analysis_archive());
                 Reply::Snapshot(Snapshot {
                     states: wire,
                     crashed: service.crashed(),
@@ -376,11 +374,17 @@ pub fn run_worker() -> io::Result<()> {
                 } else {
                     service.store_later()
                 };
-                Reply::Archive(
-                    stored
-                        .and_then(|rx| rx.recv_timeout(std::time::Duration::from_secs(5)).ok())
-                        .flatten(),
-                )
+                let edited = stored
+                    .and_then(|rx| rx.recv_timeout(std::time::Duration::from_secs(5)).ok())
+                    .flatten();
+                // Store can cache the analysis without producing an edited archive.
+                // The save must be able to read that cache as soon as Store completes.
+                let analysis = if edited.is_none() {
+                    new_analysis(&mut last_analysis, service.analysis_archive())
+                } else {
+                    None
+                };
+                Reply::Archive { edited, analysis }
             }
             Command::Notes { key, modification } => {
                 Reply::Notes(service.notes(key, modification, std::time::Duration::from_secs(5)))
@@ -415,4 +419,18 @@ pub fn run_worker() -> io::Result<()> {
         send(&mut output, &reply)?;
     }
     Ok(())
+}
+
+fn new_analysis(
+    last: &mut Option<service::CachedArchive>,
+    current: Option<service::CachedArchive>,
+) -> Option<(Vec<u8>, String)> {
+    if let (Some(old), Some(new)) = (&*last, &current)
+        && Arc::ptr_eq(old, new)
+    {
+        return None;
+    }
+    let archive = current.as_deref().cloned();
+    *last = current;
+    archive
 }

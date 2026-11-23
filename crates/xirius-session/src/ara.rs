@@ -1253,15 +1253,6 @@ impl Held {
         )
     }
 
-    /// As if each plugin of `p` told it changed its document ([`Service::mark_changed`]): the
-    /// song written next has their archives. For the real-plugin script, which edits nothing
-    /// in the plugin's window.
-    pub fn mark_changed(&self, p: &Project) {
-        for d in self.kept(p) {
-            d.service.mark_changed();
-        }
-    }
-
     /// Requests current archives for an explicit save or export, even without change notices.
     pub fn ask_archives(&self, p: &Project) {
         self.ask_archives_with(p, ArchiveRequest::Fresh);
