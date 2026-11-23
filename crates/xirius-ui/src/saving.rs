@@ -1522,7 +1522,21 @@ mod tests {
         let before = s.project().tracks[&track].clips.len();
         s.toggle_record();
         assert!(s.transport.take.is_some(), "{:?}", s.error);
-        std::thread::sleep(Duration::from_millis(60));
+        // A moving playhead confirms the silent output processed a recording block.
+        let host = s.transport.host_mut().unwrap();
+        let first_frame = host.status().frame;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = host.poll();
+            if status.playing && status.frame > first_frame {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the silent output did not record a block"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
         s.save_test_delay = Duration::from_millis(250);
         s.start_save();
         s.saving_key("space");
