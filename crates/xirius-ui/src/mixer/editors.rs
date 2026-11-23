@@ -256,6 +256,7 @@ impl Studio {
                     .values()
                     .any(|(window, _)| *window == hwnd)
                 {
+                    Self::grant_editor_foreground(hwnd);
                     xirius_vst3::raise_independent_editor(hwnd, &stack, base);
                 }
             }
@@ -283,25 +284,33 @@ impl Studio {
             bar.stack_base = base;
         }
         #[cfg(windows)]
-        unsafe {
-            // SAFETY: queries and a foreground grant; no call waits on a plugin thread.
-            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                AllowSetForegroundWindow, GetForegroundWindow, GetWindowThreadProcessId,
-            };
-            let foreground = GetForegroundWindow();
-            let mut process = 0;
-            GetWindowThreadProcessId(foreground, &mut process);
-            if process == std::process::id()
-                && let Some((window, _)) = self.mixer.editor_touches.get(&id)
-                && GetWindowThreadProcessId(*window as _, &mut process) != 0
-            {
-                AllowSetForegroundWindow(process);
+        {
+            if let Some(&(window, _)) = self.mixer.editor_touches.get(&id) {
+                Self::grant_editor_foreground(window);
             }
             bar.stack_base = self.editor_stack_base(base);
         }
         if let Some(host) = self.transport.host() {
             host.plugin_editor_bar(id, bar);
             host.raise_plugin_editor(id, foreground_from);
+        }
+    }
+
+    #[cfg(windows)]
+    fn grant_editor_foreground(window: u64) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            AllowSetForegroundWindow, GetForegroundWindow, GetWindowThreadProcessId,
+        };
+        // SAFETY: queries and a foreground grant; no call waits on a plugin thread.
+        unsafe {
+            let foreground = GetForegroundWindow();
+            let mut process = 0;
+            GetWindowThreadProcessId(foreground, &mut process);
+            if process == std::process::id()
+                && GetWindowThreadProcessId(window as _, &mut process) != 0
+            {
+                AllowSetForegroundWindow(process);
+            }
         }
     }
 
