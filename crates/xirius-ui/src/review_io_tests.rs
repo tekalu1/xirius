@@ -58,7 +58,7 @@ fn a_closed_menu_snapshot_does_not_keep_external_reads_busy() {
 }
 
 #[test]
-fn external_reads_wait_for_each_text_surface_and_pointer_owner() {
+fn external_writes_wait_for_each_text_surface_and_pointer_owner_while_looks_answer() {
     type Case = (&'static str, fn(&mut Studio));
     let cases: &[Case] = &[
         ("browser search", |s| s.browser.typing = true),
@@ -83,10 +83,22 @@ fn external_reads_wait_for_each_text_surface_and_pointer_owner() {
         }),
         ("branch value", |s| {
             use crate::branch_value::{Entry, Focus, Place, Which};
+            // A real branch: the mixer lets go of an entry whose branch is gone.
+            s.song
+                .run("track.add.audio", json!({"name":"Vocal"}))
+                .unwrap();
+            let track = s.project().tracks.keys().next().copied().unwrap();
+            s.song
+                .run("rack.split.add", json!({"track":track.to_string()}))
+                .unwrap();
+            let node = match s.project().tracks[&track].rack.as_ref().unwrap().fx.last() {
+                Some(xirius_core::rack::RackNode::Split(x)) => x.branches[0].id,
+                other => panic!("{other:?}"),
+            };
             s.mixer.value_entry = Some(Entry {
                 focus: Focus {
-                    track: xirius_core::id::TrackId(1),
-                    node: xirius_core::id::NodeId(1),
+                    track,
+                    node,
                     which: Which::Gain,
                     place: Place::Strip,
                 },
@@ -121,9 +133,7 @@ fn external_reads_wait_for_each_text_surface_and_pointer_owner() {
         s.bind_window_io();
         assert!(s.human_interaction_active(), "{name}");
         assert!(s.other_busy(), "{name}");
-        let call = request(&mut s, "track.list", json!({}), RunOptions::human());
-        assert!(call.join().unwrap().is_err(), "{name}");
-        assert!(s.saving.is_none(), "{name}");
+        held(&mut s);
         assert!(s.human_interaction_active(), "preserved: {name}");
     }
 }
@@ -159,15 +169,13 @@ fn external_reads_preserve_settings_pick_search_and_inline_rename_composition() 
         let before = snapshot(&s);
         assert_eq!(before.marked, "未確定");
         s.bind_window_io();
-        let call = request(&mut s, "track.list", json!({}), RunOptions::human());
-        assert!(call.join().unwrap().is_err());
-        assert!(s.saving.is_none());
+        held(&mut s);
         assert_eq!(snapshot(&s), before);
         s.settings = None;
         s.popup = None;
         s.input_map.name = None;
         assert!(!s.human_interaction_active());
-        let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+        let retry = request(&mut s, "track.add.audio", json!({}), RunOptions::human());
         finish(&mut s);
         retry.join().unwrap().unwrap();
     }
@@ -201,14 +209,12 @@ fn external_reads_preserve_a_detached_devices_committed_and_marked_text() {
     // Outside its callback the detached surface restores the main surface's scope.
     s.instruments.detached_target = None;
     s.bind_window_io();
-    let call = request(&mut s, "track.list", json!({}), RunOptions::human());
-    assert!(call.join().unwrap().is_err());
-    assert!(s.saving.is_none());
+    held(&mut s);
     assert_eq!(s.ime_field().cloned().unwrap(), before);
     s.instruments.entry = None;
     s.instruments.open.clear();
     assert!(!s.human_interaction_active());
-    let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+    let retry = request(&mut s, "track.add.audio", json!({}), RunOptions::human());
     finish(&mut s);
     retry.join().unwrap().unwrap();
 }
@@ -220,15 +226,60 @@ fn a_detached_channel_keeps_its_view_until_the_person_closes_it() {
     let track = *s.project().tracks.keys().next().unwrap();
     s.open_channel(track);
     s.bind_window_io();
-    let call = request(&mut s, "track.list", json!({}), RunOptions::human());
-    assert!(call.join().unwrap().is_err());
+    held(&mut s);
     assert_eq!(s.channel.as_ref().unwrap().track, track);
-    assert!(s.saving.is_none());
     s.channel = None;
     assert!(!s.human_interaction_active());
-    let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+    let retry = request(&mut s, "track.add.audio", json!({}), RunOptions::human());
     finish(&mut s);
     retry.join().unwrap().unwrap();
+}
+
+#[test]
+fn an_open_plugin_window_answers_looks_and_refuses_writes() {
+    for windowed in [true, false] {
+        let (_root, mut s) = setup();
+        assert!(s.run_command("track.add.audio", json!({})));
+        finish(&mut s);
+        let t = *s.project().tracks.keys().next().unwrap();
+        assert!(s.run_command(
+            "plugin.add",
+            json!({ "track": t.to_string(), "name": "Delay" }),
+        ));
+        finish(&mut s);
+        let fx = s.project().tracks[&t].inserts[0].id;
+        s.show_instrument(t, fx);
+        assert!(!s.instruments.open.is_empty());
+        if windowed {
+            s.bind_window_io();
+        }
+        let tracks = s.project().tracks.len();
+        let open = s.instruments.open.clone();
+        for name in ["plugin.status", "track.list", "ops.list", "ops.schema"] {
+            look_beside(&mut s, name);
+            assert_eq!(s.instruments.open, open, "{name}");
+        }
+        for name in ["track.add.audio", "select.all", "transport.play"] {
+            let call = request(&mut s, name, json!({}), RunOptions::human());
+            let refused = call.join().unwrap().unwrap_err();
+            assert_eq!(refused.code, xirius_core::ErrorCode::Conflict, "{name}");
+            assert!(s.saving.is_none(), "{name}");
+        }
+        assert_eq!(s.project().tracks.len(), tracks);
+        assert_eq!(s.instruments.open, open);
+        assert!(s.ai.last.is_none(), "a look beside the person is not told");
+    }
+}
+
+#[test]
+fn every_look_answered_beside_the_person_is_a_read() {
+    let registry = xirius_session::commands::shared_registry();
+    for name in crate::ai::LOOKS_ONLY {
+        let d = registry
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} is a command"));
+        assert_eq!(d.risk, xirius_core::Risk::Read, "{name}");
+    }
 }
 
 #[test]
@@ -243,13 +294,11 @@ fn external_reads_preserve_a_value_typed_in_a_track_head_fader() {
     let before = s.ime_field().cloned().unwrap();
     assert_eq!(before.marked, "未確定");
     s.bind_window_io();
-    let call = request(&mut s, "track.list", json!({}), RunOptions::human());
-    assert!(call.join().unwrap().is_err());
-    assert!(s.saving.is_none());
+    held(&mut s);
     assert_eq!(s.ime_field().cloned().unwrap(), before);
     s.head_fader.entry = None;
     assert!(!s.human_interaction_active());
-    let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+    let retry = request(&mut s, "track.add.audio", json!({}), RunOptions::human());
     finish(&mut s);
     retry.join().unwrap().unwrap();
 }
@@ -294,9 +343,7 @@ fn external_reads_preserve_palette_search_forms_and_menu_composition() {
         s.bind_window_io();
         assert!(s.human_interaction_active());
         assert!(s.other_busy());
-        let call = request(&mut s, "track.list", json!({}), RunOptions::human());
-        assert!(call.join().unwrap().is_err());
-        assert!(s.saving.is_none());
+        held(&mut s);
         assert_eq!(snapshot(&s), before);
         s.ime_unmark();
         // Esc empties the words first, then closes.
@@ -311,7 +358,7 @@ fn external_reads_preserve_palette_search_forms_and_menu_composition() {
             }
         }
         assert!(!s.human_interaction_active());
-        let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+        let retry = request(&mut s, "track.add.audio", json!({}), RunOptions::human());
         finish(&mut s);
         retry.join().unwrap().unwrap();
     }
@@ -347,7 +394,23 @@ fn external_reads_preserve_note_move_and_resize_until_mouse_up_and_undo() {
         s.apply_roll(&g, out);
         assert!(s.roll.drag.is_some());
         let preview = s.roll.preview.changed[&original.0];
-        for name in ["track.list", "project.save", "project.new"] {
+        for name in [
+            "track.add.audio",
+            "project.save",
+            "project.new",
+            "track.list",
+        ] {
+            if name == "track.list" {
+                // A look is answered in the middle of the drag and leaves it as it was (MCP-009).
+                look_beside(&mut s, name);
+                assert!(s.roll.drag.is_some());
+                let current = s.roll.preview.changed[&original.0];
+                assert_eq!(
+                    (current.start, current.length, current.pitch),
+                    (preview.start, preview.length, preview.pitch)
+                );
+                continue;
+            }
             // Even when the platform flag has not been updated, the actual drag protects it.
             let call = request(&mut s, name, json!({}), RunOptions::human());
             assert!(call.join().unwrap().is_err());
@@ -377,7 +440,7 @@ fn external_reads_preserve_note_move_and_resize_until_mouse_up_and_undo() {
             (restored.start, restored.length, restored.pitch),
             (original.1, original.2, original.3)
         );
-        let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+        let retry = request(&mut s, "track.add.audio", json!({}), RunOptions::human());
         finish(&mut s);
         retry.join().unwrap().unwrap();
     }
@@ -390,10 +453,8 @@ fn external_reads_and_automatic_adoption_preserve_held_pc_keys() {
     s.pc_keys.down.push(("a".into(), track, 60, 60));
     s.bind_window_io();
     assert!(s.other_busy());
-    let call = request(&mut s, "track.list", json!({}), RunOptions::human());
-    assert!(call.join().unwrap().is_err());
+    held(&mut s);
     assert_eq!(s.pc_keys.down.len(), 1);
-    assert!(s.saving.is_none());
 }
 
 #[test]
@@ -404,8 +465,7 @@ fn picker_answers_keep_their_own_reservation_and_cannot_cross_songs() {
     let current = s.begin_picker();
     assert!(!s.accept_picker(old));
     assert!(s.other_busy());
-    let call = request(&mut s, "track.list", json!({}), RunOptions::human());
-    assert!(call.join().unwrap().is_err());
+    held(&mut s);
     assert!(s.accept_picker(current));
     assert!(!s.human_interaction_active());
     let old_song = s.begin_picker();
@@ -531,6 +591,33 @@ fn callbacks(s: &mut Studio) {
         let g = s.geometry(880.0, 600.0);
         s.key(&g, "escape", false, false);
     }
+}
+
+/// While the person works, a write from outside is refused and starts nothing, and a look is
+/// answered (MCP-009).
+fn held(s: &mut Studio) {
+    let call = request(s, "track.add.audio", json!({}), RunOptions::human());
+    let refused = call.join().unwrap().unwrap_err();
+    assert_eq!(refused.code, xirius_core::ErrorCode::Conflict);
+    assert!(s.saving.is_none());
+    look_beside(s, "track.list");
+}
+
+/// A look from outside while the person works (MCP-009): it is answered, and the screen's
+/// state is left as it was. The look is kept under the veil, as a short one is on a real
+/// machine: one that outlasts it lets the keys and the roll go, as the screen's rescan does.
+fn look_beside(s: &mut Studio, name: &str) -> RunResult {
+    assert!(
+        s.human_interaction_active(),
+        "{name} is asked while the person works"
+    );
+    let call = request(s, name, json!({}), RunOptions::human());
+    if let Some(save) = &mut s.saving {
+        save.since = Instant::now() + Duration::from_secs(3600);
+    }
+    finish(s);
+    let r = call.join().unwrap();
+    r.unwrap_or_else(|e| panic!("{name} is answered while the person works: {e}"))
 }
 
 pub(crate) fn request(
