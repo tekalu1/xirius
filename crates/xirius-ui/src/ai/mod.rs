@@ -545,7 +545,11 @@ impl Studio {
     /// the session checks the permission and says why it refuses; the
     /// screen keeps what came of it and starts the motion.
     pub fn ai_job(&mut self, job: xirius_mcp::Job) {
-        if self.human_interaction_active() {
+        // While the person works (a plugin window open, a drag, a field being typed), only a
+        // look is answered (MCP-009); anything else waits until they are done, as it would
+        // cancel or change what they hold.
+        let beside = self.human_interaction_active();
+        if beside && !looks_only(&job.command) {
             job.answer(Err(CmdError::conflict(
                 // design-lint: allow(guidance) MCP busy response explains retry because an active human gesture must not be cancelled.
                 "操作中です。操作が終わってから再試行してください",
@@ -560,6 +564,10 @@ impl Studio {
             } else {
                 "保存中です"
             })));
+            return;
+        }
+        if beside {
+            self.read_beside_person(job);
             return;
         }
         // A device's knob still turning is its own step before what comes from outside: an
@@ -593,6 +601,28 @@ impl Studio {
         }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; ai_run refuses window mode and connected jobs use the Session worker.
         let r = self.ai_run(&job.command, &job.raw, &job.opts, job.save);
+        job.answer(r);
+    }
+
+    /// Answers a look from outside while the person works (MCP-009). A look in
+    /// [`LOOKS_ONLY`] changes neither the song nor the selection, the view or the sound, so it
+    /// is answered without ending what the person holds: no knob's step is closed, no menu,
+    /// palette or roll is shut, no key is let go, and the reply is not told on the screen. In
+    /// a window the session visits its owner for a moment as for the screen's own rescan;
+    /// the person's input meanwhile waits and is not lost.
+    fn read_beside_person(&mut self, job: xirius_mcp::Job) {
+        if self.transport.is_windowed() {
+            self.read_on_worker(job);
+            return;
+        }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter for a look; window mode reads on the Session worker above.
+        let r = xirius_mcp::persist::run_and_persist(
+            self.song.session_mut(),
+            &job.command,
+            &job.raw,
+            &job.opts,
+            false,
+        );
         job.answer(r);
     }
 
@@ -697,6 +727,65 @@ impl Studio {
             }
         }
     }
+}
+
+/// The reads answered while the person works (MCP-009): each only looks. A Read that selects,
+/// moves the view, opens or folds something, plays or scans is not here, though its risk is
+/// Read: done in the middle of a drag or a typed name it would change what the person holds.
+/// `ops.list` and `ops.schema` are here so that an AI can find its way at any time.
+pub(crate) const LOOKS_ONLY: &[&str] = &[
+    "ai.activity",
+    "ai.decision.get",
+    "ai.pending",
+    "ai.permission.get",
+    "ai.request.status",
+    "audio.devices",
+    "audio.get",
+    "browser.plugin.list",
+    "browser.preset.list",
+    "clip.list",
+    "control.list",
+    "engine.stats",
+    "export.status",
+    "file.list",
+    "history.list",
+    "job.list",
+    "keymap.conflicts",
+    "keymap.get",
+    "keymap.which",
+    "location.list",
+    "macro.list",
+    "midi.get",
+    "midimap.list",
+    "mousemap.conflicts",
+    "mousemap.get",
+    "note.list",
+    "ops.get-result",
+    "ops.hello",
+    "ops.list",
+    "ops.receipt",
+    "ops.schema",
+    "plugin.builtin.list",
+    "plugin.note_source.list",
+    "plugin.param.list",
+    "plugin.scan.status",
+    "plugin.sidechain.list",
+    "plugin.stats",
+    "plugin.status",
+    "prefs.get",
+    "preset.list",
+    "project.get",
+    "record.status",
+    "select.get",
+    "song.recent",
+    "track.list",
+    "track.preset.list",
+    "transport.status",
+    "version.list",
+];
+
+pub(crate) fn looks_only(command: &str) -> bool {
+    LOOKS_ONLY.contains(&command)
 }
 
 fn run_changed(r: &Result<RunResult, CmdError>) -> bool {

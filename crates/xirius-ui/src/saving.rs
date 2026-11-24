@@ -57,6 +57,9 @@ struct McpSave {
     job: xirius_mcp::Job,
     result: Option<RunResult>,
     before: crate::ai::Before,
+    /// The screen tells what came of it (the AI's row and pop-over). A look answered while
+    /// the person works is not told (MCP-009).
+    told: bool,
 }
 type SaveCommand = (
     String,
@@ -371,6 +374,7 @@ impl Studio {
                 job,
                 result,
                 before,
+                told: true,
             }),
             None,
         );
@@ -484,15 +488,38 @@ impl Studio {
         raw: serde_json::Map<String, serde_json::Value>,
     ) {
         let command: SaveCommand = (name.into(), raw, RunOptions::human(), false);
+        self.quiet_on_worker(command, None);
+        self.saving.as_mut().unwrap().operation = Some(crate::io_command::label(name));
+    }
+
+    /// A look from outside on the song's owner while the person works (MCP-009): as quiet as
+    /// the screen's own rescan, and its answer goes to the AI alone, not to the screen.
+    pub(crate) fn read_on_worker(&mut self, mut job: xirius_mcp::Job) {
+        // A look is never saved with the song.
+        job.save = false;
+        let mcp = McpSave {
+            job,
+            result: None,
+            before: None,
+            told: false,
+        };
+        let command = mcp.command().expect("a look has no result yet");
+        self.quiet_on_worker(command, Some(mcp));
+    }
+
+    /// Only the session goes to the worker: nothing on the screen is closed or cleared for it,
+    /// as nothing is saved. Only if it outlasts the veil do the keys and the roll let go.
+    fn quiet_on_worker(&mut self, command: SaveCommand, mcp: Option<McpSave>) {
         let progress = Arc::new(SaveProgress::default());
         let work =
             Work::Writing(self.save_worker(None, false, progress.clone(), Some(command.clone())));
+        let command = mcp.is_none().then_some(command);
         self.saving = Some(Saving {
             device_entry: None,
             palette_query: None,
-            operation: Some(crate::io_command::label(name)),
-            mcp: None,
-            command: Some(command),
+            operation: None,
+            mcp,
+            command,
             work,
             since: crate::wait::now(),
             progress,
@@ -546,6 +573,7 @@ impl Studio {
                 job,
                 result: None,
                 before,
+                told: true,
             }),
             None,
         );
@@ -996,7 +1024,9 @@ impl Studio {
                     .or(mcp.result)
                     .expect("MCP save returns its command result")),
             };
-            self.ai_complete(&mcp.job.command, &reply, mcp.before);
+            if mcp.told {
+                self.ai_complete(&mcp.job.command, &reply, mcp.before);
+            }
             mcp.job.answer(reply);
         }
         if let Some((name, raw, _, _)) = operation_command {

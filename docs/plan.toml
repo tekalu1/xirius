@@ -7678,6 +7678,16 @@ notes = "前の tools/list は、デスクトップで 511 件・約 500 KB、CL
 status = "done"
 
 [[item]]
+id = "MCP-009"
+title = "人の操作中でも、見るだけの Read と ops_list・ops_schema には答える"
+area = "MCP"
+phase = "v1.1"
+source = "2026-11-24 の持ち主の依頼（プラグインの窓を開いている間、MCP の読み取りまで「操作中です」で断られる）"
+after = ["MCP-008", "UI-288"]
+done_when = "人の操作中（楽器窓・ドラッグ・鍵盤・入力欄・メニューなど）でも、曲も選択も表示も変えない Read の一覧（ai/mod.rs の LOOKS_ONLY、ops.list・ops.schema を含む）には答え、その間に人の操作を取り消さず、窓・メニュー・ロール・鍵盤・入力の状態を変えない。書くコマンドと、選択・表示・再生を変える Read は今までどおり「操作中です」で断る。一覧の名前が登録表にあり risk が Read であることと、楽器窓を開いた間の読みの成功・書きの拒否・状態の保持を試験で確かめる。理由をコードの注釈と docs/ui-io.md・docs/command-protocol.md に書く"
+status = "done"
+
+[[item]]
 id = "CLI-001"
 title = "plugin.param.set の --plain に 0〜1 の値を % のパラメーターへ渡したとき、設定はそのままにして --value の意味を伝える"
 area = "CLI"

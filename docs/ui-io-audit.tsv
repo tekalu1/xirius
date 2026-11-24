@@ -20,7 +20,7 @@ crates/xirius-ui/src/ai/endpoint.rs	write	1
 crates/xirius-ui/src/ai/endpoint.rs	write_all	1
 crates/xirius-ui/src/ai/mod.rs	ai_run	1
 crates/xirius-ui/src/ai/mod.rs	run	1
-crates/xirius-ui/src/ai/mod.rs	xirius_mcp :: persist :: run_and_persist	1
+crates/xirius-ui/src/ai/mod.rs	xirius_mcp :: persist :: run_and_persist	2
 crates/xirius-ui/src/ai/serve.rs	lock	1
 crates/xirius-ui/src/ancillary_io.rs	lock	1
 crates/xirius-ui/src/ancillary_io.rs	std :: io :: stderr	1
