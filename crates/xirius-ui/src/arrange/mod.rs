@@ -44,6 +44,8 @@ pub mod folder_band;
 mod open;
 #[cfg(test)]
 mod open_tests;
+#[cfg(test)]
+mod overlap_tests;
 pub mod paint;
 mod preview;
 pub mod probe;
@@ -833,11 +835,13 @@ impl Studio {
             && let Some(track) = p.tracks.get(&t)
         {
             let stacks = xirius_core::takes::stacks(track);
-            let on_badge = track.clips.iter().any(|c| {
-                crate::draw::takes_under(&stacks, c).is_some()
-                    && crate::draw::takes_badge(self.clip_rect(g, row, c))
-                        .is_some_and(|b| b.contains(x, y))
-            });
+            // Only the clip on top shows its count; one under it is covered (UI-375).
+            let on_badge = self
+                .clip_at(g, row, track, &stacks, x, y)
+                .is_some_and(|(c, r)| {
+                    crate::draw::takes_under(&stacks, c).is_some()
+                        && crate::draw::takes_badge(r).is_some_and(|b| b.contains(x, y))
+                });
             if on_badge {
                 return Spot::Rec {
                     track: t,
@@ -849,16 +853,15 @@ impl Studio {
             && let Some(track) = p.tracks.get(&t)
             && !self.clips_locked(t)
         {
-            // A take that does not play is not drawn over the one that does (EDT-139).
+            // The clip on top at the point is the one taken, as it is painted last (UI-375). A
+            // take that does not play is not drawn over the one that does (EDT-139).
             let stacks = xirius_core::takes::stacks(track);
-            let shown =
-                |c: &&xirius_core::model::Clip| !(c.muted && crate::draw::in_stack(&stacks, c));
+            let top = self.clip_at(g, row, track, &stacks, x, y);
             // The lower right corner is the loop's, over the clip's other handles (EDT-041).
-            for clip in track.clips.iter().rev().filter(shown) {
-                let r = self.clip_rect(g, row, clip);
+            if let Some((clip, r)) = top {
                 let e = Arrange::GRIP.min(r.w / 3.0);
                 let h = clip_loop::CORNER.min(r.h / 3.0);
-                if r.contains(x, y) && x >= r.right() - e && y >= r.bottom() - h {
+                if x >= r.right() - e && y >= r.bottom() - h {
                     return Spot::Clip {
                         track: t,
                         clip: clip.id,
@@ -869,23 +872,20 @@ impl Studio {
             if let Some(spot) = self.fx_spot(g, row, track, x, y) {
                 return spot;
             }
-            for clip in track.clips.iter().filter(shown) {
-                let r = self.clip_rect(g, row, clip);
-                if r.contains(x, y) {
-                    let e = Arrange::GRIP.min(r.w / 3.0);
-                    let grip = if x < r.x + e {
-                        Grip::Left
-                    } else if x >= r.right() - e {
-                        Grip::Right
-                    } else {
-                        Grip::Body
-                    };
-                    return Spot::Clip {
-                        track: t,
-                        clip: clip.id,
-                        grip,
-                    };
-                }
+            if let Some((clip, r)) = top {
+                let e = Arrange::GRIP.min(r.w / 3.0);
+                let grip = if x < r.x + e {
+                    Grip::Left
+                } else if x >= r.right() - e {
+                    Grip::Right
+                } else {
+                    Grip::Body
+                };
+                return Spot::Clip {
+                    track: t,
+                    clip: clip.id,
+                    grip,
+                };
             }
         }
         Spot::Space(row.kind)

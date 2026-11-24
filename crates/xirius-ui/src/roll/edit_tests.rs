@@ -204,6 +204,43 @@ fn empty_click_switches_to_the_part_under_the_pointer() {
 }
 
 #[test]
+fn an_empty_click_on_overlapping_parts_switches_to_the_one_on_top() {
+    // Either order in the track's list: the part added last is painted over the other, and the
+    // roll moves to it (UI-375).
+    for later_first in [false, true] {
+        let (mut s, g) = fixture();
+        s.roll.beat_px = 24.0;
+        let c = s.roll_ctx(&g).unwrap();
+        let track = s.selected_clip.unwrap().0;
+        let end = c.clip.start + c.clip.length;
+        let mut add = |at: i64| {
+            s.song
+                .run(
+                    "clip.add.midi",
+                    json!({"track":track.to_string(),"at":at,"length":1920}),
+                )
+                .unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let (early, late) = if later_first {
+            let late = add(end + 1920);
+            (add(end + 960), late)
+        } else {
+            let early = add(end + 960);
+            (early, add(end + 1920))
+        };
+        let top = if later_first { early } else { late };
+        let c = s.roll_ctx(&g).unwrap();
+        let v = s.roll.view(&c);
+        let p = (v.x(end + 2400 - c.clip.start), v.y(63) + 7.0);
+        assert!(s.roll_press(&g, p.0, p.1, Mods::NONE, 1));
+        assert_eq!(s.selected_clip.unwrap().1.to_string(), top);
+    }
+}
+
+#[test]
 fn shift_q_restores_timing_after_q_and_alt_q() {
     let (mut s, g) = fixture();
     let c = s.roll_ctx(&g).unwrap();

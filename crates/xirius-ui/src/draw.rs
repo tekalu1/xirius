@@ -1079,7 +1079,7 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
             {
                 let stacks = xirius_core::takes::stacks(track);
                 let edits = crate::arrange::clipfx_paint::drag_edits(studio, g);
-                for clip in &track.clips {
+                for clip in painted(track, &stacks) {
                     // An Alt drag on the edge shows the clip at its new speed.
                     let stretched = match (&speed, &speed_map) {
                         (Some((percent, ids)), Some(map)) if ids.contains(&clip.id) => {
@@ -1090,11 +1090,6 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
                     let clip = stretched.as_ref().unwrap_or(clip);
                     let cr = studio.clip_rect(g, row, clip);
                     if cr.right() < g.lanes.x || cr.x > g.lanes.right() {
-                        continue;
-                    }
-                    // A take that does not play is in its row under the track, not over the one
-                    // that does.
-                    if clip.muted && in_stack(&stacks, clip) {
                         continue;
                     }
                     let selected = studio.selected_clip == Some((t, clip.id))
@@ -1825,6 +1820,20 @@ pub(crate) fn in_stack(
     stacks
         .iter()
         .any(|s| s.slots.iter().any(|x| x.clip == clip.id))
+}
+
+/// The clips of `track` the lanes show, in the order they are painted (UI-375): where two
+/// overlap, the later one lies on top. The hits walk this backwards, so the clip a person sees
+/// at a point is the one they take. A take that does not play is in its row under the track,
+/// not over the one that does.
+pub(crate) fn painted<'a>(
+    track: &'a Track,
+    stacks: &[xirius_core::takes::TakeStack],
+) -> impl DoubleEndedIterator<Item = &'a xirius_core::model::Clip> {
+    track
+        .clips
+        .iter()
+        .filter(move |c| !(c.muted && in_stack(stacks, c)))
 }
 
 /// The count of takes at the lower left of a clip of `r` (UI-296): the icon and the number, a
