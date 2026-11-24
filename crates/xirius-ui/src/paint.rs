@@ -69,6 +69,8 @@ pub struct Colors {
     pub clip_sel: Hsla,
     /// The face of a selected track's head and mixer strip, one or several (UI-340).
     pub track_sel: Hsla,
+    /// The face of a selected track's lane: quieter than its head (UI-377).
+    pub lane_sel: Hsla,
     /// [`strip_flash`].
     pub strip_flash: Hsla,
     /// A primary button and its hover face.
@@ -91,6 +93,10 @@ pub struct Colors {
     /// A mark that something moved off its stored state (the preset tag's dot, UI-322).
     pub ink_mark: Hsla,
     pub ink_on_toggle: Hsla,
+    /// The M of a track silenced by another track's solo, on the off face (UI-376).
+    pub ink_mute_implied: Hsla,
+    /// What cannot be pressed, and the name of a track silenced by another's solo (UI-376).
+    pub ink_disabled: Hsla,
     pub alert: Hsla,
     pub stale: Hsla,
     /// The close button's hover face and the ink on it.
@@ -167,6 +173,7 @@ impl Colors {
             clip: paint(Surface::Clip.color(theme)),
             clip_sel: paint(Surface::ClipSel.color(theme)),
             track_sel: paint(Surface::TrackSel.color(theme)),
+            lane_sel: paint(Surface::LaneSel.color(theme)),
             strip_flash: paint(strip_flash(theme)),
             fill: paint(Surface::Fill.color(theme)),
             fill_hover: paint(Surface::FillHover.color(theme)),
@@ -192,6 +199,12 @@ impl Colors {
                     .ink_color(theme),
             ),
             ink_on_toggle: paint(Toggle::off().ink_color(theme)),
+            ink_mute_implied: paint(Toggle::implied_mute(theme)),
+            ink_disabled: paint(
+                Readable::new(Surface::Paper, Ink::Disabled)
+                    .expect("Disabled is readable on the paper")
+                    .ink_color(theme),
+            ),
             alert: paint(LevelMeter::clip_light(theme)),
             stale: paint(Accent::StaleDot.color(theme)),
             danger: paint(Surface::Danger.color(theme)),

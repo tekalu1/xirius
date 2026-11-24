@@ -81,6 +81,72 @@ fn clearing_solo_and_mute_turns_every_track_off_in_one_undo() {
 }
 
 #[test]
+fn what_a_clear_took_off_is_put_back_until_a_switch_is_set_by_hand() {
+    // UI-376: the head's global M / S clear, and pressed again put back what they cleared.
+    let mut s = Session::new("key more");
+    let opts = RunOptions::human();
+    let a = add_track(&mut s, "A");
+    let b = add_track(&mut s, "B");
+    let c = add_track(&mut s, "C");
+    let soloed = |s: &Session| {
+        let mut v: Vec<String> = s
+            .project()
+            .tracks
+            .values()
+            .filter(|t| t.solo)
+            .map(|t| t.id.to_string())
+            .collect();
+        v.sort();
+        v
+    };
+    s.run_value("track.solo", json!({"ids": [&a, &b], "on": true}), &opts)
+        .unwrap();
+    s.run_value("track.mute", json!({"ids": [&c], "on": true}), &opts)
+        .unwrap();
+    s.run_value("track.solo.clear", json!({}), &opts).unwrap();
+    assert!(soloed(&s).is_empty());
+    // A clear with nothing on keeps what can be put back.
+    s.run_value("track.solo.clear", json!({}), &opts).unwrap();
+    let r = s.run_value("track.solo.restore", json!({}), &opts).unwrap();
+    assert_eq!(r.message, "2 トラックのソロを戻しました");
+    assert_eq!(soloed(&s), sorted(vec![&a, &b]));
+    // Put back once: there is nothing more to put back.
+    let e = s
+        .run_value("track.solo.restore", json!({}), &opts)
+        .unwrap_err();
+    assert!(e.to_string().contains("戻せるソロがありません"), "{e}");
+    // The two kinds are kept apart.
+    s.run_value("track.mute.clear", json!({}), &opts).unwrap();
+    s.run_value("track.solo.clear", json!({}), &opts).unwrap();
+    s.run_value("track.mute.restore", json!({}), &opts).unwrap();
+    assert!(s.project().tracks.values().any(|t| t.mute));
+    assert!(soloed(&s).is_empty());
+    // A solo set by hand forgets what the clear took off; the mute's set is not touched.
+    s.run_value("track.mute.clear", json!({}), &opts).unwrap();
+    s.run_value("track.solo", json!({"ids": [&c], "on": true}), &opts)
+        .unwrap();
+    s.run_value("track.solo", json!({"ids": [&c], "off": true}), &opts)
+        .unwrap();
+    assert!(s.run_value("track.solo.restore", json!({}), &opts).is_err());
+    s.run_value("track.mute.restore", json!({}), &opts).unwrap();
+    assert!(s.project().tracks.values().any(|t| t.mute));
+    // A clear and a restore are one undo step each, the kept set with them.
+    s.run_value("track.solo", json!({"ids": [&a], "on": true}), &opts)
+        .unwrap();
+    s.run_value("track.solo.clear", json!({}), &opts).unwrap();
+    s.run_value("track.solo.restore", json!({}), &opts).unwrap();
+    s.run_value("history.undo", json!({}), &opts).unwrap();
+    assert!(soloed(&s).is_empty());
+    s.run_value("track.solo.restore", json!({}), &opts).unwrap();
+    assert_eq!(soloed(&s), vec![a.clone()]);
+    // A track the song no longer has is skipped.
+    s.run_value("track.solo.clear", json!({}), &opts).unwrap();
+    s.run_value("track.delete", json!({"ids": [&a]}), &opts)
+        .unwrap();
+    assert!(s.run_value("track.solo.restore", json!({}), &opts).is_err());
+}
+
+#[test]
 fn the_clips_of_the_given_or_selected_tracks_leave_the_selection() {
     let mut s = Session::new("key more");
     let opts = RunOptions::human();

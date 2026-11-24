@@ -215,6 +215,7 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
             | crate::studio::Hit::Freeze(..)
             | crate::studio::Hit::Output(..)
             | crate::studio::Hit::FolderBus(..)
+            | crate::studio::Hit::AllOff(..)
     ) {
         return Pointer::style(CursorStyle::PointingHand);
     }

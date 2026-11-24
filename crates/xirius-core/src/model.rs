@@ -1162,6 +1162,26 @@ pub struct Project {
     /// Audio clips played through an ARA plugin, and the plugins' archives (see `ara`).
     #[serde(default, skip_serializing_if = "crate::ara::Ara::is_empty")]
     pub ara: crate::ara::Ara,
+    /// What the last "clear every solo / mute" took off, for the head's global button to put
+    /// back (UI-376).
+    #[serde(default, skip_serializing_if = "Cleared::is_empty")]
+    pub cleared: Cleared,
+}
+
+/// The tracks whose solo or mute the last clear took off. Setting a solo (or a mute) by hand
+/// forgets that kind's set: what is put back is only ever what was just taken off (UI-376).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cleared {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub solo: std::collections::BTreeSet<TrackId>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub mute: std::collections::BTreeSet<TrackId>,
+}
+
+impl Cleared {
+    pub fn is_empty(&self) -> bool {
+        self.solo.is_empty() && self.mute.is_empty()
+    }
 }
 
 impl Project {
@@ -1184,6 +1204,7 @@ impl Project {
             loop_range: None,
             clip_fx: BTreeMap::new(),
             ara: crate::ara::Ara::default(),
+            cleared: Cleared::default(),
         };
         p.tracks.insert(
             TrackId::MASTER,

@@ -9,6 +9,7 @@ pub fn command(hit: Hit) -> Option<String> {
         match hit {
             Hit::Mute(_) => "track.mute",
             Hit::Solo(_) => "track.solo",
+            Hit::AllOff(flag, restore) => flag.command(restore),
             Hit::Arm(_) => "track.arm",
             Hit::Monitor(_) => "track.monitor",
             Hit::Keys(_) => "view.instrument",

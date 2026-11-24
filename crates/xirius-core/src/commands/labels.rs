@@ -541,6 +541,8 @@ pub const LABELS: &[(&str, &str)] = &[
     ("mix.listen", "範囲の音を解析"),
     ("track.solo.clear", "ソロをすべて解除"),
     ("track.mute.clear", "ミュートをすべて解除"),
+    ("track.solo.restore", "解除したソロを戻す"),
+    ("track.mute.restore", "解除したミュートを戻す"),
     ("select.off-tracks", "トラック上の選択を解除"),
     ("select.span", "先頭・最後まで選択"),
     ("take.next", "次のテイク"),

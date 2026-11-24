@@ -75,12 +75,32 @@ impl Toggle {
     pub const fn off() -> Readable {
         Surface::S3.text()
     }
+
+    /// ほかのトラックのソロで黙っているトラックの M の文字。面は切れているときの面（S3）のまま
+    /// 塗らない。文字 1 つの状態の印なので、面との差は図形の 3:1 で見る（UI-376）。
+    pub fn implied_mute(theme: Theme) -> Color {
+        Palette::of(theme).ink_mute_implied
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{MIN_GRAPHIC_CONTRAST, contrast_ratio};
+
+    #[test]
+    fn the_implied_mute_letter_is_the_approved_colour_and_stands_out_on_the_off_face() {
+        assert_eq!(Toggle::implied_mute(Theme::Dark), Color::hex(0xe3c14b));
+        assert_eq!(Toggle::implied_mute(Theme::Light), Color::hex(0x7a6100));
+        for theme in [Theme::Dark, Theme::Light] {
+            let ink = Toggle::implied_mute(theme);
+            assert!(ink.is_opaque());
+            let ratio = contrast_ratio(ink, Surface::S3.color(theme));
+            assert!(ratio >= MIN_GRAPHIC_CONTRAST, "{theme:?} {ratio}");
+            // It is told apart from the plain letter of an off toggle, not only by its hue.
+            assert_ne!(ink, Toggle::off().ink_color(theme));
+        }
+    }
 
     #[test]
     fn an_off_switch_has_a_visible_track_and_knob_in_both_themes() {

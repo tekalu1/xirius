@@ -123,7 +123,12 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 on_off().to_vec(),
             ]
             .concat(),
-            |p, _, a| set_flag(p, a, true, "ミュート", |t| &mut t.mute),
+            |p, _, a| {
+                // A mute set by hand: what the last clear took off is no longer put back (UI-376).
+                let out = set_flag(p, a, true, "ミュート", |t| &mut t.mute)?;
+                p.cleared.mute.clear();
+                Ok(out)
+            },
         ),
         edit(
             "track.solo",
@@ -133,7 +138,11 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 on_off().to_vec(),
             ]
             .concat(),
-            |p, _, a| set_flag(p, a, false, "ソロ", |t| &mut t.solo),
+            |p, _, a| {
+                let out = set_flag(p, a, false, "ソロ", |t| &mut t.solo)?;
+                p.cleared.solo.clear();
+                Ok(out)
+            },
         ),
         edit(
             "track.arm",
