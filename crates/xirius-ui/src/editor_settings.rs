@@ -173,11 +173,18 @@ impl Studio {
         if v.grid.contains(x, y) && self.roll.hit_note(&ctx, &v, x, y).is_none() && clicks == 1 {
             let tick = ctx.clip.start + v.tick(x);
             let old_start = ctx.clip.start;
-            if let Some((track, _)) = ctx.project.find_clip(ctx.clip.id)
-                && let Some(c) = ctx.project.tracks[&track]
-                    .clips
-                    .iter()
-                    .find(|c| c.is_midi() && c.start <= tick && tick < c.start + c.length)
+            // A press in the open clip stays in it, also where another overlaps it. Outside,
+            // the roll moves to the MIDI clip on top there: the last one painted (UI-375).
+            let inside = ctx.clip.start <= tick && tick < ctx.clip.start + ctx.clip.length;
+            if !inside
+                && let Some((track, _)) = ctx.project.find_clip(ctx.clip.id)
+                && let Some(c) = {
+                    let t = &ctx.project.tracks[&track];
+                    let stacks = xirius_core::takes::stacks(t);
+                    crate::draw::painted(t, &stacks)
+                        .rev()
+                        .find(|c| c.is_midi() && c.start <= tick && tick < c.start + c.length)
+                }
                 && c.id != ctx.clip.id
             {
                 let id = c.id;

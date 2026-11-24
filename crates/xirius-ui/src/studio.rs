@@ -1577,24 +1577,35 @@ impl Studio {
             let project = self.project();
             if let Some(track) = project.tracks.get(&t) {
                 let stacks = xirius_core::takes::stacks(track);
-                for clip in &track.clips {
-                    // A take that does not play is not drawn over the one that does (EDT-139).
-                    if clip.muted && crate::draw::in_stack(&stacks, clip) {
-                        continue;
+                if let Some((clip, r)) = self.clip_at(g, row, track, &stacks, x, y) {
+                    if let Some(badge) = self.ara_badge(clip.id)
+                        && self.ara_badge_rect(track, clip, r, &badge).contains(x, y)
+                    {
+                        return Hit::Ara(t, clip.id);
                     }
-                    let r = self.clip_rect(g, row, clip);
-                    if r.contains(x, y) {
-                        if let Some(badge) = self.ara_badge(clip.id)
-                            && self.ara_badge_rect(track, clip, r, &badge).contains(x, y)
-                        {
-                            return Hit::Ara(t, clip.id);
-                        }
-                        return Hit::Clip(t, clip.id);
-                    }
+                    return Hit::Clip(t, clip.id);
                 }
             }
         }
         Hit::Row(row.kind)
+    }
+
+    /// The clip on top at (x, y) in `row` and where it sits (UI-375): the last one painted that
+    /// holds the point, so what the person sees there is what they take. The marks drawn in a
+    /// clip (its loop corner, takes, ARA, stop) belong to it alone; one lower down is covered.
+    pub(crate) fn clip_at<'a>(
+        &self,
+        g: &Geometry,
+        row: &Row,
+        track: &'a xirius_core::model::Track,
+        stacks: &[xirius_core::takes::TakeStack],
+        x: f32,
+        y: f32,
+    ) -> Option<(&'a Clip, Rect)> {
+        crate::draw::painted(track, stacks)
+            .rev()
+            .map(|clip| (clip, self.clip_rect(g, row, clip)))
+            .find(|(_, r)| r.contains(x, y))
     }
 
     /// Where a clip sits on screen.

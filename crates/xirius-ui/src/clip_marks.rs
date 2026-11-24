@@ -370,14 +370,17 @@ impl Studio {
         }
         let p = self.project();
         let tree = self.tree();
+        // Only the clip on top at the point shows its square; one under it is covered (UI-375).
         let on = p.tracks.values().any(|t| {
             let Some(row) = tree.row_of(crate::tree::RowKind::Track(t.id)) else {
                 return false;
             };
-            t.clips
-                .iter()
-                .filter(|c| self.job_on_clip(c.id).is_some())
-                .any(|c| stop_rect(self.clip_rect(g, row, c)).is_some_and(|r| r.contains(x, y)))
+            let stacks = xirius_core::takes::stacks(t);
+            self.clip_at(g, row, t, &stacks, x, y)
+                .is_some_and(|(c, r)| {
+                    self.job_on_clip(c.id).is_some()
+                        && stop_rect(r).is_some_and(|r| r.contains(x, y))
+                })
         });
         on && self.job_cancel()
     }
