@@ -23,6 +23,8 @@ macro_rules! palette_tokens {
             surface_clip_sel: c(0x41434c), c(0xc9cdda);
             /// 選んだトラックの面（頭とミキサーのストリップ、1 本でも複数でも同じ）。枠を引かず、面の明るさの差で示す。フェーダーのつまみの面とは別の色（UI-340）。
             surface_track_sel: c(0x41434c), c(0xc9cdda);
+            /// 選んだトラックのレーンの面。頭（surface_track_sel）より控えめにして、上に並ぶクリップの面（surface_clip・surface_clip_sel）との差を残す（UI-377）。
+            surface_lane_sel: c(0x282930), c(0xeceef4);
             /// ミキサーのストリップを 1 秒ほど光らせる面（頭の空いた所のダブルクリック）。そのときストリップは選んであるので、選んだトラックの面から L* で 5 以上離す（UI-340）。
             surface_strip_flash: c(0x50535e), c(0xb3b8c8);
             surface_thumb: c(0x35373f), c(0xc9cbd2);
@@ -40,6 +42,8 @@ macro_rules! palette_tokens {
             /// ミュート・ソロが入っているときの小さな札の塗り（札の上の文字は `ink_toggle_mute` など）。
             fill_toggle_mute: c(0xe3c14b), c(0xe3c14b);
             ink_toggle_mute: c(0x201a00), c(0x201a00);
+            /// ほかのトラックのソロで黙っているトラックの M の文字。面は塗らず、切れている札の面（surface_3）のまま。自分で入れたミュートは fill_toggle_mute の塗り（UI-376）。
+            ink_mute_implied: c(0xe3c14b), c(0x7a6100);
             fill_toggle_solo: c(0x4cc38a), c(0x4cc38a);
             ink_toggle_solo: c(0x06210f), c(0x06210f);
             // ---- 文字（ink）。`ink-weak` に当たるものは作らない ----

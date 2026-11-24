@@ -135,6 +135,7 @@ pub mod grid_lines;
 pub mod head_fader;
 #[cfg(test)]
 mod head_fader_tests;
+pub mod head_foot;
 pub mod health;
 pub mod heavy_plugin_shots;
 mod held_input;

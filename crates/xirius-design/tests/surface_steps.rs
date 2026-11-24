@@ -93,3 +93,26 @@ fn the_selected_track_face_is_the_selected_clip_face_for_now() {
         );
     }
 }
+
+#[test]
+fn the_selected_lane_is_the_approved_face_and_stands_apart_from_the_lane_and_its_clips() {
+    // 選んだトラックのレーン（UI-377）: 頭（TrackSel）より控えめで、選んでいないレーン（Paper）と
+    // その上のクリップの面（Clip・ClipSel）の両方から段の差を取る。
+    assert_eq!(Surface::LaneSel.color(Theme::Dark), Color::hex(0x282930));
+    assert_eq!(Surface::LaneSel.color(Theme::Light), Color::hex(0xeceef4));
+    for theme in Theme::ALL {
+        let lane = lightness(Surface::LaneSel.color(theme));
+        for other in [
+            Surface::Paper,
+            Surface::Clip,
+            Surface::ClipSel,
+            Surface::TrackSel,
+        ] {
+            let delta = (lane - lightness(other.color(theme))).abs();
+            assert!(
+                delta >= MIN_STEP_DELTA_L,
+                "{theme:?}: LaneSel と {other:?} の L* の差 {delta:.2}"
+            );
+        }
+    }
+}

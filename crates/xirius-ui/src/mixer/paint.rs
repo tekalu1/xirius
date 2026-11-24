@@ -30,6 +30,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         _ => None,
     };
     let view = studio.mixer_view(g);
+    let quiet = crate::head_foot::implied(&p);
     for s in studio.mixer_strips(g) {
         let Some(track) = p.tracks.get(&s.track) else {
             continue;
@@ -42,7 +43,10 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             let left = s.rect.x.max(view.x);
             Rect::new(left, s.rect.y, (right - left).max(0.0), s.rect.h)
         };
-        pen.mask(shown, |pen| paint_strip(pen, studio, &p, track, &s, hover));
+        let implied = quiet.contains(&s.track);
+        pen.mask(shown, |pen| {
+            paint_strip(pen, studio, &p, track, &s, hover, implied)
+        });
     }
     if let Some((_, thumb)) = studio.mixer_bar(g) {
         let tone = if studio.mixer.bar_grab.is_some() {
@@ -100,6 +104,7 @@ fn paint_strip(
     track: &Track,
     s: &StripLayout,
     hover: Option<MixerHit>,
+    implied: bool,
 ) {
     let c = pen.c;
     let t = track.id;
@@ -113,7 +118,14 @@ fn paint_strip(
     }
 
     // The name, with the track's icon in its colour.
-    let ink = if selected { c.ink_strong } else { c.ink };
+    // Only another track's solo keeps it quiet: the name is faint, as in the head (UI-376).
+    let ink = if implied {
+        c.ink_disabled
+    } else if selected {
+        c.ink_strong
+    } else {
+        c.ink
+    };
     let icon_ink = match track.kind {
         TrackKind::Master => c.ink,
         _ => crate::draw::color_of(c, track),
@@ -239,7 +251,7 @@ fn paint_strip(
         let (face, ink) = if on {
             lit
         } else {
-            (c.surface_3, c.ink_on_toggle)
+            (c.surface_3, crate::draw::off_ink(c, label, implied))
         };
         let face = pen.transition(
             &studio.motion,

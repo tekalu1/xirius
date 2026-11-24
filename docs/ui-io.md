@@ -98,6 +98,9 @@ cleanup・グルーヴ・通知・外部監視・クラッシュ記録・更新�
 `--ui-io-inventory` の安定した集計は [ui-io-audit.tsv](ui-io-audit.tsv) に記録する。
 
 MCP-009: 人の操作中に見るだけの Read に答える `ai/mod.rs` の `read_beside_person` で、`run_and_persist` が 1 つ増えた。窓のある通常の画面では Session の worker で読み（`saving.rs` の `read_on_worker`）、この呼び出しは窓の無い試験と offline の道だけで走る。保存はしない（`save` は false）。
+
+UI-376: 頭の列の下端の M・S（`head_foot.rs`）は、押したときに `track.mute.clear`・`track.solo.clear` かその `restore` を、行の M・S（`track_group.rs`）と同じ `command` → `Song::run` で 1 回呼ぶ。画面の入力からだけ呼び、描画の経路には置かない。この 1 件を集計に追加した。
+
 UI-368: ルーラーの押下処理を `press_flow.rs` に分けたため、そこでの `arrange_run`、`lock`、`seek` と `ruler_drag.rs` の `seek` を一覧に追加した。これらは既存の画面入力から実行する操作で、描画の経路には置かない。
 `ui_io_inventory` の CI 試験はこの集計と実ソースを照合するため、許可済みの行に呼び出しを
 足した場合も黙って増えない。行の移動だけでは更新を求めない。更新時は呼び出しの所有者を

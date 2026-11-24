@@ -171,6 +171,9 @@ pub enum Hit {
     Rec(crate::rec_panel::RecPart),
     /// A part of the toast at the foot of the lanes.
     Toast(crate::toast::ToastPart),
+    /// A button of the column's foot: every mute or solo off, or `true` to put back what the
+    /// last press turned off (UI-376).
+    AllOff(crate::head_foot::Flag, bool),
 }
 
 impl Hit {
@@ -1216,9 +1219,11 @@ impl Studio {
     }
 
     pub fn max_scroll(&self, g: &Geometry) -> (f32, f32) {
+        // The last row scrolls up out from under the column's foot (UI-376).
+        let foot = crate::head_foot::rect(g).map_or(0.0, |r| r.h);
         (
             (self.ticks_to_px(self.end_tick()) - g.lanes.w).max(0.0),
-            (self.tree.height + Space::X6.px() - g.lanes.h).max(0.0),
+            (self.tree.height + Space::X6.px() + foot - g.lanes.h).max(0.0),
         )
     }
 
@@ -1308,6 +1313,7 @@ impl Studio {
             Hit::Entrance(part) => self.entrance_rect(g, part).map(mid),
             Hit::Home(spot) => self.home_rect(g, spot).map(mid),
             Hit::Rec(part) => self.rec_center(g, part),
+            Hit::AllOff(flag, _) => crate::head_foot::button(g, flag).map(mid),
             Hit::RailSettings => Some(mid(browser::rail_io_button(g.rail))),
             Hit::Browser(hit) => self.browser.center_of(&self.browser.layout(g.panel), hit),
             Hit::Inspector(part) => {
@@ -1499,6 +1505,9 @@ impl Studio {
         let in_lanes = g.lanes.contains(x, y);
         if !in_column && !in_lanes {
             return Hit::None;
+        }
+        if in_column && let Some(hit) = crate::head_foot::hit(self, g, x, y) {
+            return hit;
         }
         // Folded, the whole strip opens the list again, a row of it naming itself.
         if g.panels.folded && in_column {
@@ -1918,6 +1927,7 @@ impl Studio {
             Hit::Monitor(t) => self.track_toggle("track.monitor", t),
             Hit::Mute(t) => self.track_toggle("track.mute", t),
             Hit::Solo(t) => self.track_toggle("track.solo", t),
+            Hit::AllOff(flag, restore) => self.all_off_press(flag, restore),
             Hit::FolderBus(f) => self.open_folder_bus(g, f),
             Hit::FolderColor(f) => {
                 let Some(row) = self.tree.row_of(RowKind::Folder(f)) else {
@@ -3360,7 +3370,10 @@ mod tests {
         let mut s = studio();
         let g = geometry(&s);
         let keys = track_named(&s, "Keys");
+        // The last row sits under the column's foot until it is scrolled up (UI-376).
+        s.scroll.1 = s.max_scroll(&g).1;
         let (x, y) = centre(&s, &g, RowKind::Track(keys), |p| p.solo);
+        assert_eq!(s.hit(&g, x, y), Hit::Solo(keys));
         s.press(&g, s.hit(&g, x, y));
         let p = s.project();
         assert!(p.tracks[&keys].solo && !p.tracks[&keys].mute);

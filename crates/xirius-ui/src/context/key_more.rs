@@ -41,8 +41,11 @@ impl Studio {
         args: &Map<String, Value>,
     ) -> Option<bool> {
         Some(match name {
-            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-            "track.solo.clear" | "track.mute.clear" => self.arrange_run(name, json!({})).is_some(),
+            "track.solo.clear" | "track.mute.clear" | "track.solo.restore"
+            | "track.mute.restore" => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                self.arrange_run(name, json!({})).is_some()
+            }
             "select.off-tracks" if !args.contains_key("ids") => self.clips_off_tracks(),
             "select.span" => {
                 let way = text(args, "way")?.to_string();

@@ -992,7 +992,43 @@ fn row_face(studio: &Studio, c: &Colors, row: &Row) -> Hsla {
     // Every selected row is lit the same, one or several, with no outline (UI-340).
     if studio.is_picked(row.kind) {
         c.track_sel
-    } else if studio.hover_row() == Some(row.kind) {
+    } else {
+        rest_face(studio, c, row)
+    }
+}
+
+/// A clip's name: the selected clip's is the strong ink in semibold, beside the brighter face
+/// (UI-377).
+pub(crate) fn clip_name_style(c: &Colors, selected: bool) -> (Weight, Hsla) {
+    if selected {
+        (Weight::Semibold, c.ink_strong)
+    } else {
+        (Weight::Medium, c.ink)
+    }
+}
+
+/// The letter of an M or S that is off: an M whose track only another solo keeps quiet says
+/// so in its own ink, its face left unlit (UI-376).
+pub(crate) fn off_ink(c: &Colors, label: &str, implied: bool) -> Hsla {
+    if implied && label == "M" {
+        c.ink_mute_implied
+    } else {
+        c.ink_on_toggle
+    }
+}
+
+/// A lane's face: a selected track's lane is quieter than its head, so the clips on it keep
+/// their faces apart from it (UI-377).
+fn lane_face(studio: &Studio, c: &Colors, row: &Row) -> Hsla {
+    if studio.is_picked(row.kind) {
+        c.lane_sel
+    } else {
+        rest_face(studio, c, row)
+    }
+}
+
+fn rest_face(studio: &Studio, c: &Colors, row: &Row) -> Hsla {
+    if studio.hover_row() == Some(row.kind) {
         c.hover
     } else {
         c.paper
@@ -1007,6 +1043,8 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
     pen.round(column_region, c.surface_2, Radius::S);
     pen.round(lanes_region, c.surface_2, Radius::S);
     let tree = studio.tree();
+    // The tracks only another track's solo keeps quiet (UI-376), once for every row.
+    let quiet = crate::head_foot::implied(&project);
 
     pen.mask(column_region, |pen| {
         for row in &tree.rows {
@@ -1026,7 +1064,7 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
                 paint_strip(pen, &project, g, row, top);
                 continue;
             }
-            paint_row_parts(pen, studio, &project, g, row, top);
+            paint_row_parts(pen, studio, &project, &quiet, g, row, top);
             crate::arrange::paint::head(pen, studio, &project, g, row, top);
             crate::rec_area::paint_head(pen, studio, &project, g, row, top);
             crate::bounce_row::paint_head(pen, studio, &project, g, row);
@@ -1044,6 +1082,7 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
                 Round::ALL,
             );
         }
+        crate::head_foot::paint(pen, studio, g);
     });
 
     let speed = studio.speed_preview(g);
@@ -1061,7 +1100,7 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
             if top + row.full_h() < g.lanes.y || top > g.lanes.bottom() {
                 continue;
             }
-            let face = row_face(studio, pen.c, row);
+            let face = lane_face(studio, pen.c, row);
             let r = Rect::new(g.lanes.x, top, g.lanes.w, row.full_h());
             let round = Round::rows(row.round_top, row.round_bottom);
             pen.shape(r, face, Radius::S, round);
@@ -1145,6 +1184,7 @@ fn paint_row_parts(
     pen: &mut Pen,
     studio: &Studio,
     project: &Project,
+    quiet: &std::collections::HashSet<xirius_core::id::TrackId>,
     g: &Geometry,
     row: &Row,
     top: f32,
@@ -1185,12 +1225,17 @@ fn paint_row_parts(
                 name_right - parts.name_x,
                 if row.bus.is_some() { 32.0 } else { row.h },
             );
+            let name_ink = if row.bus.is_some_and(|t| quiet.contains(&t)) {
+                c.ink_disabled
+            } else {
+                c.ink_strong
+            };
             pen.mask(name_r, |pen| {
                 pen.text(
                     &folder.name,
                     FontSize::Body,
                     Weight::Semibold,
-                    pen.c.ink_strong,
+                    name_ink,
                     name_r,
                     Align::Left,
                 );
@@ -1224,7 +1269,7 @@ fn paint_row_parts(
                             if hot {
                                 (c.hover, c.ink_strong)
                             } else {
-                                (c.surface_3, c.ink_on_toggle)
+                                (c.surface_3, off_ink(c, label, quiet.contains(&t)))
                             },
                             lit,
                         );
@@ -1299,12 +1344,17 @@ fn paint_row_parts(
                 track.name.clone()
             };
             let fitted = pen.fit(&label, FontSize::Body, Weight::Medium, name_r.w);
+            let name_ink = if quiet.contains(&t) {
+                c.ink_disabled
+            } else {
+                c.ink_strong
+            };
             pen.mask(name_r, |pen| {
                 pen.text(
                     &fitted,
                     FontSize::Body,
                     Weight::Medium,
-                    pen.c.ink_strong,
+                    name_ink,
                     name_r,
                     Align::Left,
                 );
@@ -1384,7 +1434,7 @@ fn paint_row_parts(
                     if hot {
                         (c.hover, c.ink_strong)
                     } else {
-                        (c.surface_3, c.ink_on_toggle)
+                        (c.surface_3, off_ink(c, label, quiet.contains(&t)))
                     },
                     lit,
                 );
@@ -1896,6 +1946,7 @@ fn paint_clip(
     let state = crate::clip_marks::status(studio, clip);
     let color = faint(color_of(c, track)).opacity(crate::clip_marks::dim(state));
     let marks = crate::clip_marks::marks(track, clip);
+    let (name_weight, name_ink) = clip_name_style(c, selected);
     pen.mask(r, |pen| {
         let pad = Space::X1.px();
         let name_h = 16.0;
@@ -1920,7 +1971,7 @@ fn paint_clip(
         let mut name_end = if marks.is_empty() {
             r.right()
         } else {
-            let name_w = pen.measure(&clip.name, FontSize::Caption, Weight::Medium);
+            let name_w = pen.measure(&clip.name, FontSize::Caption, name_weight);
             crate::clip_marks::paint_marks(pen, &marks, r, name_w, reserve) - 2.0
         };
         if let Some(badge) = &ara {
@@ -1940,8 +1991,8 @@ fn paint_clip(
             pen.text(
                 &clip.name,
                 FontSize::Caption,
-                Weight::Medium,
-                pen.c.ink,
+                name_weight,
+                name_ink,
                 name_r,
                 Align::Left,
             );
@@ -2431,6 +2482,60 @@ mod tests {
     use super::*;
     use crate::notes::is_black_key;
     use crate::song::Song;
+    use xirius_design::Theme;
+
+    #[test]
+    fn the_selected_clip_names_itself_in_the_strong_ink_and_semibold() {
+        for theme in [Theme::Dark, Theme::Light] {
+            let c = Colors::new(theme);
+            assert_eq!(clip_name_style(&c, true), (Weight::Semibold, c.ink_strong));
+            assert_eq!(clip_name_style(&c, false), (Weight::Medium, c.ink));
+        }
+    }
+
+    #[test]
+    fn a_selected_track_has_the_head_face_and_a_quieter_lane() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1440.0, 820.0);
+        let row = s
+            .tree()
+            .rows
+            .iter()
+            .find(|r| matches!(r.kind, RowKind::Track(_)))
+            .cloned()
+            .expect("a track row");
+        s.press(&g, Hit::Row(row.kind));
+        assert!(s.is_picked(row.kind));
+        s.hover = Hit::None;
+        for theme in [Theme::Dark, Theme::Light] {
+            let c = Colors::new(theme);
+            assert_eq!(row_face(&s, &c, &row), c.track_sel);
+            assert_eq!(lane_face(&s, &c, &row), c.lane_sel);
+            assert_ne!(c.lane_sel, c.track_sel);
+            let other = s
+                .tree()
+                .rows
+                .iter()
+                .find(|r| r.kind != row.kind && !s.is_picked(r.kind))
+                .cloned()
+                .expect("a row not picked");
+            if s.hover_row() != Some(other.kind) {
+                assert_eq!(row_face(&s, &c, &other), c.paper);
+                assert_eq!(lane_face(&s, &c, &other), c.paper);
+            }
+        }
+    }
+
+    #[test]
+    fn only_the_m_of_a_track_another_solo_keeps_quiet_takes_the_implied_ink() {
+        for theme in [Theme::Dark, Theme::Light] {
+            let c = Colors::new(theme);
+            assert_eq!(off_ink(&c, "M", true), c.ink_mute_implied);
+            assert_eq!(off_ink(&c, "S", true), c.ink_on_toggle);
+            assert_eq!(off_ink(&c, "M", false), c.ink_on_toggle);
+            assert_ne!(c.ink_mute_implied, c.ink_on_toggle);
+        }
+    }
 
     #[test]
     fn drawer_names_fit_without_crossing_the_controls_in_either_view() {
@@ -2469,7 +2574,7 @@ mod tests {
 
     #[test]
     fn drawer_modes_and_length_use_fill_on_fill_in_both_themes() {
-        use xirius_design::{Surface, Theme, contrast_ratio};
+        use xirius_design::{Surface, contrast_ratio};
         for theme in Theme::ALL {
             let c = Colors::new(theme);
             for hot in [false, true] {

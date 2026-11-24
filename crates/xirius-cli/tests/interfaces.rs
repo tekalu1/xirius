@@ -340,3 +340,41 @@ fn pad_output_uses_the_same_cli_and_mcp_command() {
         assert_eq!(main["data"]["output"], "main");
     }
 }
+
+#[test]
+fn every_solo_turned_off_is_put_back_through_cli_and_mcp() {
+    // UI-376: the column's foot runs these; the CLI and the AI reach the same commands.
+    for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
+        let a = endpoint.run("track.add.audio", json!({"name":"A"}))["data"]["id"].clone();
+        let b = endpoint.run("track.add.audio", json!({"name":"B"}))["data"]["id"].clone();
+        endpoint.run("track.solo", json!({"ids":[a.clone()]}));
+        let soloed = |endpoint: &dyn Endpoint| -> Vec<Value> {
+            endpoint.run("track.list", json!({}))["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|t| t["solo"] == true)
+                .map(|t| t["id"].clone())
+                .collect()
+        };
+        assert_eq!(soloed(endpoint), vec![a.clone()]);
+        endpoint.run("track.solo.clear", json!({}));
+        assert!(soloed(endpoint).is_empty());
+        endpoint.run("track.solo.restore", json!({}));
+        assert_eq!(soloed(endpoint), vec![a.clone()]);
+        // A mute set by hand forgets the earlier clear; the last clear is what comes back.
+        endpoint.run("track.mute", json!({"ids":[b.clone()]}));
+        endpoint.run("track.mute.clear", json!({}));
+        endpoint.run("track.mute", json!({"ids":[a]}));
+        endpoint.run("track.mute", json!({"ids":[b]}));
+        endpoint.run("track.mute.clear", json!({}));
+        endpoint.run("track.mute.restore", json!({}));
+        let muted = endpoint.run("track.list", json!({}))["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t["mute"] == true)
+            .count();
+        assert_eq!(muted, 2, "the last clear's two come back");
+    }
+}

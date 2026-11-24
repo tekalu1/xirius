@@ -1,5 +1,5 @@
 //! Commands the rest of the Studio Pro key table asks for (KEY-012): clearing every solo or
-//! mute, taking the clips of tracks out of the selection, selecting up to the song's start or
+//! mute (and putting back what the last clear took off, UI-376), taking the clips of tracks out of the selection, selecting up to the song's start or
 //! end, and playing the next or the previous take.
 use std::collections::{HashMap, HashSet};
 
@@ -13,13 +13,25 @@ pub(super) fn defs() -> Vec<CommandDef> {
             "track.solo.clear",
             "すべてのトラックのソロを解除します",
             vec![],
-            |p, _, _| clear(p, "ソロ", |t| t.solo, |t| t.solo = false),
+            |p, _, _| clear(p, Flag::Solo),
         ),
         edit(
             "track.mute.clear",
             "すべてのトラックのミュートを解除します",
             vec![],
-            |p, _, _| clear(p, "ミュート", |t| t.mute, |t| t.mute = false),
+            |p, _, _| clear(p, Flag::Mute),
+        ),
+        edit(
+            "track.solo.restore",
+            "直前の track.solo.clear で解除したソロを戻します（その後に手でソロを変えたときは戻せません）",
+            vec![],
+            |p, _, _| restore(p, Flag::Solo),
+        ),
+        edit(
+            "track.mute.restore",
+            "直前の track.mute.clear で解除したミュートを戻します（その後に手でミュートを変えたときは戻せません）",
+            vec![],
+            |p, _, _| restore(p, Flag::Mute),
         ),
         read(
             "select.off-tracks",
@@ -125,19 +137,81 @@ pub(super) fn defs() -> Vec<CommandDef> {
     ]
 }
 
-fn clear(
-    p: &mut Project,
-    what: &str,
-    on: fn(&Track) -> bool,
-    off: fn(&mut Track),
-) -> CmdResult<Output> {
-    let ids: Vec<TrackId> = p.tracks.values().filter(|t| on(t)).map(|t| t.id).collect();
+/// Solo or mute: the two switches the global buttons clear and put back.
+#[derive(Clone, Copy)]
+enum Flag {
+    Solo,
+    Mute,
+}
+
+impl Flag {
+    fn word(self) -> &'static str {
+        match self {
+            Flag::Solo => "ソロ",
+            Flag::Mute => "ミュート",
+        }
+    }
+
+    fn of(self, t: &mut Track) -> &mut bool {
+        match self {
+            Flag::Solo => &mut t.solo,
+            Flag::Mute => &mut t.mute,
+        }
+    }
+
+    fn kept(self, p: &mut Project) -> &mut std::collections::BTreeSet<TrackId> {
+        match self {
+            Flag::Solo => &mut p.cleared.solo,
+            Flag::Mute => &mut p.cleared.mute,
+        }
+    }
+}
+
+/// Takes the switch off every track and keeps which ones it was on, to put back. Nothing on
+/// leaves the kept set as it was, so pressing the cleared button again can still put it back.
+fn clear(p: &mut Project, flag: Flag) -> CmdResult<Output> {
+    let ids: Vec<TrackId> = p
+        .tracks
+        .values()
+        .filter(|t| match flag {
+            Flag::Solo => t.solo,
+            Flag::Mute => t.mute,
+        })
+        .map(|t| t.id)
+        .collect();
     for id in &ids {
-        off(p.track_mut(*id)?);
+        *flag.of(p.track_mut(*id)?) = false;
+    }
+    if !ids.is_empty() {
+        *flag.kept(p) = ids.iter().copied().collect();
     }
     Ok(Output::msg(format!(
-        "{} トラックの{what}を解除しました",
-        ids.len()
+        "{} トラックの{}を解除しました",
+        ids.len(),
+        flag.word()
+    )))
+}
+
+/// Puts the switch back on the tracks the last clear took it off (those still in the song).
+fn restore(p: &mut Project, flag: Flag) -> CmdResult<Output> {
+    let kept = std::mem::take(flag.kept(p));
+    let ids: Vec<TrackId> = kept
+        .into_iter()
+        .filter(|id| p.tracks.contains_key(id))
+        .collect();
+    if ids.is_empty() {
+        return Err(CmdError::invalid(format!(
+            "戻せる{}がありません",
+            flag.word()
+        )));
+    }
+    for id in &ids {
+        *flag.of(p.track_mut(*id)?) = true;
+    }
+    Ok(Output::msg(format!(
+        "{} トラックの{}を戻しました",
+        ids.len(),
+        flag.word()
     )))
 }
 

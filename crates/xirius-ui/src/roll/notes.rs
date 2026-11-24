@@ -335,12 +335,15 @@ impl Roll {
         if let Some(action) = click.as_deref() {
             self.mods.shift = action == "select.toggle";
         }
-        // Past the clip's end the pencil keeps drawing: the clip grows to take the note.
+        // Past the clip's end the pencil keeps drawing: the clip grows to take the note. Before
+        // its start the pencil drags out a new part. The arrow never makes one: outside the clip
+        // its drag only selects notes (EDT-141).
         let past_end = v.tick(x) >= ctx.clip_len();
         if hit.is_none()
             && !(0..ctx.clip_len()).contains(&v.tick(x))
             && clicks == 1
-            && (tool == Tool::Select || (tool == Tool::Draw && !past_end))
+            && tool == Tool::Draw
+            && !past_end
         {
             self.drag = Some(Drag::new(Mode::Part, (x, y)));
             self.selected.clear();

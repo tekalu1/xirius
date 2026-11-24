@@ -1611,7 +1611,8 @@ fn feel_05c_the_pencil_past_the_clip_end_grows_the_clip_in_one_step() {
 }
 
 #[test]
-fn feel_05c_the_select_tool_past_the_clip_end_still_makes_a_new_clip() {
+fn feel_05c_the_select_tool_past_the_clip_end_selects_notes_and_makes_no_clip() {
+    // Only the pencil makes a part; the arrow's drag out there is a marquee (EDT-141).
     let (mut s, g) = setup();
     s.roll.beat_px = 20.0;
     s.roll.scroll.0 = 0.0;
@@ -1619,9 +1620,11 @@ fn feel_05c_the_select_tool_past_the_clip_end_still_makes_a_new_clip() {
     let c = context(&s, &g);
     let p = ruler_at(&s, &g, c.clip_len() + c.ppq(), 0.0);
     let y = at(&s, &g, 0, Zone::Body).1;
+    let steps = s.song.steps();
     down(&mut s, &g, (p.0, y), Mods::NONE);
-    assert_eq!(s.roll.drag.as_ref().map(|d| d.mode), Some(Mode::Part));
-    s.roll.drag = None;
+    assert_eq!(s.roll.drag.as_ref().map(|d| d.mode), Some(Mode::Marquee));
+    up(&mut s, &g, (p.0 + 40.0, y), Mods::NONE);
+    assert_eq!(s.song.steps(), steps, "no part was made");
 }
 
 #[test]

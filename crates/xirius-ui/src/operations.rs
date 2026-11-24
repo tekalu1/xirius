@@ -31,6 +31,10 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
         Hit::Chevron(_) => ("fold", "folder.fold"),
         Hit::Mute(_) => ("head.mute", "track.mute"),
         Hit::Solo(_) => ("head.solo", "track.solo"),
+        Hit::AllOff(flag, restore) => match flag {
+            crate::head_foot::Flag::Mute => ("foot.mute", flag.command(restore)),
+            crate::head_foot::Flag::Solo => ("foot.solo", flag.command(restore)),
+        },
         Hit::Row(_) => ("row", "row.select"),
         Hit::Clip(..) => ("clip", "clip.select"),
         Hit::Ara(..) => ("clip.ara", "clip.ara.attach"),
@@ -607,6 +611,24 @@ mod tests {
         arrange.arrange.focus = true;
         arrange.choose_editor();
         states.push(arrange);
+        // Scrolled to the end with a solo and a mute on: the last row clears the column's foot,
+        // whose M and S then turn them all off (UI-376).
+        let mut foot = Studio::sample();
+        let first = foot
+            .project()
+            .tracks
+            .keys()
+            .copied()
+            .find(|t| !t.is_master())
+            .expect("a track");
+        for name in ["track.solo", "track.mute"] {
+            foot.song
+                .run(name, serde_json::json!({ "ids": [first.to_string()] }))
+                .unwrap();
+        }
+        let g = foot.geometry(w, h);
+        foot.scroll.1 = foot.max_scroll(&g).1;
+        states.push(foot);
         for s in &mut states {
             s.settle_pool();
             let g = s.geometry(w, h);

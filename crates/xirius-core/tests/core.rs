@@ -455,6 +455,10 @@ fn every_history_command_undoes_and_redoes() {
     rig.step("track.solo", json!({"ids": [kick], "on": true}));
     rig.step("track.solo.clear", json!({}));
     rig.step("track.mute.clear", json!({}));
+    rig.step("track.solo.restore", json!({}));
+    rig.step("track.mute.restore", json!({}));
+    rig.step("track.solo.clear", json!({}));
+    rig.step("track.mute.clear", json!({}));
     rig.step("track.arm", json!({"ids": [lead]}));
     rig.step("track.monitor", json!({"ids": [lead]}));
     rig.step("track.input.gain", json!({"ids": [lead], "db": 6}));

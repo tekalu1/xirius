@@ -51,6 +51,8 @@ pub enum Surface {
     ClipSel,
     /// 選んだトラックの面（頭とストリップ）。
     TrackSel,
+    /// 選んだトラックのレーンの面。頭より控えめ（UI-377）。
+    LaneSel,
     /// 主要操作のボタンの塗り。
     Fill,
     FillHover,
@@ -75,7 +77,7 @@ pub enum Ink {
 }
 
 impl Surface {
-    pub const ALL: [Surface; 16] = [
+    pub const ALL: [Surface; 17] = [
         Surface::Paper,
         Surface::S0,
         Surface::S1,
@@ -88,6 +90,7 @@ impl Surface {
         Surface::Clip,
         Surface::ClipSel,
         Surface::TrackSel,
+        Surface::LaneSel,
         Surface::Fill,
         Surface::FillHover,
         Surface::Danger,
@@ -110,6 +113,7 @@ impl Surface {
             Surface::Clip => p.surface_clip,
             Surface::ClipSel => p.surface_clip_sel,
             Surface::TrackSel => p.surface_track_sel,
+            Surface::LaneSel => p.surface_lane_sel,
             Surface::Fill => p.fill_primary,
             Surface::FillHover => p.fill_primary_hover,
             Surface::Danger => p.fill_danger,
@@ -298,7 +302,7 @@ macro_rules! kinds {
 }
 
 kinds! {
-    surface: Paper, S0, S1, S2, S3, Hover, Sel, Field, TextSel, Clip, ClipSel, TrackSel, Fill, FillHover, Danger, DangerHover;
+    surface: Paper, S0, S1, S2, S3, Hover, Sel, Field, TextSel, Clip, ClipSel, TrackSel, LaneSel, Fill, FillHover, Danger, DangerHover;
     ink: Strong, Body, Disabled, Blue, Mark, Alert, Ai, OnFill, OnTextSel
 }
 
@@ -333,6 +337,8 @@ allowed_pairs! {
     ClipSel: [Strong, Body];
     // 選んだクリップの面と同じ明るさ。トラックの名前は Strong、ほかの文字は Body。
     TrackSel: [Strong, Body];
+    // 選んだトラックのレーン。上に置く文字はクリップの面の上なので、レーンの上の文字は少ない。
+    LaneSel: [Strong, Body];
     Fill: [OnFill];
     FillHover: [OnFill];
     Danger: [OnFill];

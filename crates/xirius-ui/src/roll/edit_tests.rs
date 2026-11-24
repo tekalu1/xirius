@@ -155,18 +155,64 @@ fn keyboard_shift_selects_pitch_without_audition_and_drag_tracks_pitch() {
     assert!(s.roll.audition.is_none());
 }
 
-#[test]
-fn dragging_outside_a_part_creates_a_new_part_and_selects_it() {
-    let (mut s, g) = fixture();
-    let old = s.selected_clip.unwrap();
+/// The roll's part moved to bar 3 and the view scrolled back to the song's start, so there is
+/// room before the part.
+fn room_before(s: &mut Studio, g: &Geometry, tool: Tool) {
+    let (_, id) = s.selected_clip.unwrap();
+    s.song
+        .run("clip.move", json!({"ids":[id.to_string()],"to":7680}))
+        .unwrap();
+    s.tool = tool;
     s.roll.beat_px = 24.0;
+    let c = s.roll_ctx(g).unwrap();
+    s.roll.scroll.0 = -s.roll.view(&c).px(c.clip.start);
+}
+
+#[test]
+fn the_pencil_dragged_before_a_part_creates_a_new_part_and_selects_it() {
+    let (mut s, g) = fixture();
+    let (track, old) = s.selected_clip.unwrap();
+    room_before(&mut s, &g, Tool::Draw);
+    let parts = s.project().tracks[&track].clips.len();
     let c = s.roll_ctx(&g).unwrap();
     let v = s.roll.view(&c);
-    let p = (v.x(c.clip.length + 960), v.y(61) + 7.0);
-    gesture(&mut s, &g, p, (p.0 + v.px(960), p.1), Mods::NONE, 1);
-    assert_ne!(s.selected_clip.unwrap().1, old.1);
-    assert!(s.roll_ctx(&g).unwrap().notes().is_empty());
-    assert_eq!(s.roll_ctx(&g).unwrap().clip.length, 960);
+    let p = (v.x(-1920), v.y(61) + 7.0);
+    gesture(&mut s, &g, p, (v.x(-960), p.1), Mods::NONE, 1);
+    assert_eq!(s.project().tracks[&track].clips.len(), parts + 1);
+    assert_ne!(s.selected_clip.unwrap().1, old);
+    let c = s.roll_ctx(&g).unwrap();
+    assert!(c.notes().is_empty());
+    assert_eq!((c.clip.start, c.clip.length), (7680 - 1920, 960));
+}
+
+#[test]
+fn the_arrow_dragged_outside_a_part_selects_notes_and_makes_no_part() {
+    // EDT-141: only the pencil makes a part. Before the part or past its end, the arrow's drag
+    // is a marquee over the notes and the history does not move.
+    let (mut s, g) = fixture();
+    let (track, id) = s.selected_clip.unwrap();
+    room_before(&mut s, &g, Tool::Select);
+    let parts = s.project().tracks[&track].clips.len();
+    let steps = s.song.steps();
+    let len = s.roll_ctx(&g).unwrap().clip.length;
+    for (from, to) in [(-1920, -960), (len + 960, len + 1920)] {
+        let c = s.roll_ctx(&g).unwrap();
+        let v = s.roll.view(&c);
+        let p = (v.x(from), v.y(61) + 7.0);
+        let out = s.roll.down(&c, p.0, p.1, Mods::NONE, 1);
+        s.apply_roll(&g, out);
+        assert_eq!(s.roll.drag.as_ref().map(|d| d.mode), Some(Mode::Marquee));
+        let c = s.roll_ctx(&g).unwrap();
+        let out = s.roll.moved(&c, v.x(to), p.1, Mods::NONE);
+        s.apply_roll(&g, out);
+        let c = s.roll_ctx(&g).unwrap();
+        let out = s.roll.up(&c, v.x(to), p.1, Mods::NONE);
+        s.apply_roll(&g, out);
+        assert!(s.error.is_none(), "{:?}", s.error);
+    }
+    assert_eq!(s.project().tracks[&track].clips.len(), parts);
+    assert_eq!(s.song.steps(), steps);
+    assert_eq!(s.selected_clip, Some((track, id)));
 }
 
 #[test]
