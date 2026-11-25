@@ -5769,6 +5769,8 @@ Key
 
 履歴: 実行結果の step で確認。アイコン: `file`。
 
+キー: global: Mod+Shift+S (`project.save-as`)。
+
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
@@ -8236,7 +8238,7 @@ Key
 
 履歴: 1 操作で取り消し可能。アイコン: `keys`。
 
-キー: global: Mod+Shift+S (`track.solo.clear`)。
+キー: global: Mod+Alt+S (`track.solo.clear`)。
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|

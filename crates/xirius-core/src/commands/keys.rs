@@ -745,6 +745,13 @@ pub const ENTRIES: &[Entry] = &[
     },
     Entry {
         context: "global",
+        command: "project.save-as",
+        label: None,
+        keys: &["Mod+Shift+S"],
+        cat: Cat::Edit,
+    },
+    Entry {
+        context: "global",
         command: "history.redo",
         label: None,
         keys: &["Mod+Y", "Mod+Shift+Z"],
@@ -1328,7 +1335,7 @@ pub const ENTRIES: &[Entry] = &[
         context: "global",
         command: "track.solo.clear",
         label: None,
-        keys: &["Mod+Shift+S"],
+        keys: &["Mod+Alt+S"],
         cat: Cat::Track,
     },
     Entry {

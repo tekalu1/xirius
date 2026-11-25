@@ -8871,3 +8871,4 @@ phase = "v1.1"
 source = "2026-11-25 の持ち主の承認（save-model.html の案 A）"
 after = ["PRJ-017", "UI-376"]
 done_when = "既定のキーで Mod+Shift+S が project.save-as（別名で保存）に、track.solo.clear が Mod+Alt+S になり、ほかのキーとぶつからない。曲のメニューの「別名で保存… Ctrl+Shift+S」の添え書きと実際のキーが一致する。キーの表と押したときの動きを試験で確かめる"
+status = "done"

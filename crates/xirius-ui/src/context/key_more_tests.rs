@@ -83,7 +83,13 @@ fn the_global_solo_and_mute_keys_turn_every_track_off() {
         .unwrap();
     // From the roll as from anywhere: the keys are the window's.
     assert_eq!(s.input_context(&g), "roll");
-    assert!(press(&mut s, &g, "s", Mods::ctrl_shift()));
+    // Ctrl+Alt+S (Ctrl+Shift+S is 名前を付けて保存, UI-378).
+    let ctrl_alt = Mods {
+        ctrl: true,
+        alt: true,
+        shift: false,
+    };
+    assert!(press(&mut s, &g, "s", ctrl_alt));
     assert!(s.project().tracks.values().all(|t| !t.solo));
     assert!(s.project().tracks[&drums].mute);
     assert!(press(&mut s, &g, "m", Mods::ctrl_shift()));

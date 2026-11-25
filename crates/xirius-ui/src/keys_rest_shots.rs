@@ -2,7 +2,7 @@
 //! (KEY-012): the keys the table looks up, and the new rows by name. Run with `--light` for the
 //! light theme. No OS input.
 
-use xirius_prefs::chord::{MOD, SHIFT};
+use xirius_prefs::chord::{ALT, MOD, SHIFT};
 
 use crate::settings::{Do, Section};
 use crate::shot::{Act, Play, Shot};
@@ -24,9 +24,9 @@ pub const SHOTS: &[Shot] = &[
         name: "k303-ctrl-t",
         acts: &[Act::Reset, Act::Stage(Play::Laid(play), 2)],
     },
-    // Ctrl+Shift+S: every solo off.
+    // Ctrl+Alt+S: every solo off (UI-378: Ctrl+Shift+S is 別名で保存).
     Shot {
-        name: "k304-ctrl-shift-s",
+        name: "k304-ctrl-alt-s",
         acts: &[Act::Reset, Act::Stage(Play::Laid(play), 3)],
     },
     // The rows named 「表示」: the browser's tabs, and finding a track or a channel.
@@ -46,7 +46,7 @@ fn act(s: &mut Studio, g: &Geometry, act: Do) {
 }
 
 fn by_key(s: &mut Studio, g: &Geometry, mods: u8, key: &str) {
-    for bit in [MOD, SHIFT] {
+    for bit in [MOD, ALT, SHIFT] {
         if mods & bit != 0 {
             act(s, g, Do::KbMod(bit));
         }
@@ -68,7 +68,7 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
         0 => by_key(s, g, 0, "F6"),
         1 => by_key(s, g, 0, "Tab"),
         2 => by_key(s, g, MOD, "T"),
-        3 => by_key(s, g, MOD | SHIFT, "S"),
+        3 => by_key(s, g, MOD | ALT, "S"),
         4 => by_name(s, g, "表示"),
         _ => by_name(s, g, "ページ"),
     }
