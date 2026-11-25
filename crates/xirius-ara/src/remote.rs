@@ -12,7 +12,8 @@ use crate::service::{self, Phase, Probe, Rendered, Song};
 use crate::shared_audio::SharedAudio;
 
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
-pub const PROTOCOL: u32 = 3;
+/// 4: the editor's title bar and its presses (UI-380).
+pub const PROTOCOL: u32 = 4;
 
 #[derive(Serialize, Deserialize)]
 pub enum Command {
@@ -41,6 +42,7 @@ pub enum Command {
         clips: Vec<u64>,
     },
     Caption(WireCaption),
+    Bar(WireBar),
     CloseEditor,
     MarkChanged,
     FixtureEdit {
@@ -100,6 +102,9 @@ pub struct Snapshot {
     pub requests: Vec<Request>,
     pub info: Option<FactoryInfo>,
     pub generation: u64,
+    /// What was pressed on the editor's title bar since the last poll (UI-380).
+    #[serde(default)]
+    pub editor_actions: Vec<WireAction>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -140,6 +145,78 @@ impl From<WireCaption> for service::Caption {
             dark: c.dark,
             fill: c.fill,
             text: c.text,
+        }
+    }
+}
+
+/// The ARA editor's title bar (UI-380): only the name and the pin are drawn, and the window
+/// stack keeps it over the app's windows like a VST3 editor.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WireBar {
+    pub track: String,
+    pub device: String,
+    pub pinned: bool,
+    pub stack: Vec<u64>,
+    pub stack_base: u64,
+    pub raise_ticket: u64,
+}
+
+impl From<service::EditorBar> for WireBar {
+    fn from(b: service::EditorBar) -> Self {
+        Self {
+            track: b.track,
+            device: b.device,
+            pinned: b.pinned,
+            stack: b.stack,
+            stack_base: b.stack_base,
+            raise_ticket: b.raise_ticket,
+        }
+    }
+}
+
+impl From<WireBar> for service::EditorBar {
+    fn from(b: WireBar) -> Self {
+        Self {
+            track: b.track,
+            device: b.device,
+            pinned: b.pinned,
+            stack: b.stack,
+            stack_base: b.stack_base,
+            raise_ticket: b.raise_ticket,
+            ara: true,
+            ..Self::default()
+        }
+    }
+}
+
+/// A press on the ARA editor's title bar, or the window coming forward (UI-380). The bar has
+/// only the pin, so the other actions do not cross.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum WireAction {
+    Pin,
+    Touched { window: u64, time: u64 },
+    Raised(u64),
+}
+
+impl WireAction {
+    pub fn from_action(a: service::EditorAction) -> Option<Self> {
+        match a {
+            service::EditorAction::Pin => Some(Self::Pin),
+            service::EditorAction::EditorTouched { window, time } => {
+                Some(Self::Touched { window, time })
+            }
+            service::EditorAction::EditorRaised(ticket) => Some(Self::Raised(ticket)),
+            _ => None,
+        }
+    }
+}
+
+impl From<WireAction> for service::EditorAction {
+    fn from(a: WireAction) -> Self {
+        match a {
+            WireAction::Pin => Self::Pin,
+            WireAction::Touched { window, time } => Self::EditorTouched { window, time },
+            WireAction::Raised(ticket) => Self::EditorRaised(ticket),
         }
     }
 }
@@ -369,6 +446,11 @@ pub fn run_worker() -> io::Result<()> {
                     requests: service.take_requests(),
                     info: service.info(),
                     generation,
+                    editor_actions: service
+                        .take_editor_actions()
+                        .into_iter()
+                        .filter_map(WireAction::from_action)
+                        .collect(),
                 })
             }
             Command::Store { changed } => {
@@ -405,6 +487,10 @@ pub fn run_worker() -> io::Result<()> {
                 service.set_editor_caption(c.into());
                 Reply::Ack
             }
+            Command::Bar(b) => {
+                service.set_editor_bar(b.into());
+                Reply::Ack
+            }
             Command::CloseEditor => {
                 service.close_editor();
                 Reply::Ack
@@ -436,4 +522,116 @@ fn new_analysis(
     let archive = current.as_deref().cloned();
     *last = current;
     archive
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bar() -> WireBar {
+        WireBar {
+            track: "Vocal".into(),
+            device: "Pitch Editor".into(),
+            pinned: true,
+            stack: vec![3, 2],
+            stack_base: 7,
+            raise_ticket: 9,
+        }
+    }
+
+    fn snapshot_json(actions: &[WireAction]) -> serde_json::Value {
+        serde_json::to_value(Snapshot {
+            states: Vec::new(),
+            crashed: None,
+            failed: None,
+            loaded: true,
+            dirty: false,
+            editing: true,
+            editor_handle: 5,
+            editor_error: None,
+            analysis_archive: None,
+            requests: Vec::new(),
+            info: None,
+            generation: 1,
+            editor_actions: actions.to_vec(),
+        })
+        .unwrap()
+    }
+
+    /// UI-380: the bar crosses to the worker whole.
+    #[test]
+    fn a_bar_command_round_trips() {
+        let bytes = serde_json::to_vec(&Command::Bar(bar())).unwrap();
+        let Command::Bar(back) = serde_json::from_slice(&bytes).unwrap() else {
+            panic!("not a bar");
+        };
+        assert_eq!(back, bar());
+    }
+
+    /// UI-380: the bar the worker gives the window is always the ARA form, and only the name,
+    /// the pin and the window stack come from the app.
+    #[test]
+    fn a_wire_bar_is_the_ara_form() {
+        let b: service::EditorBar = bar().into();
+        assert!(b.ara);
+        assert_eq!(
+            (b.track.as_str(), b.device.as_str()),
+            ("Vocal", "Pitch Editor")
+        );
+        assert!(b.pinned);
+        assert_eq!(
+            (b.stack.as_slice(), b.stack_base, b.raise_ticket),
+            (&[3, 2][..], 7, 9)
+        );
+        assert!(b.preset.is_empty() && b.presets.is_empty() && !b.sidechain);
+        let again: WireBar = b.into();
+        assert_eq!(again, bar());
+    }
+
+    /// UI-380: the presses come back with the poll; an older worker's snapshot has none.
+    #[test]
+    fn a_snapshot_carries_the_presses_and_an_old_one_has_none() {
+        let pressed = vec![
+            WireAction::Pin,
+            WireAction::Touched { window: 4, time: 8 },
+            WireAction::Raised(2),
+        ];
+        let json = snapshot_json(&pressed);
+        let back: Snapshot = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(back.editor_actions, pressed);
+        let actions: Vec<service::EditorAction> =
+            back.editor_actions.into_iter().map(Into::into).collect();
+        assert_eq!(
+            actions,
+            vec![
+                service::EditorAction::Pin,
+                service::EditorAction::EditorTouched { window: 4, time: 8 },
+                service::EditorAction::EditorRaised(2),
+            ]
+        );
+
+        let mut old = json;
+        old.as_object_mut().unwrap().remove("editor_actions");
+        let back: Snapshot = serde_json::from_value(old).unwrap();
+        assert!(back.editor_actions.is_empty());
+        assert!(back.editing);
+    }
+
+    /// UI-380: the bar has only the pin; the VST3 bar's other presses do not cross.
+    #[test]
+    fn only_the_ara_bar_presses_cross() {
+        assert_eq!(
+            WireAction::from_action(service::EditorAction::Pin),
+            Some(WireAction::Pin)
+        );
+        for a in [
+            service::EditorAction::Power,
+            service::EditorAction::PresetOpen,
+            service::EditorAction::Channel,
+            service::EditorAction::Sidechain,
+            service::EditorAction::PresetNext,
+        ] {
+            assert_eq!(WireAction::from_action(a), None);
+        }
+    }
 }

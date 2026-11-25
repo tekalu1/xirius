@@ -14,7 +14,9 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use vst3::Steinberg::{TUID, tresult};
-use xirius_vst3::{AudioPart, Caption, ClassInfo, Editor, Module, Placement, Plugin};
+use xirius_vst3::{
+    AudioPart, Caption, ClassInfo, Editor, EditorAction, EditorBar, Module, Placement, Plugin,
+};
 
 use crate::service::{Binary, Instance, Window};
 use crate::sys::{self, Ref, RoleFlags};
@@ -268,6 +270,11 @@ impl Instance for Vst3Instance {
     }
 
     fn open_editor(&mut self, title: &str, place: Placement) -> Result<Box<dyn Window>, Error> {
+        // The frame's first paint is already the ARA bar (UI-380); the service gives the name.
+        self.plugin.set_editor_bar(EditorBar {
+            ara: true,
+            ..EditorBar::default()
+        });
         let editor = self
             .plugin
             .open_editor_at(title, place)
@@ -291,5 +298,13 @@ impl Window for Editor {
 
     fn set_caption(&self, caption: Caption) {
         Editor::set_caption(self, caption);
+    }
+
+    fn set_bar(&self, bar: EditorBar) {
+        Editor::set_bar(self, bar);
+    }
+
+    fn take_actions(&self) -> Vec<EditorAction> {
+        Editor::take_actions(self)
     }
 }

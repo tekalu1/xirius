@@ -693,6 +693,131 @@ fn a_press_on_the_badge_opens_explains_or_offers_the_restart() {
     assert!(!labels(&s).iter().any(|l| l == RESTART));
 }
 
+/// A second ARA plugin, kept with the clip (not in the screen's catalog).
+const OTHER: &str = "00000000000000000000000000000002";
+const OTHER_NAME: &str = "Other ARA";
+
+/// UI-380: the ARA window's title bar is the clip's track and the plugin, in the ARA form. It is
+/// given as the window is asked for, and again only when it changes; the pin on it turns on and
+/// off; the VST3 bar's other presses do nothing; a closed window has none.
+#[test]
+fn the_ara_windows_bar_names_the_track_and_the_plugin_and_pins() {
+    let (mut s, _) = studio();
+    let (t, c) = vocal(&s);
+    attach(&mut s, c);
+    s.ara.fake = Some(vec![report(c, Phase::Ready, 1.0)]);
+    assert!(s.open_ara_editor_for(&[c]));
+    let key = UID.to_ascii_lowercase();
+    let track_name = s.project().tracks[&t].shown_name().to_string();
+    let bars = std::mem::take(&mut s.ara.sent_bars);
+    assert_eq!(bars.len(), 1, "{bars:?}");
+    let (to, bar) = &bars[0];
+    assert_eq!(to, &key);
+    assert_eq!(bar.track, track_name);
+    assert_eq!(bar.device, NAME);
+    assert!(bar.ara && !bar.pinned);
+    assert!(bar.preset.is_empty() && bar.presets.is_empty() && bar.menu.is_empty());
+    // The next frame gives nothing: the bar did not change.
+    assert!(!s.poll_ara_editor_bar());
+    assert!(s.ara.sent_bars.is_empty());
+    // The pin on the bar: on, then off, each given back to the window.
+    for pinned in [true, false] {
+        s.ara.fake_actions.push((UID.into(), EditorAction::Pin));
+        assert!(s.poll_ara_editor_bar());
+        let bars = std::mem::take(&mut s.ara.sent_bars);
+        assert_eq!(bars.len(), 1, "{bars:?}");
+        assert_eq!(bars[0].1.pinned, pinned);
+        assert!(bars[0].1.ara);
+    }
+    // The VST3 bar's other presses are not on it.
+    s.ara.fake_actions.push((UID.into(), EditorAction::Power));
+    s.ara
+        .fake_actions
+        .push((UID.into(), EditorAction::PresetNext));
+    assert!(!s.poll_ara_editor_bar());
+    assert!(s.ara.sent_bars.is_empty());
+    // Closed: its bar is forgotten, and nothing more is given.
+    s.close_ara_editor(&key);
+    assert_eq!(s.ara.closed, std::slice::from_ref(&key));
+    assert!(s.ara.editor_bars.is_empty() && s.ara.editor_clips.is_empty());
+    s.ara.fake_actions.push((UID.into(), EditorAction::Pin));
+    assert!(!s.poll_ara_editor_bar());
+    assert!(s.ara.sent_bars.is_empty());
+}
+
+/// UI-380, as a VST3 window: opening another plugin's ARA window closes the unpinned ones; a
+/// pinned window stays; a pinned window opening closes nothing; unpinned, it takes the place of
+/// the other unpinned ones.
+#[test]
+fn an_unpinned_ara_window_gives_way_to_another_plugins_and_a_pinned_one_stays() {
+    let (mut s, _) = studio();
+    let (vocal_track, c) = vocal(&s);
+    attach(&mut s, c);
+    // The other plugin on an audio clip of another track.
+    let others: Vec<(TrackId, ClipId)> = s
+        .project()
+        .tracks
+        .iter()
+        .filter(|(t, _)| **t != vocal_track)
+        .flat_map(|(t, track)| track.clips.iter().map(|clip| (*t, clip.id)))
+        .collect();
+    let (other_track, d) = others
+        .into_iter()
+        .find(|(_, d)| {
+            s.song
+                .run(
+                    "clip.ara.attach.apply",
+                    json!({ "ids": [d.to_string()], "plugin": OTHER, "name": OTHER_NAME }),
+                )
+                .is_ok()
+        })
+        .expect("an audio clip on another track");
+    let mut other = report(d, Phase::Ready, 1.0);
+    other.plugin = OTHER.into();
+    other.name = OTHER_NAME.into();
+    s.ara.fake = Some(vec![report(c, Phase::Ready, 1.0), other]);
+    let (mine, theirs) = (UID.to_ascii_lowercase(), OTHER.to_ascii_lowercase());
+    let pin = |s: &mut Studio, plugin: &str| {
+        s.ara.fake_actions.push((plugin.into(), EditorAction::Pin));
+        assert!(s.poll_ara_editor_bar());
+    };
+
+    assert!(s.open_ara_editor_for(&[c]));
+    assert!(s.open_ara_editor_for(&[d]));
+    assert_eq!(
+        s.ara.closed,
+        std::slice::from_ref(&mine),
+        "the unpinned window gave way"
+    );
+    assert!(s.ara.editor_clips.contains_key(&theirs));
+    let bar = &s.ara.editor_bars[&theirs];
+    assert_eq!(bar.device, OTHER_NAME);
+    assert_eq!(
+        bar.track,
+        s.project().tracks[&other_track].shown_name().to_string()
+    );
+
+    // Pinned, it stays when another plugin's window opens.
+    pin(&mut s, OTHER);
+    assert!(s.open_ara_editor_for(&[c]));
+    assert_eq!(s.ara.closed.len(), 1);
+    assert!(s.ara.editor_clips.contains_key(&mine) && s.ara.editor_clips.contains_key(&theirs));
+
+    // Both pinned, then the other unpinned: the pinned one stays.
+    pin(&mut s, UID);
+    pin(&mut s, OTHER);
+    assert_eq!(s.ara.closed.len(), 1);
+    // A pinned window opening closes nothing, not even an unpinned one.
+    assert!(s.open_ara_editor_for(&[c]));
+    assert_eq!(s.ara.closed.len(), 1);
+    assert!(s.ara.editor_clips.contains_key(&theirs));
+    // Unpinned, it takes the place of the other unpinned window.
+    pin(&mut s, UID);
+    assert_eq!(s.ara.closed, [mine.clone(), theirs.clone()]);
+    assert!(s.ara.editor_clips.contains_key(&mine));
+    assert!(!s.ara.editor_clips.contains_key(&theirs));
+}
+
 #[test]
 fn the_badges_balloon_names_the_plugin() {
     let (mut s, _) = studio();

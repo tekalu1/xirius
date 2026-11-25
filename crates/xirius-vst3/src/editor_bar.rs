@@ -14,6 +14,8 @@ pub struct EditorBar {
     pub powered: bool,
     pub pinned: bool,
     pub sidechain: bool,
+    /// An ARA plugin's window (UI-380): the bar has only the name, the pin and the close box.
+    pub ara: bool,
 }
 
 /// Whether the list can move backward or forward from its current preset.

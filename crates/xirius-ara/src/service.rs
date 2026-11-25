@@ -36,7 +36,10 @@ use crate::document::{Document, FactoryInfo, Note, RegionProps, SourceProps};
 use crate::host::{HostSide, Musical, Notice, Request, SourceAudio};
 use crate::sys::{self, Ref, RoleFlags};
 use crate::{Error, error};
-pub use xirius_vst3::{Caption, Placement};
+pub use xirius_vst3::{Caption, EditorAction, EditorBar, Placement};
+
+/// What a title bar's presses are kept up to, until the app takes them (UI-380).
+const MAX_EDITOR_ACTIONS: usize = 64;
 
 /// A plugin binary with an ARA factory, used on the ARA thread only.
 pub trait Binary {
@@ -81,6 +84,12 @@ pub trait Window {
         0
     }
     fn set_caption(&self, _caption: Caption) {}
+    /// The host's title bar: the name and the pin (UI-380).
+    fn set_bar(&self, _bar: EditorBar) {}
+    /// What was pressed on the host's title bar since the last call.
+    fn take_actions(&self) -> Vec<EditorAction> {
+        Vec::new()
+    }
 }
 
 /// The plugin's answer to [`Service::store_later`]: its archive and the archive id, or `None`.
@@ -242,6 +251,8 @@ enum Msg {
         tx: Option<Sender<Result<(), String>>>,
     },
     Caption(Caption),
+    /// The editor's title bar (UI-380), kept for a window opened later.
+    Bar(EditorBar),
     CloseEditor,
     Stop,
 }
@@ -265,6 +276,8 @@ struct Shared {
     editor_handle: AtomicU64,
     /// Why the editor asked for without waiting did not open.
     editor_error: Mutex<Option<String>>,
+    /// What was pressed on the editor's title bar, not yet taken (UI-380).
+    editor_actions: Mutex<Vec<EditorAction>>,
     notify: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -357,6 +370,7 @@ impl Service {
             editing: AtomicBool::new(false),
             editor_handle: AtomicU64::new(0),
             editor_error: Mutex::new(None),
+            editor_actions: Mutex::new(Vec::new()),
             notify,
         });
         let (host, tx) = match host {
@@ -635,6 +649,17 @@ impl Service {
         self.send(Msg::Caption(caption));
     }
 
+    /// The editor's title bar: the name and the pin (UI-380). Kept for a window opened later;
+    /// it is always the ARA form.
+    pub fn set_editor_bar(&self, bar: EditorBar) {
+        self.send(Msg::Bar(bar));
+    }
+
+    /// What was pressed on the editor's title bar since the last call (UI-380).
+    pub fn take_editor_actions(&self) -> Vec<EditorAction> {
+        std::mem::take(&mut *lock(&self.shared.editor_actions))
+    }
+
     pub fn close_editor(&self) {
         self.send(Msg::CloseEditor);
     }
@@ -769,6 +794,8 @@ struct Ara {
     module: usize,
     module_faults: u64,
     editor: Option<EditorView>,
+    /// The editor's title bar last given (UI-380), for a window opened after it.
+    editor_bar: Option<EditorBar>,
 }
 
 /// The plugin's editor: its window and the instance in the editor view role behind it.
@@ -1009,13 +1036,14 @@ impl Slot {
                         e.window.set_caption(c);
                     }
                 }
+                (Slot::Open(ara), Msg::Bar(bar)) => ara.set_editor_bar(bar),
                 (Slot::Open(ara), Msg::CloseEditor) => ara.close_editor(),
                 (Slot::Failed(shared), Msg::Edit { tx, .. }) => {
                     let why = lock(&shared.failed).clone();
                     let why = why.unwrap_or_else(|| "the plugin failed".into());
                     answer_edit(shared, tx, Err(why));
                 }
-                (Slot::Failed(_), Msg::Caption(_) | Msg::CloseEditor) => {}
+                (Slot::Failed(_), Msg::Caption(_) | Msg::Bar(_) | Msg::CloseEditor) => {}
                 (Slot::Failed(_), Msg::Store(tx) | Msg::StoreChanged(tx)) => drop(tx.send(None)),
                 (Slot::Failed(_), Msg::Notes(_, _, tx)) => drop(tx.send(Vec::new())),
                 (Slot::Failed(_), Msg::Probe(tx)) => drop(tx.send(Probe::default())),
@@ -1205,6 +1233,7 @@ fn start(
         module,
         module_faults: contain::faults_in(module),
         editor: None,
+        editor_bar: None,
     })
 }
 
@@ -1902,6 +1931,9 @@ impl Ara {
             self.shared
                 .editor_handle
                 .store(window.native_handle(), Ordering::Release);
+            if let Some(bar) = &self.editor_bar {
+                contain::call(|| window.set_bar(bar.clone()));
+            }
             self.editor = Some(EditorView { window, instance });
             self.shared.editing.store(true, Ordering::Release);
             self.shared.changed();
@@ -1934,11 +1966,34 @@ impl Ara {
         Ok(())
     }
 
-    /// Takes the editor down once its close box hid it.
+    /// Takes the editor down once its close box hid it, and passes on what was pressed on its
+    /// title bar (UI-380).
     fn watch_editor(&mut self) {
+        if let Some(e) = &self.editor {
+            let pressed = contain::call(|| e.window.take_actions());
+            if !pressed.is_empty() {
+                let mut queue = lock(&self.shared.editor_actions);
+                queue.extend(pressed);
+                let over = queue.len().saturating_sub(MAX_EDITOR_ACTIONS);
+                queue.drain(..over);
+                drop(queue);
+                self.shared.changed();
+            }
+        }
         if self.editor.as_ref().is_some_and(|e| !e.window.is_visible()) {
             self.close_editor();
         }
+    }
+
+    /// The host's title bar (UI-380). Kept for a window opened later: the bar is always the
+    /// ARA form.
+    fn set_editor_bar(&mut self, bar: EditorBar) {
+        let bar = EditorBar { ara: true, ..bar };
+        if let Some(e) = &self.editor {
+            let b = bar.clone();
+            contain::call(|| e.window.set_bar(b));
+        }
+        self.editor_bar = Some(bar);
     }
 
     fn close_editor(&mut self) {

@@ -15,6 +15,8 @@
 //! - A press on the badge, a double click on the clip or 「〈名前〉で編集」 opens the plugin's
 //!   window, one per plugin; when it closes, the plugin's edits are taken into the song.
 
+use std::collections::{HashMap, HashSet};
+
 use serde_json::{Map, Value, json};
 use xirius_core::commands::clip_ara::{Unfit, unfit_all};
 use xirius_core::id::{ClipId, TrackId};
@@ -22,6 +24,7 @@ use xirius_core::model::{Clip, Track};
 use xirius_design::{FontSize, Radius, Space, Weight};
 use xirius_session::ara::{Phase, Report};
 use xirius_session::output::OutputMode;
+use xirius_vst3::{EditorAction, EditorBar};
 
 use crate::draw::{Align, Pen};
 use crate::popup::{Action, PopupKind};
@@ -64,6 +67,17 @@ pub struct AraUi {
     pub fake: Option<Vec<Report>>,
     /// The windows asked for without a host (the tests): the plugin and its clips.
     pub opened: Vec<(String, Vec<ClipId>)>,
+    /// The windows asked for and not known closed, by lowercased plugin: the clips they were
+    /// asked for with, which name the title bar (UI-380).
+    pub(crate) editor_clips: HashMap<String, Vec<ClipId>>,
+    /// The pinned windows (lowercased plugin), kept across a close like a VST3 window's pin.
+    pub(crate) editor_pins: HashSet<String>,
+    /// The title bar last given to each window.
+    pub(crate) editor_bars: HashMap<String, EditorBar>,
+    /// Without a host (the tests): the bars given, the presses to take and the windows closed.
+    pub(crate) sent_bars: Vec<(String, EditorBar)>,
+    pub(crate) fake_actions: Vec<(String, EditorAction)>,
+    pub(crate) closed: Vec<String>,
 }
 
 /// What the badge after an attached clip's name shows.
@@ -278,10 +292,24 @@ impl Studio {
             let windows = host.ara_editor_windows();
             let errors = host.take_ara_editor_errors();
             archive_pending = host.take_ara_arrived();
-            let closed = self.ara.editing.iter().any(|p| !editing.contains(p));
+            let gone: Vec<String> = self
+                .ara
+                .editing
+                .iter()
+                .filter(|p| !editing.contains(p))
+                .map(|p| p.to_ascii_lowercase())
+                .collect();
+            let closed = !gone.is_empty();
             self.ara.editing = editing;
             #[cfg(windows)]
             self.sync_ara_editor_windows(windows);
+            // A window closed or that did not open has no title bar to keep (UI-380).
+            for key in gone
+                .into_iter()
+                .chain(errors.iter().map(|(p, _)| p.to_ascii_lowercase()))
+            {
+                self.forget_ara_editor(&key);
+            }
             if closed {
                 self.pull_plugins();
             }
@@ -528,13 +556,25 @@ impl Studio {
             _ => {}
         }
         let place = self.editor_placement();
+        // As a VST3 window (UI-380): an unpinned window takes the place of the other plugins'
+        // unpinned ones; a pinned one leaves them. Its bar is given before it opens.
+        let key = plugin.to_ascii_lowercase();
+        if !self.ara.editor_pins.contains(&key) {
+            self.close_unpinned_ara_editors(&key);
+        }
+        self.ara.editor_clips.insert(key.clone(), clips.to_vec());
+        self.refresh_ara_editor_bar(&key);
         let Some(host) = self.transport.host() else {
             self.ara.opened.push((plugin.clone(), clips.to_vec()));
             self.ara_open_requested(&plugin, clips);
             return true;
         };
         let title = format!("{name} · ARA");
-        match host.open_ara_editor(&plugin, &title, place, clips) {
+        let opened = host.open_ara_editor(&plugin, &title, place, clips);
+        if opened.is_err() {
+            self.forget_ara_editor(&key);
+        }
+        match opened {
             Ok(()) => {
                 #[cfg(windows)]
                 if let Some((_, time)) = self.ara.editor_windows.get_mut(&plugin) {

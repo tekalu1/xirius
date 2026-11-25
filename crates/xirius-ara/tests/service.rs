@@ -664,6 +664,52 @@ fn the_editor_opens_once_per_document_and_closes_by_its_close_box() {
     assert!(s.close(Instant::now() + WAIT));
     assert_eq!(mine(), 0, "the document's end closes its editor");
     no_violations();
+    an_editor_bar_reaches_the_window_and_its_presses_come_back();
+}
+
+/// UI-380: the title bar the app gives before the window opens is on the window once it opens,
+/// always in the ARA form; a later bar reaches the open window; a press on it comes back. Part
+/// of the editor test above (the fake's windows are per process).
+fn an_editor_bar_reaches_the_window_and_its_presses_come_back() {
+    use xirius_ara::service::{EditorAction, EditorBar};
+    let s = start(Config::default(), None);
+    let a = tone(48_000.0, 1.0, 0.5);
+    s.sync(&song(vec![clip(9201, "bar.wav", &a, 0.0, 0.0, 0.5)]));
+    ready(&s, 9201);
+    let title = "bar test";
+    s.set_editor_bar(EditorBar {
+        track: "Vocal".into(),
+        device: "Pitch Editor".into(),
+        ..EditorBar::default()
+    });
+    s.open_editor(title, Placement::default(), &[9201], WAIT)
+        .unwrap();
+    let bars = fake::bars(title);
+    let first = bars.last().expect("the window got the bar on opening");
+    assert_eq!(first.track, "Vocal");
+    assert_eq!(first.device, "Pitch Editor");
+    assert!(first.ara, "an ARA window's bar is the ARA form");
+    assert!(!first.pinned);
+
+    s.set_editor_bar(EditorBar {
+        track: "Vocal".into(),
+        device: "Pitch Editor".into(),
+        pinned: true,
+        ..EditorBar::default()
+    });
+    until("the pinned bar on the open window", || {
+        fake::bars(title).last().is_some_and(|b| b.pinned && b.ara)
+    });
+
+    fake::press(title, EditorAction::Pin);
+    let mut pressed = Vec::new();
+    until("the press back", || {
+        pressed.extend(s.take_editor_actions());
+        pressed.contains(&EditorAction::Pin)
+    });
+    assert!(s.take_editor_actions().is_empty(), "taken once");
+    assert!(s.close(Instant::now() + WAIT));
+    no_violations();
 }
 
 #[test]

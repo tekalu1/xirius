@@ -35,7 +35,7 @@ use std::time::{Duration, Instant, SystemTime};
 pub use xirius_ara::Phase;
 use xirius_ara::remote_client::RemoteService;
 pub use xirius_ara::service::Loader;
-use xirius_ara::service::{Caption, Placement, Rendered, Stored};
+use xirius_ara::service::{Caption, EditorAction, EditorBar, Placement, Rendered, Stored};
 use xirius_ara::{ClipSpec, Service, Song, SourceAudio};
 use xirius_core::ara::source_id;
 use xirius_core::model::{Clip, ClipBody, Project, TrackKind};
@@ -340,6 +340,12 @@ impl ServiceHandle {
     }
     pub fn set_editor_caption(&self, caption: Caption) {
         service_call!(self, set_editor_caption(caption))
+    }
+    pub fn set_editor_bar(&self, bar: EditorBar) {
+        service_call!(self, set_editor_bar(bar))
+    }
+    pub fn take_editor_actions(&self) -> Vec<EditorAction> {
+        service_call!(self, take_editor_actions())
     }
     pub fn request_editor(
         &self,
@@ -1265,6 +1271,42 @@ impl Held {
             if d.service.editing() {
                 d.service.set_editor_caption(caption);
             }
+        }
+    }
+
+    /// `plugin`'s editor title bar: the name and the pin (UI-380). Kept by its document for a
+    /// window opened later.
+    pub fn set_editor_bar(&self, plugin: &str, bar: EditorBar) {
+        let docs = lock(&self.docs);
+        if let Some(d) = docs
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(plugin))
+            .map(|(_, d)| d)
+        {
+            d.service.set_editor_bar(bar);
+        }
+    }
+
+    /// What was pressed on the editors' title bars since the last call, by plugin (UI-380).
+    pub fn take_editor_actions(&self) -> Vec<(String, EditorAction)> {
+        let docs = lock(&self.docs);
+        let mut out = Vec::new();
+        for (k, d) in docs.iter() {
+            out.extend(
+                d.service
+                    .take_editor_actions()
+                    .into_iter()
+                    .map(|a| (k.clone(), a)),
+            );
+        }
+        out
+    }
+
+    /// Closes `plugin`'s editor window, as its close box would (UI-380: a pin replaced it).
+    pub fn close_editor(&self, plugin: &str) {
+        let docs = lock(&self.docs);
+        for (_, d) in docs.iter().filter(|(k, _)| k.eq_ignore_ascii_case(plugin)) {
+            d.service.close_editor();
         }
     }
 

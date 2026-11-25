@@ -944,6 +944,22 @@ impl SessionHost {
         self.builder.ara().set_editor_caption(caption);
     }
 
+    /// `plugin`'s ARA editor title bar: the name and the pin (UI-380).
+    pub fn ara_editor_bar(&self, plugin: &str, bar: xirius_ara::service::EditorBar) {
+        self.builder.ara().set_editor_bar(plugin, bar);
+    }
+
+    /// What was pressed on the ARA editors' title bars since the last call, by plugin (UI-380).
+    pub fn take_ara_editor_actions(&self) -> Vec<(String, xirius_ara::service::EditorAction)> {
+        self.builder.ara().take_editor_actions()
+    }
+
+    /// Closes `plugin`'s ARA editor window, as its close box would (UI-380). When it is gone,
+    /// [`SessionHost::pull_plugin_states`] takes its edits into the song as for its close box.
+    pub fn close_ara_editor(&self, plugin: &str) {
+        self.builder.ara().close_editor(plugin);
+    }
+
     /// Opens again, from the song's archive, the ARA documents that crashed (or `plugin`'s);
     /// their clips play their files until then (PLG-058). How many.
     pub fn restart_ara(&self, plugin: Option<&str>) -> usize {

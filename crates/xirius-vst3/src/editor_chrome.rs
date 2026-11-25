@@ -115,14 +115,13 @@ impl Controls {
     pub fn layout(&self, width: i32, scale: f32, bar: &EditorBar) {
         for &(id, hwnd) in &self.buttons {
             let r = seat(id, width as f32 / scale, bar);
+            // A button without a seat is hidden and never takes a click (UI-380).
+            let enabled = r.is_some() && (!matches!(id, PREVIOUS | NEXT) || can_step(id, bar));
             // SAFETY: these controls are children of our frame on this thread.
             unsafe {
-                if matches!(id, PREVIOUS | NEXT) {
-                    let enabled = can_step(id, bar);
-                    let was_enabled = EnableWindow(hwnd, i32::from(enabled)) == 0;
-                    if was_enabled != enabled {
-                        InvalidateRect(hwnd, std::ptr::null(), 0);
-                    }
+                let was_enabled = EnableWindow(hwnd, i32::from(enabled)) == 0;
+                if was_enabled != enabled {
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
                 }
                 if id == PRESET {
                     SetWindowTextW(hwnd, wide(&bar.preset).as_ptr());
@@ -147,6 +146,10 @@ impl Controls {
 
 fn seat(id: usize, width: f32, bar: &EditorBar) -> Option<(f32, f32)> {
     let right = width - 4.0;
+    // An ARA window's bar has only the name, the pin and the close box (UI-380).
+    if bar.ara && !matches!(id, PIN | CLOSE) {
+        return None;
+    }
     Some(match id {
         POWER => (4.0, BUTTON),
         CLOSE => (right - BUTTON, BUTTON),
@@ -346,16 +349,23 @@ pub(crate) fn paint(
                 DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
             );
         } else if control.is_none() {
-            let preset_x = seat(PREVIOUS, width, bar)
-                .or_else(|| seat(PRESET, width, bar))
-                .map_or(width - 94.0, |v| v.0);
+            // An ARA window's name runs from the left edge to the pin (UI-380).
+            let (left, end_x, track_from) = if bar.ara {
+                let pin = seat(PIN, width, bar).map_or(width - 62.0, |v| v.0);
+                (8.0, pin, 300.0)
+            } else {
+                let preset_x = seat(PREVIOUS, width, bar)
+                    .or_else(|| seat(PRESET, width, bar))
+                    .map_or(width - 94.0, |v| v.0);
+                (58.0, preset_x, 520.0)
+            };
             let mut text_r = RECT {
-                left: (58.0 * scale).round() as i32,
+                left: (left * scale).round() as i32,
                 top: 0,
-                right: ((preset_x - 6.0) * scale).round() as i32,
+                right: ((end_x - 6.0) * scale).round() as i32,
                 bottom: height(scale),
             };
-            if width >= 520.0 && !bar.track.is_empty() {
+            if width >= track_from && !bar.track.is_empty() {
                 let prefix = wide(&format!("{} › ", bar.track));
                 let mut extent = SIZE::default();
                 GetTextExtentPoint32W(dc, prefix.as_ptr(), prefix.len() as i32 - 1, &mut extent);
@@ -390,15 +400,17 @@ pub(crate) fn paint(
             );
             SelectObject(dc, font);
             DeleteObject(strong);
-            crate::editor_icons::paint(
-                dc,
-                if bar.instrument { 9 } else { 10 },
-                36.0 * scale,
-                10.0 * scale,
-                scale,
-                ink,
-                fill,
-            );
+            if !bar.ara {
+                crate::editor_icons::paint(
+                    dc,
+                    if bar.instrument { 9 } else { 10 },
+                    36.0 * scale,
+                    10.0 * scale,
+                    scale,
+                    ink,
+                    fill,
+                );
+            }
         } else if let Some(id) = control {
             let lit = id == POWER && bar.powered;
             let ink = if matches!(id, PREVIOUS | NEXT) && !enabled {
@@ -456,6 +468,10 @@ pub(crate) fn paint(
 }
 
 pub(crate) fn command(hwnd: HWND, id: usize, bar: &EditorBar) -> Option<EditorAction> {
+    // An ARA window answers only its pin (and its close box, below).
+    if bar.ara && !matches!(id, PIN | CLOSE) {
+        return None;
+    }
     match id {
         PREVIOUS | NEXT if can_step(id, bar) => Some(if id == NEXT {
             EditorAction::PresetNext
@@ -508,6 +524,42 @@ mod tests {
         assert_eq!(x + w / 2.0, MIN_WIDTH / 2.0);
         assert!(seat(SIDECHAIN, MIN_WIDTH, &bar).is_none());
     }
+    /// UI-380: an ARA window's bar seats only the pin and the close box, and answers only its
+    /// pin, even with presets and a sidechain in the bar.
+    #[test]
+    fn an_ara_bar_has_only_the_pin_and_the_close_box() {
+        let bar = EditorBar {
+            track: "Vocal".into(),
+            device: "Pitch Editor".into(),
+            preset: "Default".into(),
+            presets: vec!["Default".into(), "Room".into()],
+            sidechain: true,
+            powered: true,
+            ara: true,
+            ..Default::default()
+        };
+        for id in [POWER, PRESET, PREVIOUS, NEXT, CHANNEL, SIDECHAIN] {
+            assert_eq!(seat(id, MIN_WIDTH, &bar), None, "control {id}");
+            assert_eq!(
+                command(std::ptr::null_mut(), id, &bar),
+                None,
+                "control {id}"
+            );
+        }
+        let vst = EditorBar {
+            ara: false,
+            ..bar.clone()
+        };
+        assert_eq!(seat(PIN, MIN_WIDTH, &bar), seat(PIN, MIN_WIDTH, &vst));
+        assert_eq!(seat(CLOSE, MIN_WIDTH, &bar), seat(CLOSE, MIN_WIDTH, &vst));
+        assert!(seat(PIN, MIN_WIDTH, &bar).is_some());
+        assert!(seat(CLOSE, MIN_WIDTH, &bar).is_some());
+        assert_eq!(
+            command(std::ptr::null_mut(), PIN, &bar),
+            Some(EditorAction::Pin)
+        );
+    }
+
     #[test]
     fn preset_steps_send_direction_without_resolving_an_asynchronous_label() {
         let mut bar = EditorBar {

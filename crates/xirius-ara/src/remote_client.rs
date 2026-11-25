@@ -12,7 +12,8 @@ use crate::document::{FactoryInfo, Note};
 use crate::host::{Request, SourceAudio};
 use crate::remote::{self, Command as WireCommand, Reply, Snapshot, WireClip, WireSong};
 use crate::service::{
-    CachedArchive, Caption, ClipState, Phase, Placement, Probe, Rendered, Song, Stored,
+    CachedArchive, Caption, ClipState, EditorAction, EditorBar, Phase, Placement, Probe, Rendered,
+    Song, Stored,
 };
 use crate::shared_audio::SharedAudio;
 
@@ -47,6 +48,9 @@ struct State {
     info: Option<FactoryInfo>,
     generation: u64,
     source_names: HashMap<String, String>,
+    /// The title bar last sent, so the same one is not sent again (UI-380).
+    editor_bar: Option<remote::WireBar>,
+    editor_actions: Vec<EditorAction>,
 }
 
 /// The app side of an ARA service. All pipe I/O runs on its own thread.
@@ -367,6 +371,22 @@ impl RemoteService {
     pub fn set_editor_caption(&self, c: Caption) {
         self.send(Job::Wire(WireCommand::Caption(c.into())));
     }
+    /// The editor's title bar (UI-380); sent only when it changed.
+    pub fn set_editor_bar(&self, bar: EditorBar) {
+        let bar = remote::WireBar::from(bar);
+        {
+            let mut state = lock(&self.state);
+            if state.editor_bar.as_ref() == Some(&bar) {
+                return;
+            }
+            state.editor_bar = Some(bar.clone());
+        }
+        self.send(Job::Wire(WireCommand::Bar(bar)));
+    }
+    /// What was pressed on the editor's title bar since the last call (UI-380).
+    pub fn take_editor_actions(&self) -> Vec<EditorAction> {
+        std::mem::take(&mut lock(&self.state).editor_actions)
+    }
     pub fn request_editor(
         &self,
         title: &str,
@@ -559,8 +579,14 @@ fn make_source(
 
 fn publish(state: &Mutex<State>, snapshot: Snapshot) -> io::Result<bool> {
     let mut state = lock(state);
-    // Heartbeats with the same generation should not rebuild the live timelines.
-    let changed = state.generation != snapshot.generation;
+    // Heartbeats with the same generation should not rebuild the live timelines; a press on the
+    // editor's title bar still wakes the app (UI-380).
+    let changed = state.generation != snapshot.generation || !snapshot.editor_actions.is_empty();
+    state
+        .editor_actions
+        .extend(snapshot.editor_actions.into_iter().map(EditorAction::from));
+    let over = state.editor_actions.len().saturating_sub(64);
+    state.editor_actions.drain(..over);
     let mut clips = HashMap::new();
     let mut active = HashMap::new();
     for (key, wire) in snapshot.states {

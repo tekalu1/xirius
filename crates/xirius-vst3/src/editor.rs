@@ -582,7 +582,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             let event = (wp >> 16) as u32;
             // An owner-drawn button can report BN_DOUBLECLICKED when the list was
             // dismissed and the button is pressed again within the double-click interval.
-            if id == crate::editor_chrome::PRESET && matches!(event, 0 | BN_DOUBLECLICKED) {
+            // An ARA window has no preset list (UI-380).
+            let ara = st
+                .shared
+                .editor_bar
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .ara;
+            if id == crate::editor_chrome::PRESET && !ara && matches!(event, 0 | BN_DOUBLECLICKED) {
                 st.touched(hwnd);
                 let mut popup = st.presets.borrow_mut();
                 if let Some(list) = popup.as_ref()

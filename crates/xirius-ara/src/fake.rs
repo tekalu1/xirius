@@ -30,7 +30,7 @@ use std::sync::{Arc, Barrier, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use crate::service::{Binary, Instance, Loader, Placement, Window};
+use crate::service::{Binary, EditorAction, EditorBar, Instance, Loader, Placement, Window};
 use crate::sys::{self, Bool, ContentType, FALSE, Ref, RoleFlags, TRUE};
 use crate::{Error, contain, error};
 
@@ -91,6 +91,8 @@ pub enum EditNotices {
     None,
 }
 static WINDOWS: Mutex<Vec<(String, Arc<AtomicBool>)>> = Mutex::new(Vec::new());
+static BARS: Mutex<Vec<(String, EditorBar)>> = Mutex::new(Vec::new());
+static PRESSED: Mutex<Vec<(String, EditorAction)>> = Mutex::new(Vec::new());
 static SELECTION: AtomicU64 = AtomicU64::new(0);
 static STORE_PAUSE_MS: AtomicU64 = AtomicU64::new(0);
 static FAIL_STORE_ONCE: AtomicBool = AtomicBool::new(false);
@@ -147,6 +149,20 @@ pub fn close_windows() {
     for (_, open) in lock(&WINDOWS).iter() {
         open.store(false, Ordering::Release);
     }
+}
+
+/// The title bars the host gave the editor windows, by window title, oldest first (UI-380).
+pub fn bars(title: &str) -> Vec<EditorBar> {
+    lock(&BARS)
+        .iter()
+        .filter(|(t, _)| t == title)
+        .map(|(_, b)| b.clone())
+        .collect()
+}
+
+/// Presses `action` on the title bar of the editor window titled `title`, as a user would.
+pub fn press(title: &str, action: EditorAction) {
+    lock(&PRESSED).push((title.to_string(), action));
 }
 
 /// Holds archive writes until the test releases them. Drop also releases on assertion failure.
@@ -1459,6 +1475,7 @@ static EDITOR_VIEW: Shared<sys::EditorViewInterface> = Shared(sys::EditorViewInt
 
 /// The fake's editor is normally represented by a flag.
 struct FakeWindow {
+    title: String,
     open: Arc<AtomicBool>,
 }
 
@@ -1468,6 +1485,19 @@ impl Window for FakeWindow {
     }
 
     fn raise(&self) {}
+
+    fn set_bar(&self, bar: EditorBar) {
+        lock(&BARS).push((self.title.clone(), bar));
+    }
+
+    fn take_actions(&self) -> Vec<EditorAction> {
+        let mut pressed = lock(&PRESSED);
+        let (mine, rest) = std::mem::take(&mut *pressed)
+            .into_iter()
+            .partition(|(t, _)| *t == self.title);
+        *pressed = rest;
+        mine.into_iter().map(|(_, a)| a).collect()
+    }
 }
 
 impl Drop for FakeWindow {
@@ -1652,7 +1682,10 @@ impl Instance for FakeInstance {
         }
         let open = Arc::new(AtomicBool::new(true));
         lock(&WINDOWS).push((title.to_string(), open.clone()));
-        Ok(Box::new(FakeWindow { open }))
+        Ok(Box::new(FakeWindow {
+            title: title.to_string(),
+            open,
+        }))
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {

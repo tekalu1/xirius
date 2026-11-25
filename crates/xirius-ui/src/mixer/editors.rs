@@ -122,6 +122,111 @@ impl Studio {
         }
     }
 
+    /// An ARA window's title bar (UI-380): the track of the first clip it was asked for with
+    /// and the plugin, the pin, and the window stack as a VST3 bar's.
+    fn ara_bar(&self, key: &str) -> Option<xirius_vst3::EditorBar> {
+        let first = *self.ara.editor_clips.get(key)?.first()?;
+        let p = self.project();
+        let track = p
+            .tracks
+            .values()
+            .find(|t| t.clips.iter().any(|c| c.id == first));
+        Some(xirius_vst3::EditorBar {
+            track: track.map_or_else(String::new, |t| t.shown_name().into()),
+            device: self.ara_name(first).unwrap_or_else(|| key.to_string()),
+            stack: self.editor_stack(),
+            stack_base: crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap_or(0) as u64,
+            pinned: self.ara.editor_pins.contains(key),
+            ara: true,
+            ..xirius_vst3::EditorBar::default()
+        })
+    }
+
+    /// Gives the ARA window of `key` (a lowercased plugin) its title bar when it changed.
+    pub(crate) fn refresh_ara_editor_bar(&mut self, key: &str) {
+        let Some(bar) = self.ara_bar(key) else {
+            return;
+        };
+        if self.ara.editor_bars.get(key) == Some(&bar) {
+            return;
+        }
+        match self.transport.host() {
+            Some(host) => host.ara_editor_bar(key, bar.clone()),
+            None => self.ara.sent_bars.push((key.to_string(), bar.clone())),
+        }
+        self.ara.editor_bars.insert(key.to_string(), bar);
+    }
+
+    /// Forgets the ARA window of `key`, closed or not opened; its pin stays, as a VST3's.
+    pub(crate) fn forget_ara_editor(&mut self, key: &str) {
+        self.ara.editor_clips.remove(key);
+        self.ara.editor_bars.remove(key);
+    }
+
+    /// Closes the ARA window of `key`, as its close box would. Its edits come into the song
+    /// when the poll sees it gone.
+    pub(crate) fn close_ara_editor(&mut self, key: &str) {
+        match self.transport.host() {
+            Some(host) => host.close_ara_editor(key),
+            None => self.ara.closed.push(key.to_string()),
+        }
+        self.forget_ara_editor(key);
+    }
+
+    /// Closes the other plugins' unpinned ARA windows (UI-380, as `finish_device_open`).
+    pub(crate) fn close_unpinned_ara_editors(&mut self, keep: &str) {
+        let others: Vec<String> = self
+            .ara
+            .editor_clips
+            .keys()
+            .filter(|k| *k != keep && !self.ara.editor_pins.contains(*k))
+            .cloned()
+            .collect();
+        for other in others {
+            self.close_ara_editor(&other);
+        }
+    }
+
+    /// The ARA windows' title bars (UI-380): gives each its bar when it changed, and takes
+    /// what was pressed on them. Only the pin is on them; a touch keeps the window stack.
+    pub(crate) fn poll_ara_editor_bar(&mut self) -> bool {
+        use xirius_vst3::EditorAction;
+        let keys: Vec<String> = self.ara.editor_clips.keys().cloned().collect();
+        for key in &keys {
+            self.refresh_ara_editor_bar(key);
+        }
+        let actions = match self.transport.host() {
+            Some(host) => host.take_ara_editor_actions(),
+            None => std::mem::take(&mut self.ara.fake_actions),
+        };
+        let mut changed = false;
+        for (plugin, action) in actions {
+            let key = plugin.to_ascii_lowercase();
+            if !self.ara.editor_clips.contains_key(&key) {
+                continue;
+            }
+            match action {
+                EditorAction::Pin => {
+                    changed = true;
+                    if self.ara.editor_pins.remove(&key) {
+                        // Unpinned, it takes the place of the other unpinned ones.
+                        self.close_unpinned_ara_editors(&key);
+                    } else {
+                        self.ara.editor_pins.insert(key.clone());
+                    }
+                    self.refresh_ara_editor_bar(&key);
+                }
+                #[cfg(windows)]
+                EditorAction::EditorTouched { window, .. } => {
+                    changed = true;
+                    self.touch_ara_editor(window);
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
     fn vst_bar(&self, plugin: &Plugin) -> xirius_vst3::EditorBar {
         let p = self.project();
         let track = p
@@ -160,6 +265,7 @@ impl Studio {
             powered: plugin.runs(),
             pinned: self.mixer.editor_pins.contains(&plugin.id),
             sidechain: plugin.sidechain.is_some(),
+            ara: false,
         }
     }
     /// Reconcile the desktop's owner group after a Studio window is activated.
@@ -687,7 +793,7 @@ impl Studio {
     /// the instance of a new mix, and takes what was turned in the plugins' windows into the
     /// song. True when the song changed.
     pub fn poll_editors(&mut self) -> bool {
-        let bar = self.poll_editor_bar();
+        let bar = self.poll_editor_bar() | self.poll_ara_editor_bar();
         let keys = bar | self.poll_editor_keys();
         let mut failed = Vec::new();
         let mut opened_sizes = Vec::new();

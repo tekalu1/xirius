@@ -571,6 +571,9 @@ impl ToHost {
                             footer: i.u8()? != 0,
                         })
                     })?,
+                    // The plugin host's windows are VST3 inserts; an ARA window's bar goes
+                    // through the ARA worker instead (UI-380).
+                    ara: false,
                 },
             },
             12 => {
@@ -993,6 +996,7 @@ mod tests {
                     stack: vec![42, 24],
                     stack_base: 12,
                     raise_ticket: 123,
+                    ara: false,
                     menu: vec![xirius_vst3::PresetRow {
                         key: "load:My preset".into(),
                         label: "My preset".into(),
