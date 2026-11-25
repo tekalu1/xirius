@@ -1,6 +1,7 @@
 //! UI-182 / UI-183: a double click on the empty lane of an instrument track makes a bar of empty
 //! part; a double click on the empty part of a track's head brings that channel up in the
-//! mixer; only the name text renames.
+//! mixer; only the name text renames. UI-379: a double click anywhere in a clip's time on its
+//! row opens it, its clips locked by the automation or not, and never lays a part over it.
 //!
 //! The presses go the way the window sends them (`screen.rs`: the name, then the arrangement's
 //! open, then its press, then the row), so the click path under test is the real one.
@@ -143,6 +144,158 @@ fn the_double_click_on_a_part_still_opens_it() {
     assert_eq!(clips(&s, "Drums").len(), n, "no part is made on a part");
     assert!(s.drawer_open);
     assert_eq!(s.tab, DrawerTab::Roll);
+}
+
+/// `name`'s first clip and where it is drawn.
+fn first_clip(s: &Studio, g: &Geometry, name: &str) -> (TrackId, ClipId, Rect) {
+    let t = track(s, name);
+    let p = s.project();
+    let c = p.tracks[&t]
+        .clips
+        .iter()
+        .min_by_key(|c| c.start)
+        .expect("a clip");
+    let row = *s.tree().row_of(RowKind::Track(t)).expect("row");
+    (t, c.id, s.clip_rect(g, &row, c))
+}
+
+fn stacks(s: &Studio, t: TrackId) -> usize {
+    xirius_core::takes::stacks(&s.project().tracks[&t]).len()
+}
+
+/// The lanes of `t` open, its clips locked as the setting has them by default.
+fn lock(s: &mut Studio, g: &Geometry, t: TrackId) {
+    s.toggle_lanes(g, t);
+    s.rebuild(g);
+    assert!(s.clips_locked(t), "the lanes lock the clips by default");
+}
+
+#[test]
+fn a_double_click_on_a_clip_locked_by_its_automation_opens_it_and_makes_nothing() {
+    let (mut s, g) = studio();
+    let bass = track(&s, "Bass");
+    lock(&mut s, &g, bass);
+    let (_, clip, r) = first_clip(&s, &g, "Bass");
+    let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    assert_eq!(
+        s.arrange_spot(&g, at.0, at.1),
+        Spot::Space(RowKind::Track(bass))
+    );
+    let before = clips(&s, "Bass");
+    let takes = stacks(&s, bass);
+    let steps = s.song.steps();
+    double_click(&mut s, &g, at);
+
+    assert_eq!(clips(&s, "Bass"), before, "no part is laid over it");
+    assert_eq!(stacks(&s, bass), takes, "no take is made");
+    assert_eq!(s.song.steps(), steps, "nothing in the history");
+    assert!(s.drawer_open);
+    assert_eq!(s.tab, DrawerTab::Roll);
+    assert_eq!(s.selected_clip, Some((bass, clip)));
+    assert!(s.error.is_none());
+
+    // Opened, it is still locked: a drag does not move it.
+    let g = s.geometry(g.size.0, g.size.1);
+    let (_, _, r) = first_clip(&s, &g, "Bass");
+    let from = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    super::probe::hold(&mut s, &g, from, (from.0 + 120.0, from.1), Mods::NONE);
+    s.arrange_up(&g, from.0 + 120.0, from.1, Mods::NONE);
+    assert_eq!(clips(&s, "Bass"), before, "the lock still holds the clip");
+}
+
+#[test]
+fn a_double_click_in_the_band_above_or_below_a_clip_opens_it() {
+    for side in ["above", "below"] {
+        let (mut s, g) = studio();
+        let (drums, clip, r) = first_clip(&s, &g, "Drums");
+        let y = if side == "above" {
+            r.y - 2.0
+        } else {
+            r.bottom() + 2.0
+        };
+        let at = (r.x + r.w / 2.0, y);
+        // Still the clip's row, but not the clip.
+        assert_eq!(
+            s.arrange_spot(&g, at.0, at.1),
+            Spot::Space(RowKind::Track(drums)),
+            "{side}"
+        );
+        let before = clips(&s, "Drums");
+        let takes = stacks(&s, drums);
+        let steps = s.song.steps();
+        double_click(&mut s, &g, at);
+
+        assert_eq!(
+            clips(&s, "Drums"),
+            before,
+            "{side}: no part is laid over it"
+        );
+        assert_eq!(stacks(&s, drums), takes, "{side}");
+        assert_eq!(s.song.steps(), steps, "{side}");
+        assert_eq!(s.tab, DrawerTab::Roll, "{side}");
+        assert_eq!(s.selected_clip, Some((drums, clip)), "{side}");
+    }
+}
+
+#[test]
+fn a_double_click_anywhere_down_a_clip_opens_it_locked_or_not() {
+    for locked in [false, true] {
+        let (mut s, g) = studio();
+        let drums = track(&s, "Drums");
+        if locked {
+            lock(&mut s, &g, drums);
+        }
+        let before = clips(&s, "Drums");
+        let takes = stacks(&s, drums);
+        let h = s.tree().row_of(RowKind::Track(drums)).expect("row").h;
+        for across in [0.1, 0.5, 0.9] {
+            for down in 0..h as u32 {
+                // The drawer the first one opens may move the lanes: measured each time.
+                let g = s.geometry(g.size.0, g.size.1);
+                let (_, clip, r) = first_clip(&s, &g, "Drums");
+                let row = *s.tree().row_of(RowKind::Track(drums)).expect("row");
+                let at = (r.x + r.w * across, s.row_y(&g, &row) + down as f32 + 0.5);
+                // The low edge of a clip that moves is the smart tool's: its presses cut the
+                // clip there (and join it back by the cut), which is undone for the next point.
+                let smart = !locked && at.1 >= r.bottom() - 8.0 && at.1 < r.bottom();
+                let steps = s.song.steps();
+                s.selected_clip = None;
+                double_click(&mut s, &g, at);
+                let case = format!("locked {locked}, {across} across, {down} px down");
+                assert_eq!(stacks(&s, drums), takes, "{case}: no part is laid over it");
+                assert_eq!(s.tab, DrawerTab::Roll, "{case}");
+                if smart {
+                    for _ in 0..2 {
+                        if clips(&s, "Drums") != before {
+                            s.song.undo();
+                        }
+                    }
+                    s.rebuild(&g);
+                } else {
+                    assert_eq!(s.song.steps(), steps, "{case}");
+                    assert_eq!(s.selected_clip, Some((drums, clip)), "{case}");
+                }
+                assert_eq!(clips(&s, "Drums"), before, "{case}");
+            }
+        }
+    }
+}
+
+#[test]
+fn make_part_makes_nothing_where_a_clip_already_is() {
+    let (mut s, g) = studio();
+    let (bass, _, r) = first_clip(&s, &g, "Bass");
+    let before = clips(&s, "Bass");
+    let steps = s.song.steps();
+    for x in [r.x + 1.0, r.x + r.w / 2.0, r.right() - 1.0] {
+        assert!(s.make_part(&g, bass, x), "the press is answered");
+    }
+    assert_eq!(clips(&s, "Bass"), before);
+    assert_eq!(s.song.steps(), steps, "no clip.add.midi");
+    // Just before it the lane is empty: a part is made there, up to the clip.
+    assert!(s.make_part(&g, bass, r.x - 2.0));
+    assert_eq!(clips(&s, "Bass").len(), before.len() + 1);
+    assert_eq!(s.song.steps(), steps + 1);
 }
 
 /// The head of `name`'s row: a point at `x` from the row's left edge and `y` from its top.

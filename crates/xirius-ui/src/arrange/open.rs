@@ -86,26 +86,51 @@ impl Studio {
             Spot::Clip { track, clip, .. } => self.open_clip(g, track, clip, mods.alt),
             // The press has opened the plugin's window already.
             Spot::Ara { .. } => true,
-            Spot::Space(RowKind::Track(track)) => self.make_part(g, track, x),
+            // The press found no clip, yet one may lie at that time: a track that shows its
+            // automation locks its clips (they do not move; they still open), and the band
+            // above and below a clip is its row's (UI-379).
+            Spot::Space(RowKind::Track(track)) => match self.clip_under(g, track, x, y) {
+                Some(clip) => self.open_clip(g, track, clip, mods.alt),
+                None => self.make_part(g, track, x),
+            },
             _ => false,
         }
+    }
+
+    /// The clip on top in `track`'s row at the time of `x`, over the whole height of the row,
+    /// locked or not; none below the row (its lanes).
+    fn clip_under(&self, g: &Geometry, track: TrackId, x: f32, y: f32) -> Option<ClipId> {
+        let row = *self.tree().row_of(RowKind::Track(track))?;
+        let top = self.row_y(g, &row);
+        if y < top || y >= top + row.h {
+            return None;
+        }
+        let at = self.tick_at(g, x);
+        let p = self.project();
+        let t = p.tracks.get(&track)?;
+        let stacks = xirius_core::takes::stacks(t);
+        crate::draw::painted(t, &stacks)
+            .rev()
+            .find(|c| covers(c, at))
+            .map(|c| c.id)
     }
 
     /// A double click on the empty lane of a track: an instrument track gets an empty part of
     /// one bar from the head of the bar under the pointer, cut before the next part, named as
     /// the track, and it is the selection. An audio track has nothing to make there (the press
-    /// is still answered, so the playhead the first press moved stays).
-    fn make_part(&mut self, g: &Geometry, track: TrackId, x: f32) -> bool {
+    /// is still answered, so the playhead the first press moved stays), nor has a time a clip
+    /// already covers: a part laid over it would stack as a take (UI-379).
+    pub(super) fn make_part(&mut self, g: &Geometry, track: TrackId, x: f32) -> bool {
         self.arrange.drag = None;
         let p = self.project();
         let Ok(t) = p.track(track) else {
             return false;
         };
-        if t.kind != TrackKind::Instrument {
+        let at = self.tick_at(g, x).max(0);
+        if t.kind != TrackKind::Instrument || t.clips.iter().any(|c| covers(c, at)) {
             return true;
         }
         let tm = p.time_map();
-        let at = self.tick_at(g, x).max(0);
         let (bar, _, _) = tm.to_bbt(at);
         let before = t
             .clips
@@ -207,4 +232,9 @@ impl Studio {
         self.roll.scroll.0 = self.roll.scroll.0.clamp(0.0, max.0);
         true
     }
+}
+
+/// `clip` covers the time `at`: from its start up to, not with, its end.
+fn covers(clip: &xirius_core::model::Clip, at: Tick) -> bool {
+    clip.start <= at && at < clip.start + clip.length
 }
