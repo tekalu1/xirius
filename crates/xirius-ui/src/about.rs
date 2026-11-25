@@ -3848,6 +3848,40 @@ used {} {}
         assert_eq!(started.count(), 0, "nothing is installed");
     }
 
+    /// PRJ-033: 「やめる」 to 「変更を保存しますか」 before an update calls the update off and
+    /// says so; the song stays open with its changes and nothing is started.
+    #[test]
+    fn prj_033_cancel_to_the_save_question_calls_the_update_off() {
+        use crate::context::key_more::WindowAsk;
+
+        let tmp = scratch("askcancel");
+        let mut s = Studio::new(crate::song::Song::empty());
+        s.song.save_as(&tmp.path().join("song")).unwrap();
+        s.run_command("track.add.audio", serde_json::json!({"name":"first"}));
+        let tracks = s.project().tracks.len();
+        s.transport.bind_window();
+        let started = Started::default();
+        started.arm(&mut s, tmp.path());
+        s.window_ask = Some(WindowAsk::Quit);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while s.save_question().is_none() {
+            assert!(std::time::Instant::now() < end, "the close did not ask");
+            s.idle();
+            s.poll_saving();
+            if s.take_window_ask() == Some(WindowAsk::Quit) {
+                assert!(!s.close_now(), "the close asks first");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        s.answer_save(crate::unsaved::Choice::Cancel);
+        assert!(s.unsaved.is_none());
+        assert!(s.update.pending.is_none(), "the update is called off");
+        assert_eq!(s.update.notice.as_deref(), Some("更新を取りやめました"));
+        assert!(!s.leaving_ready);
+        assert_eq!(s.project().tracks.len(), tracks, "the changes stay");
+        assert_eq!((started.count(), started.leaves()), (0, 0));
+    }
+
     /// UI-282 review: the last step of the close starts only the very file that was checked
     /// and held. Another file asked for at that moment is not started, the window stays, and
     /// the next close gets the song ready again.
