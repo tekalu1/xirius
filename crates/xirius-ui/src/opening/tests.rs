@@ -49,6 +49,8 @@ fn every_entry_returns_before_worker_io_and_blocks_input_before_the_veil() {
         s.song
             .run("track.add.audio", json!({"name":"retained"}))
             .unwrap();
+        // Saved, so leaving it does not ask first (PRJ-033).
+        s.song.save().unwrap();
         s.song.flush_writes();
         let before = s.project();
         let version = s.song.session_mut().save_version("version").unwrap();
@@ -701,6 +703,8 @@ fn version_source(root: &Path) -> (Studio, String) {
     s.song
         .run("track.add.audio", json!({"name":"current track"}))
         .unwrap();
+    // Saved, so leaving it does not ask first (PRJ-033).
+    s.song.save().unwrap();
     s.song.flush_writes();
     (s, version.id)
 }
@@ -902,7 +906,6 @@ fn version_command_json_and_current_song_match_standalone_and_approved_execution
         "version.open",
         raw.as_object().unwrap(),
         &RunOptions::ai("AI"),
-        false,
     )
     .unwrap();
     let mut json = xirius_mcp::persist::result_json(&run);
@@ -933,7 +936,6 @@ fn dawproject_command_json_matches_the_standalone_runner() {
         "project.open",
         raw.as_object().unwrap(),
         &RunOptions::human(),
-        false,
     )
     .unwrap();
     let actual = mcp(&mut s, "project.open", raw, RunOptions::human()).unwrap();
@@ -969,7 +971,6 @@ fn song_open_command_keeps_the_regular_response_envelope() {
         "project.open",
         raw.as_object().unwrap(),
         &RunOptions::human(),
-        false,
     )
     .unwrap();
     let actual = mcp(&mut s, "project.open", raw, RunOptions::human()).unwrap();

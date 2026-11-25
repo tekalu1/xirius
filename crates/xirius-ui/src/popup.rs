@@ -1272,7 +1272,8 @@ impl Popup {
                     },
                 )
                 .text(if v.name.is_empty() {
-                    "自動保存"
+                    // PRJ-033: what the song kept by itself is a draft (older ones have no name).
+                    xirius_core::session::DRAFT_NAME
                 } else {
                     &v.name
                 })
@@ -2637,7 +2638,7 @@ mod tests {
         assert_eq!(dots, [true, false, true]);
         assert_eq!(l.cells[1].hint, "5 分前");
         assert_eq!(l.cells[2].hint, "2 時間前");
-        assert_eq!(l.cells[2].text, "自動保存");
+        assert_eq!(l.cells[2].text, "下書き");
     }
 
     #[test]

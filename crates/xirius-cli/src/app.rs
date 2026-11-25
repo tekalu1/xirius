@@ -1,5 +1,5 @@
-//! The command-line program: opens the song, runs one command (or a batch,
-//! or the MCP server) and saves.
+//! The command-line program: opens the song and runs one command (or a batch,
+//! or the MCP server). Only `project.save` writes the song file.
 
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use xirius_core::autosave::DEFAULT_INTERVAL;
 use xirius_core::command::{ArgDef, ArgType, CommandDef};
 use xirius_core::session::{RunOptions, RunResult};
-use xirius_core::{AiPermission, CmdError, ErrorCode, Project, Registry, Risk, Session};
+use xirius_core::{CmdError, ErrorCode, Project, Registry, Risk, Session};
 use xirius_mcp::persist::{load_selection, result_json, store_selection};
 use xirius_mcp::{HttpConfig, HttpServer, Scope, ServeOptions, run_http, run_stdio};
 use xirius_prefs::Settings;
@@ -56,7 +56,10 @@ xirius - 登録されたコマンドで Xirius の曲を操作します
   --dry-run             曲は変更せず、変更内容だけを表示
   --json                結果を JSON で出力
   --as <名前>           AI として実行（履歴に AI として記録し、AI の権限を適用）
-  --no-save             実行後に曲を保存しない（履歴には記録）
+  --no-save             閉じるときの片付け（project.cleanup）をしない
+
+曲のファイル（project.json）を書き換えるのは project.save と project.save-as だけです。
+ほかのコマンドの変更は履歴（下書き）に記録され、次の実行はその続きから始まります。
 
 play と mcp は、保存した曲を閉じるときに、どのクリップにも履歴にもバージョンにも
 使われていない録音のファイルをごみ箱に移動します（project.cleanup。--dry-run で一覧だけ）。
@@ -72,7 +75,7 @@ mcp のオプション:
   --admin-token <文字列>  承認用の token（XIRIUS_MCP_ADMIN_TOKEN でも指定可。AI 用とは別の値にする）
   --read-only           読み取り専用のコマンドだけを公開
   --no-device           オーディオを出力せずに再生を動かす
-  --autosave-sec <秒>   自動保存の間隔（既定 30。0 で無効）
+  --autosave-sec <秒>   下書きを残す間隔（既定 30。0 で無効。曲のファイルは書かない）
   --midi-in <ポート>    録音する MIDI 入力のポート（all ですべて、none で使わない。既定はオーディオ出力があればすべて）
   --midi-script <ファイル>  MIDI 入力デバイスの代わりに、JSON のメッセージ [[フレーム, [0x90, 60, 100]], ...] を録音する
 
@@ -251,9 +254,9 @@ pub fn no_song() -> CmdError {
     )
 }
 
-/// Runs a command and, if the song changed, saves it. A person's edit always
-/// saves; an AI's only when it holds the `save` permission (its steps are in
-/// the history either way, so nothing is lost).
+/// Runs a command and keeps the selection next to the song. The command's step is in the
+/// history (the draft), and the next run goes on from it; `project.json` is written only by
+/// an explicit `project.save` or `project.save-as` (AI-038).
 ///
 /// With a running engine, `host` follows the song after the command. The export and
 /// transport commands of `xirius-session` are answered here too.
@@ -263,24 +266,11 @@ pub fn run_and_persist(
     name: &str,
     raw: &Map<String, Value>,
     opts: &RunOptions,
-    save: bool,
 ) -> Result<RunResult, CmdError> {
-    let risk = s.registry().get(name).map(|d| d.risk);
     let before = s.state.selection.clone();
     let r = commands::run(s, host, name, raw, opts)?;
     if s.state.selection != before {
         store_selection(s);
-    }
-    let may_save = !opts.author.is_ai() || s.ai_permission() == AiPermission::Save;
-    if save
-        && may_save
-        && !r.dry_run
-        && r.decision.is_none()
-        && risk.is_some_and(|k| k != Risk::Read)
-        && s.dir().is_some()
-        && s.is_dirty()
-    {
-        s.save()?;
     }
     Ok(r)
 }
@@ -336,7 +326,7 @@ fn run_one(g: &Global, registry: &Arc<Registry>, name: &str, tokens: &[String]) 
         Ok(None) => return report_error(g, &no_song()),
         Err(e) => return report_error(g, &e),
     };
-    match run_and_persist(&mut session, None, name, &raw, &options(g), !g.no_save) {
+    match run_and_persist(&mut session, None, name, &raw, &options(g)) {
         Ok(r) => {
             print_result(g, &r);
             EXIT_OK
@@ -380,7 +370,7 @@ fn batch(g: &Global, registry: &Arc<Registry>) -> u8 {
         {
             return report_error(g, &no_song());
         }
-        match run_and_persist(&mut session, None, &name, &raw, &options(g), !g.no_save) {
+        match run_and_persist(&mut session, None, &name, &raw, &options(g)) {
             Ok(r) => print_result(g, &r),
             Err(e) => {
                 eprintln!("{at} 行目で停止しました:");

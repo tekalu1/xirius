@@ -278,7 +278,7 @@ fn serve(
                 continue;
             }
         };
-        match run_and_persist(session, Some(host), &name, &raw, &options(g), !g.no_save) {
+        match run_and_persist(session, Some(host), &name, &raw, &options(g)) {
             Ok(r) => print_result(g, &r),
             Err(e) => {
                 eprintln!("{at} 行目で停止しました:");
@@ -290,14 +290,7 @@ fn serve(
     // The input ended: a recording is placed, and the song plays out unless it repeats for ever.
     if host.is_recording() {
         let none = Map::new();
-        match run_and_persist(
-            session,
-            Some(host),
-            "record.stop",
-            &none,
-            &options(g),
-            !g.no_save,
-        ) {
+        match run_and_persist(session, Some(host), "record.stop", &none, &options(g)) {
             Ok(r) => print_result(g, &r),
             Err(e) => {
                 report_error(g, &e);
@@ -312,20 +305,13 @@ fn serve(
     code
 }
 
-/// Takes the edits made in the plugins' editors into the song, and saves it.
+/// Takes the edits made in the plugins' editors into the song's history (the draft).
 fn collect(g: &Global, session: &mut Session, host: &mut SessionHost) {
     if !host.plugins().live() {
         return;
     }
     let none = Map::new();
-    match run_and_persist(
-        session,
-        Some(host),
-        "plugin.collect",
-        &none,
-        &options(g),
-        !g.no_save,
-    ) {
+    match run_and_persist(session, Some(host), "plugin.collect", &none, &options(g)) {
         Ok(r) if r.step.is_some() => print_result(g, &r),
         Ok(_) => {}
         Err(e) => {

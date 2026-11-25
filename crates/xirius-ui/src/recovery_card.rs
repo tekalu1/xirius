@@ -1,9 +1,10 @@
-//! 前回の状態を復元しました (PRJ-012, PRJ-014): what a song opened after a crash says.
+//! 下書きから復元しました (PRJ-012, PRJ-014, PRJ-033): what a song opened after a crash says.
 //!
 //! The mock (§ 06) is a card on a veil with the last operation and one button. The plan
 //! (OPEN-05, OPEN-23) adds that the person can always throw the recovered steps away, so the
-//! card has three: 続ける (the default, Enter), 破棄 (back to the state last saved; the steps
-//! stay as redo) and バージョン一覧… (the list the song keeps, to pick an older state).
+//! card has three: 続ける (the default, Enter), 保存した状態に戻す (back to the state last
+//! saved; the steps stay as redo) and バージョン一覧… (the list the song keeps, to pick an
+//! older state). The recovered steps are a draft: the song's file waits for a save.
 //! Esc is 続ける: nothing is lost by closing the card.
 
 use gpui::{Bounds, Corners, point, px, size};
@@ -54,11 +55,11 @@ impl Card {
     }
 
     pub fn title(&self) -> &'static str {
-        "前回の状態を復元しました"
+        "下書きから復元しました"
     }
 
     pub fn count_line(&self) -> String {
-        format!("記録から {} 件の操作を戻しました", self.steps)
+        format!("保存していない操作が {} 件あります", self.steps)
     }
 
     pub fn last_line(&self, now_ms: u64) -> Option<String> {
@@ -69,11 +70,18 @@ impl Card {
 
     pub fn note(&self) -> &'static str {
         if self.draft {
-            // design-lint: allow(guidance) 破棄の確認。どこへ戻るかを言わないと押せない
-            "破棄すると、曲を作り始めた状態に戻ります。"
+            "この曲は、保存するまで下書きにだけあります。"
         } else {
-            // design-lint: allow(guidance) 破棄の確認。どこへ戻るかを言わないと押せない
-            "破棄すると、最後に保存した状態に戻ります。"
+            "曲のファイルは、保存するまで変わりません。"
+        }
+    }
+
+    /// The going-back button: to the last save, or for a song never saved, to where it began.
+    pub fn discard_label(&self) -> &'static str {
+        if self.draft {
+            "最初の状態に戻す"
+        } else {
+            "保存した状態に戻す"
         }
     }
 
@@ -84,7 +92,7 @@ impl Card {
         let y = ((size.1 - h) / 2.0).max(0.0);
         let by = y + h - PAD - BUTTON_H;
         let gap = Space::X2.px();
-        let (cw, dw, vw) = (96.0, 72.0, 136.0);
+        let (cw, dw, vw) = (96.0, 148.0, 120.0);
         let mut right = x + W - PAD;
         let mut cells = Vec::new();
         let mut put = |w: f32, look, text: &str, icon, button, tip: &str| {
@@ -98,7 +106,14 @@ impl Card {
             right -= gap;
         };
         put(cw, Look::Primary, "続ける", "check", Button::Continue, "");
-        put(dw, Look::Button, "破棄", "close", Button::Discard, "");
+        put(
+            dw,
+            Look::Button,
+            self.discard_label(),
+            "restore",
+            Button::Discard,
+            "",
+        );
         put(
             vw,
             Look::Button,
@@ -301,7 +316,10 @@ mod tests {
         let s = studio_opening(&dir);
         let card = s.recovery.as_ref().expect("the card is up");
         assert_eq!(card.steps, 3);
-        assert_eq!(card.count_line(), "記録から 3 件の操作を戻しました");
+        assert_eq!(card.title(), "下書きから復元しました");
+        assert_eq!(card.count_line(), "保存していない操作が 3 件あります");
+        assert_eq!(card.note(), "曲のファイルは、保存するまで変わりません。");
+        assert_eq!(card.discard_label(), "保存した状態に戻す");
         let last = card.last_line(xirius_core::store::now_ms()).unwrap();
         assert!(last.starts_with("最後の操作: 「"), "{last}");
         assert!(
@@ -320,6 +338,15 @@ mod tests {
         assert!(s.recovery.is_none());
         assert_eq!(s.project().tracks.len(), 4);
         assert!(s.song.recovery().is_none());
+        // PRJ-033: the recovered steps are a draft; the song's file waits for a save.
+        assert_eq!(s.save_mark(), crate::keep::SaveMark::Unsaved);
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("project.json")).unwrap()).unwrap();
+        assert_eq!(
+            saved["project"]["tracks"].as_object().map(|t| t.len()),
+            Some(2),
+            "project.json is the save"
+        );
     }
 
     #[test]

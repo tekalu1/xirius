@@ -236,14 +236,30 @@ impl Studio {
             return;
         }
         if self.input_blocked() {
+            if request == FileRequest::SaveAs {
+                self.save_as_dropped();
+            }
             return;
         }
         if request == FileRequest::SaveAs {
             if self.transport.take.is_some() {
                 self.error = Some("録音中は名前を付けて保存できません".into());
+                self.save_as_dropped();
                 return;
             }
             self.launch_save(Some(path.to_path_buf()), None);
+            // PRJ-033: 「保存…」 of a new song goes on to what waited once it is saved.
+            if let Some(after) = self.save_as_after.take()
+                && let Some(save) = self.saving.as_mut()
+            {
+                match after {
+                    crate::unsaved::After::Close => save.close_when_done = true,
+                    crate::unsaved::After::Open(mut open) => {
+                        open.asked = true;
+                        save.after_open = Some(*open);
+                    }
+                }
+            }
         } else if matches!(
             request,
             FileRequest::Open | FileRequest::OpenVersion(_) | FileRequest::OpenDawproject
@@ -255,6 +271,12 @@ impl Studio {
     }
 
     pub(crate) fn start_leaving(&mut self, leave: Leave) {
+        self.start_leaving_with(leave, true);
+    }
+
+    /// `pull`: the plugins' state is taken first. A close right after a save that took it
+    /// does not take it again.
+    fn start_leaving_with(&mut self, leave: Leave, pull: bool) {
         // A copy or paste of inserts waiting for its plug-ins belongs to this song (MIX-045).
         self.inserts_wait_flush();
         // A device's knob still turning belongs to the song being left (M-par-1); not while
@@ -302,12 +324,14 @@ impl Studio {
             self.ask_unsaved(crate::unsaved::Pending::CloseUnwritten);
             return;
         }
-        if self.transport.host().is_some() {
+        if pull && self.transport.host().is_some() {
             self.launch_save(None, Some(leave));
             return;
         }
-        if matches!(leave, Leave::Close) && self.song.session().plugin_edits_need_save() {
-            self.ask_unsaved(crate::unsaved::Pending::SaveClose);
+        if matches!(leave, Leave::Close)
+            && let Some(new_song) = self.save_ask()
+        {
+            self.ask_save(crate::unsaved::After::Close, new_song);
             return;
         }
         self.keep_leaving();
@@ -315,7 +339,7 @@ impl Studio {
             self.finish_leaving(leave);
             return;
         }
-        self.launch_save(None, Some(leave));
+        self.launch_save_with_capture(None, Some(leave), pull, None, None);
     }
 
     fn finish_leaving(&mut self, leave: Leave) {
@@ -345,9 +369,21 @@ impl Studio {
         self.launch_save_with_capture(target, leaving, true, None, None);
     }
 
-    pub(crate) fn save_before_open(&mut self, open: crate::opening::Opening) {
+    pub(crate) fn save_before_open(&mut self, mut open: crate::opening::Opening) {
+        open.asked = true;
         self.launch_save(None, None);
         self.saving.as_mut().unwrap().after_open = Some(open);
+    }
+
+    /// 「保存…」 of a new song ended without a place to save: what waited is called off.
+    pub(crate) fn save_as_dropped(&mut self) {
+        match self.save_as_after.take() {
+            Some(crate::unsaved::After::Close) => {
+                self.drop_update_install("更新を取りやめました".into())
+            }
+            Some(crate::unsaved::After::Open(open)) => self.abandon_state_open(*open),
+            None => {}
+        }
     }
 
     pub(crate) fn save_before_close(&mut self) {
@@ -550,21 +586,14 @@ impl Studio {
         }
         let name = job.command.clone();
         let before = self.ai_before();
-        let may_persist = job.save
-            && (!job.opts.author.is_ai()
-                || self.song.session().ai_permission() == xirius_core::AiPermission::Save)
-            && self
-                .song
-                .registry()
-                .get(&name)
-                .is_some_and(|d| d.risk != xirius_core::Risk::Read);
-        let capture = may_persist
-            || self
-                .song
-                .session()
-                .execution_targets(&name, &job.raw)
-                .iter()
-                .any(|(name, _)| crate::io_command::captures(name));
+        // Only an explicit save writes the song file (AI-038): the plugins' state is taken
+        // first for it and for what writes their state elsewhere.
+        let capture = self
+            .song
+            .session()
+            .execution_targets(&name, &job.raw)
+            .iter()
+            .any(|(name, _)| crate::io_command::captures(name));
         self.launch_save_with_capture(
             None,
             None,
@@ -766,7 +795,7 @@ impl Studio {
                 }
                 if failing {
                     Err(CmdError::io("保存できません"))
-                } else if let Some((command, args, opts, persist)) = command {
+                } else if let Some((command, args, opts, _)) = command {
                     if command == "@keep-draft" {
                         #[cfg(any(test, feature = "loading-probe"))]
                         xirius_core::io_test::before(
@@ -779,14 +808,8 @@ impl Studio {
                             ))
                             .map(|_| None);
                     }
-                    xirius_mcp::persist::run_and_persist(
-                        &mut session,
-                        &command,
-                        &args,
-                        &opts,
-                        persist,
-                    )
-                    .map(Some)
+                    xirius_mcp::persist::run_and_persist(&mut session, &command, &args, &opts)
+                        .map(Some)
                 } else if only_wait {
                     session.flush_writes();
                     Ok(None)
@@ -920,10 +943,11 @@ impl Studio {
                 }
                 return true;
             }
+            // PRJ-033: an unsaved song asks before it closes, its plugins' state now in hand.
             if matches!(save.leaving, Some(Leave::Close))
-                && self.song.session().plugin_edits_need_save()
+                && let Some(new_song) = self.save_ask()
             {
-                self.ask_unsaved(crate::unsaved::Pending::SaveClose);
+                self.ask_save(crate::unsaved::After::Close, new_song);
                 return true;
             }
             save.captured_states = !ara_late;
@@ -1152,7 +1176,8 @@ impl Studio {
                         self.keep.flash_until = 0;
                     }
                     if save.close_when_done && failures.is_empty() {
-                        self.start_leaving(Leave::Close);
+                        // The save took the plugins' state just now (PRJ-033).
+                        self.start_leaving_with(Leave::Close, false);
                     }
                 }
             }
@@ -1562,8 +1587,10 @@ mod tests {
         s.song.save_as(&root.path().join("song")).unwrap();
         s.song.simulate_slow_disk(Duration::from_millis(350));
         s.run_command("track.add.audio", serde_json::json!({"name":"pending"}));
-        let start = Instant::now();
         assert!(!s.request_close());
+        // 「保存しない」: the draft's steps are still written before the window goes (PRJ-033).
+        let start = Instant::now();
+        s.answer_save(crate::unsaved::Choice::Discard);
         assert!(start.elapsed() < Duration::from_millis(200));
         std::thread::sleep(Duration::from_millis(220));
         assert!(s.saving.as_ref().unwrap().veil());

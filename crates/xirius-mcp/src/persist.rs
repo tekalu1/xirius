@@ -5,7 +5,7 @@
 use serde_json::{Map, Value};
 use xirius_core::id::AnyId;
 use xirius_core::session::{RunOptions, RunResult, exists};
-use xirius_core::{AiPermission, CmdError, Risk, Session};
+use xirius_core::{CmdError, Session};
 
 /// The selection lives only in a session, but each command-line run is a new
 /// session. So `select.*` is kept in a small file next to the song, and the
@@ -45,32 +45,19 @@ pub fn store_selection(s: &Session) {
     }
 }
 
-/// Runs a command and, if the song changed, saves it. A person's edit always
-/// saves; an AI's only when it holds the `save` permission (its steps are in
-/// the history either way, so nothing is lost).
+/// Runs a command and keeps the selection next to the song. The command's step is in the
+/// history (the draft); `project.json` is written only by an explicit `project.save`, as in
+/// the window (AI-038).
 pub fn run_and_persist(
     s: &mut Session,
     name: &str,
     raw: &Map<String, Value>,
     opts: &RunOptions,
-    save: bool,
 ) -> Result<RunResult, CmdError> {
-    let risk = s.registry().get(name).map(|d| d.risk);
     let before = s.state.selection.clone();
     let r = s.run(name, raw, opts)?;
     if s.state.selection != before {
         store_selection(s);
-    }
-    let may_save = !opts.author.is_ai() || s.ai_permission() == AiPermission::Save;
-    if save
-        && may_save
-        && !r.dry_run
-        && r.decision.is_none()
-        && risk.is_some_and(|k| k != Risk::Read)
-        && s.dir().is_some()
-        && s.is_dirty()
-    {
-        s.save()?;
     }
     Ok(r)
 }

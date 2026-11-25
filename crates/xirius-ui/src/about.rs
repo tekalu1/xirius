@@ -2991,6 +2991,14 @@ used {} {}
         crate::shot::TestFolder::new(&format!("xirius-ui-update-{tag}-"))
     }
 
+    /// 「保存」 to 「変更を保存しますか」 when the close asks it (PRJ-033): the update goes on
+    /// after the save.
+    fn save_if_asked(s: &mut Studio) {
+        if s.save_question().is_some() {
+            s.answer_save(crate::unsaved::Choice::Save);
+        }
+    }
+
     /// A signed manifest and the three small files of a release (UI-282).
     fn signed_release(
         version: &'static str,
@@ -3803,6 +3811,7 @@ used {} {}
             if s.take_window_ask() == Some(WindowAsk::Quit) {
                 assert!(!s.close_now(), "the close waits for the check");
             }
+            save_if_asked(&mut s);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(s.leaving_ready, "the song was made ready for the close");
@@ -3947,6 +3956,7 @@ used {} {}
                 if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
                     break;
                 }
+                save_if_asked(&mut s);
                 assert_eq!(
                     started.count(),
                     0,
@@ -4040,6 +4050,7 @@ used {} {}
             {
                 break;
             }
+            save_if_asked(&mut s);
             s.idle();
             s.poll_saving();
             std::thread::sleep(std::time::Duration::from_millis(5));

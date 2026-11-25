@@ -60,7 +60,6 @@ fn preparing_blocks_commands_shortcuts_save_transport_export_and_connected_mcp()
             "track.add.audio",
             json!({"name":"blocked"}).as_object().unwrap(),
             &RunOptions::human(),
-            true
         )
         .is_err()
     );

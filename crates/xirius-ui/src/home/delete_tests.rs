@@ -490,9 +490,11 @@ fn a_screen_reader_reads_the_question_as_a_dialog_with_two_buttons_and_the_menu_
     assert!(key(&mut s, &g, "delete", NONE, None));
     let said = crate::unsaved::said(&s, &g).expect("asked");
     assert_eq!(said.title, "「d1」を削除しますか");
-    let [(back, back_at, back_goes), (delete, delete_at, delete_goes)] = said.buttons;
-    assert_eq!((back, back_goes), ("戻る", false));
-    assert_eq!((delete, delete_goes), ("削除", true));
+    let [(back, back_at), (delete, delete_at)] = said.buttons[..] else {
+        panic!("two buttons");
+    };
+    assert_eq!(back, "戻る");
+    assert_eq!(delete, "削除");
     // Both buttons lie inside the dialog, side by side.
     for at in [back_at, delete_at] {
         assert!(at.x >= said.card.x && at.right() <= said.card.right());

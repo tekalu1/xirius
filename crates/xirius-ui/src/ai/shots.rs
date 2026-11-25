@@ -76,7 +76,7 @@ fn transpose(s: &mut Studio, by: i64, opts: &RunOptions) {
     };
     let raw = json!({"ids": [clip], "by": by});
     let raw = raw.as_object().cloned().unwrap_or_default();
-    if let Err(e) = s.ai_run("note.transpose", &raw, opts, false) {
+    if let Err(e) = s.ai_run("note.transpose", &raw, opts) {
         eprintln!("note.transpose: {e}");
     }
 }

@@ -1016,6 +1016,30 @@ impl Store {
         Ok(())
     }
 
+    /// Keeps only the newest `keep` named versions called `name` (the ones explicit saves
+    /// leave, PRJ-032).
+    pub fn prune_named(&self, name: &str, keep: usize) -> CmdResult<()> {
+        let _guard = self.lock_versions()?;
+        let all = self.list_versions()?;
+        let named: Vec<&VersionInfo> = all
+            .iter()
+            .filter(|v| v.kind == VersionKind::Named && v.name == name)
+            .collect();
+        if named.len() <= keep {
+            return Ok(());
+        }
+        let drop: Vec<String> = named[..named.len() - keep]
+            .iter()
+            .map(|v| v.id.clone())
+            .collect();
+        let rest: Vec<VersionInfo> = all.into_iter().filter(|v| !drop.contains(&v.id)).collect();
+        self.write_versions(&rest)?;
+        for id in drop {
+            let _ = fs::remove_file(self.p(&format!("versions/{id}.json")));
+        }
+        Ok(())
+    }
+
     /// Copies every version into another song folder.
     pub fn copy_versions_to(&self, other: &Store) -> CmdResult<()> {
         let all = self.list_versions()?;

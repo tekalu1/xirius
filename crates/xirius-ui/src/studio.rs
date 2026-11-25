@@ -764,6 +764,8 @@ pub struct Studio {
     pub mixer: crate::mixer::Mixer,
     /// A copy or a paste of inserts waiting for what their plug-ins hold now (MIX-045).
     pub(crate) inserts_wait: Option<crate::insert_states::Wait>,
+    /// The plug-ins asked for their state for the draft (PRJ-034).
+    pub(crate) draft_pull: Option<crate::draft_states::Pull>,
     /// The plug-ins have just answered: the copy or the paste runs without asking again.
     pub(crate) inserts_read: bool,
     /// A wait was dropped with its song: the input held for it goes too (MIX-045).
@@ -810,6 +812,8 @@ pub struct Studio {
     pub(crate) open_closing: Option<crate::opening::CloseJob>,
     pub(crate) saving: Option<crate::saving::Saving>,
     pub(crate) unsaved: Option<crate::unsaved::Question>,
+    /// What 「保存…」 on a new song left waiting for the place it is saved to (PRJ-033).
+    pub(crate) save_as_after: Option<crate::unsaved::After>,
     /// UI-351: the draft the start list is deleting, until the worker has said.
     pub(crate) draft_removal: Option<crate::home::delete::Removal>,
     /// The watch on the song's file for another app's save ([`crate::other_change`], UI-289).
@@ -986,6 +990,7 @@ impl Studio {
             transport: crate::transport::Transport::new(xirius_session::output::OutputMode::None),
             mixer: crate::mixer::Mixer::default(),
             inserts_wait: None,
+            draft_pull: None,
             inserts_read: false,
             held_input_dropped: std::cell::Cell::new(false),
             inputs: crate::inmeter::InputMeters::default(),
@@ -1006,6 +1011,7 @@ impl Studio {
             toast: None,
             saving: None,
             unsaved: None,
+            save_as_after: None,
             draft_removal: None,
             opening: None,
             open_generation: 0,
@@ -3070,6 +3076,7 @@ impl Studio {
         self.mixer.heading = None;
         self.mixer.insert_drag = None;
         self.inserts_wait_drop();
+        self.draft_states_drop();
         self.mixer.key_drag = None;
         self.mixer.level_drag = None;
         self.mixer.insert_after = None;

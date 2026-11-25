@@ -59,6 +59,8 @@ pub struct OpenProgress {
     reads: AtomicU64,
     status: Mutex<OpenStatus>,
     retiring: AtomicBool,
+    /// The song starts from what was last saved, as a person opens it (PRJ-032).
+    from_saved: AtomicBool,
     blobs: Mutex<std::collections::HashMap<PathBuf, Vec<u8>>>,
     #[cfg(test)]
     hook: Mutex<Option<Hook>>,
@@ -470,6 +472,20 @@ impl OpenJob {
         Self::start_with(old, request, id, Arc::new(OpenProgress::default()))
     }
 
+    /// [`OpenJob::start`] for a person: a song folder starts from what was last saved
+    /// ([`Session::start_from_saved`]).
+    pub fn start_from_saved(
+        old: Session,
+        request: OpenRequest,
+        id: OpenId,
+    ) -> Result<Self, OpenStartError> {
+        let progress = OpenProgress {
+            from_saved: AtomicBool::new(true),
+            ..OpenProgress::default()
+        };
+        Self::start_with(old, request, id, Arc::new(progress))
+    }
+
     fn start_with(
         old: Session,
         request: OpenRequest,
@@ -616,7 +632,14 @@ impl OpenJob {
                     if delivery.same {
                         delivery.loan = old.lane.take();
                     }
-                    Session::open_inner(path, old.registry.clone(), &mut delivery.loan)
+                    let mut song =
+                        Session::open_inner(path, old.registry.clone(), &mut delivery.loan)?;
+                    if report.from_saved.load(Ordering::Relaxed)
+                        && matches!(request, OpenRequest::Song(_))
+                    {
+                        song.start_from_saved()?;
+                    }
+                    Ok(song)
                 }));
                 match built.unwrap_or_else(|_| Err(load_failed())) {
                     Ok(candidate) => delivery.candidate = Some(candidate),

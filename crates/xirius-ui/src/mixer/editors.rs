@@ -625,17 +625,14 @@ impl Studio {
         }
     }
 
-    /// Asks every plugin for its state and takes what differs from the song's into it, as one
-    /// step of the history (PLG-057). A plugin that changes its patch in its own window does
-    /// not always say so, and the song would keep the state it was opened with. For the
-    /// moments the song is written or left, and when a window closes.
+    /// Asks every plugin for its state and takes what differs from the song's into it, at the
+    /// cursor with no step of its own (PLG-057, PRJ-034). A plugin that changes its patch in
+    /// its own window does not always say so, and the song would keep the state it was opened
+    /// with. For when a window closes; a save, an open and a quit ask for themselves.
     pub(crate) fn pull_plugins(&mut self) {
-        let Some(host) = self.transport.host_mut() else {
-            return;
-        };
-        // A frame will collect the result. Save/open/quit use their explicit
-        // StatePull preflight; this helper must never spin in a window callback.
-        host.begin_pull_states();
+        // The idle poll collects the answers (`draft_states`); this never spins in a window
+        // callback. The question is kept: dropping it would take it back.
+        self.draft_states_begin();
     }
 
     /// Bring an existing window forward through the same stack queue as a newly opened editor.

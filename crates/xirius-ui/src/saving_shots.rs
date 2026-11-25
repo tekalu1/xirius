@@ -383,6 +383,15 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut 
                 _ => unreachable!(),
             }
         }
+        if state.stage == 11 && studio.borrow().unsaved.is_some() {
+            // Once the plugins are pulled, the unsaved edits ask first; Enter takes 保存, and
+            // the save waits for the slow writes (PRJ-033).
+            key(window, cx, "enter");
+        }
+        if state.stage == 12 {
+            // The save the answer started ends in a close; this picture window stays.
+            studio.borrow_mut().window_ask = None;
+        }
         let s = studio.borrow();
         let elapsed = state.started.unwrap().elapsed();
         if state.stage == 1 && state.save_started.unwrap().elapsed() < Duration::from_millis(450) {

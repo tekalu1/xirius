@@ -38,7 +38,7 @@ fn pitches(s: &Studio) -> Vec<(u8, bool)> {
 /// One run as the AI, as a call over MCP would make it.
 fn ai(s: &mut Studio, command: &str, args: Value) -> Result<RunResult, CmdError> {
     let raw = args.as_object().cloned().unwrap_or_default();
-    s.ai_run(command, &raw, &RunOptions::ai("AI"), true)
+    s.ai_run(command, &raw, &RunOptions::ai("AI"))
 }
 
 /// Opens the pop-over from the top bar and presses the cell with `action`.
