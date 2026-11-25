@@ -709,7 +709,7 @@ fn key_012_next_and_previous_channel_and_preset_have_keys_in_every_preset() {
 const REST: &[(&str, &str, &str)] = &[
     ("global", "Mod+.", "project.settings"),
     ("arrange", "Mod+Shift+G", "view.snap"),
-    ("global", "Mod+Shift+S", "track.solo.clear"),
+    ("global", "Mod+Alt+S", "track.solo.clear"),
     ("global", "Mod+Shift+M", "track.mute.clear"),
     ("arrange", "Mod+Shift+D", "select.off-tracks"),
     ("arrange", "Alt+Shift+Home", "select.span --way start"),
@@ -769,6 +769,27 @@ fn key_012_the_rest_of_the_studio_pro_table_has_its_keys_in_every_preset() {
             );
         }
     }
+}
+
+#[test]
+fn ui_378_ctrl_shift_s_saves_as_and_the_solo_clear_moves_to_ctrl_alt_s() {
+    let shared = Settings::memory().shared();
+    let mut s = session(&shared);
+    let h = RunOptions::human();
+    let key = |c: &str| Chord::parse(c, Os::Win).unwrap();
+    let look = |k: &str| {
+        let g = shared.lock().unwrap();
+        g.keymap.lookup("global", &key(k)).map(|b| b.1)
+    };
+    assert_eq!(look("Mod+Shift+S").as_deref(), Some("project.save-as"));
+    assert_eq!(look("Mod+Alt+S").as_deref(), Some("track.solo.clear"));
+    s.run_value(
+        "keymap.preset",
+        json!({"name": "studio-pro", "keep": "none"}),
+        &h,
+    )
+    .unwrap();
+    assert_eq!(look("Mod+Shift+S").as_deref(), Some("project.save-as"));
 }
 
 #[test]

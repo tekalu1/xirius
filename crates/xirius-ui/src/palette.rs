@@ -1969,7 +1969,12 @@ mod tests {
                     assert_eq!(r.key.as_deref(), Some("Space / MediaPlayPause"));
                 }
                 if r.name == "project.save-as" {
-                    assert!(r.key.is_none());
+                    // Ctrl+Shift+S (UI-378).
+                    assert!(
+                        r.key.as_deref().is_some_and(|k| k.ends_with('S')),
+                        "{:?}",
+                        r.key
+                    );
                 }
             }
             // Every key of the palette is a command of the registry.
