@@ -1,14 +1,15 @@
 //! Keeping the song while it is edited (PRJ-001, PRJ-009, PRJ-010).
 //!
-//! Every edit is already written to the song's folder, one step at a time
-//! (`Session::push_step`), so what the top bar's mark says is whether that
-//! record exists and is up to date:
+//! Every edit is written to the song's folder's history, one step at a time
+//! (`Session::push_step`): that is the draft, for a crash and the version list. Only an
+//! explicit save writes the song's file (PRJ-032), so the top bar's mark says whether the
+//! song is where it was last saved (PRJ-033):
 //!
-//! - **保存中** for [`FLASH_MS`] after an edit, an explicit save or an automatic save point, and for as long as
-//!   the session's thread is still writing them (PRJ-022);
-//! - **保存済み** when the song has a folder and nothing is failing;
-//! - **未保存** when the song has been edited and has no folder to be recorded in,
-//!   or when ARA or a built-in preset differs from the last explicit save.
+//! - **保存中** while an explicit save runs and for [`FLASH_MS`] after it;
+//! - **保存済み** when the history is at the saved step and no plugin state, ARA or built-in
+//!   preset differs from the save (undoing back to it counts);
+//! - **未保存** otherwise, and for an edited song that has no place of its own yet;
+//! - no mark for a new song nothing has been done to;
 //! - **保存できません** after a failed write, until a save succeeds (UI-288).
 //!
 //! A song nobody has saved yet gets a *draft* folder of the app's own at its first edit
@@ -19,7 +20,9 @@
 //!
 //! The automatic save point (`Session::autosave_if_due`, every 30 s) is made from the
 //! idle poll, not while a take is being recorded or an export is written: both keep the
-//! processor busy and the take is not in the song yet.
+//! processor busy and the take is not in the song yet. It holds what the plug-ins hold
+//! then: they are asked first, and the point waits for their answers (`draft_states`,
+//! PRJ-034).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -30,7 +33,7 @@ pub use xirius_session::recent::{LastOpen, RECENT_MAX, RecentList, RecentSong, r
 use crate::song::Song;
 use crate::studio::Studio;
 
-/// How long 保存中 stays after an edit, long enough to be seen (mock § 06).
+/// How long 保存中 stays after a save, long enough to be seen (mock § 06).
 pub const FLASH_MS: u64 = 450;
 type RecentReplies =
     std::cell::RefCell<Vec<std::sync::mpsc::Receiver<crate::recent_worker::Completion>>>;
@@ -40,6 +43,8 @@ pub enum SaveMark {
     Unsaved,
     Saving,
     Failed,
+    /// A new song nothing has been done to: no mark (PRJ-033).
+    Hidden,
 }
 
 #[derive(Debug, Default)]
@@ -79,6 +84,12 @@ pub struct Keep {
     /// An empty draft the song being left kept: removed once the song is really gone, not
     /// before (an open can still fail and leave the song where it was).
     pub(crate) abandon: Option<PathBuf>,
+    /// The draft of a new song the person said not to save (「保存しない」, PRJ-033): moved to
+    /// the system's trash once the song is really gone, as the empty draft above.
+    pub(crate) trash: Option<PathBuf>,
+    /// Where a test's trash goes (a test never uses the system's).
+    #[cfg(test)]
+    pub(crate) test_bin: Option<PathBuf>,
 }
 
 impl Keep {
@@ -103,20 +114,24 @@ impl Keep {
         if self.failed.is_some() || self.plugin_state_failed {
             return SaveMark::Failed;
         }
-        if song.session().plugin_edits_need_save() {
-            return SaveMark::Unsaved;
-        }
-        if song.record_dir().is_some() && self.failed.is_none() {
-            if now < self.flash_until || song.writes_pending() {
-                SaveMark::Saving
+        // Only an explicit save writes the song's file (PRJ-032): the history and its draft
+        // are not a save, so the mark follows the saved step, not the writer (PRJ-033).
+        if song.dir().is_none() {
+            // A song with no place of its own yet: nothing done, or undone back to empty, is
+            // nothing to show, as leaving it asks nothing (`save_ask`).
+            let empty = song.steps() == 0 || bare_project(&song.project());
+            return if empty && !song.session().plugin_edits_need_save() {
+                SaveMark::Hidden
             } else {
-                SaveMark::Saved
-            }
-        } else if song.steps() == 0 && self.failed.is_none() {
-            // Nothing has been done yet: nothing to lose.
-            SaveMark::Saved
-        } else {
+                SaveMark::Unsaved
+            };
+        }
+        if song.session().unsaved() {
             SaveMark::Unsaved
+        } else if now < self.flash_until {
+            SaveMark::Saving
+        } else {
+            SaveMark::Saved
         }
     }
 
@@ -451,7 +466,7 @@ impl Studio {
 
     /// What the window has, for the next start.
     fn open_now(&self) -> LastOpen {
-        if self.empty_draft().is_some() {
+        if self.empty_draft().is_some() || self.keep.trash.is_some() {
             // The draft is let go with the song: nothing is left for the next start to open.
             return LastOpen::Empty;
         }
@@ -479,6 +494,7 @@ impl Studio {
             // only in the plugins' captured state and parameters is the close's own capture,
             // not an edit made in the window (UI-354).
             self.keep.abandon = None;
+            self.keep.trash = None;
             if self.keep.closing_recent.is_some() || self.keep.recent_close_ready {
                 self.leaving_ready = false;
             }
@@ -497,15 +513,18 @@ impl Studio {
                 Err(e) => self.save_failed(&e),
             }
         }
-        if self.keep.changed(&self.song.project()) && self.song.record_dir().is_some() {
-            self.keep.flash_until = now + FLASH_MS;
-        }
+        // An edit goes to the draft, not the song's file: 保存中 flashes only for a save
+        // (PRJ-033).
+        self.keep.changed(&self.song.project());
     }
 
     /// What the idle poll does for the record: notices an edit, makes the automatic
     /// save point when it is due, and lets the flash end. True when the mark changed.
     pub fn keep_beat(&mut self, now: u64) -> bool {
         if self.input_blocked() {
+            // A save or a question asks the plug-ins for itself; an answer to the draft's
+            // question collected after it would be older than what it took (PRJ-034).
+            self.draft_states_drop();
             return false;
         }
         let before = self.keep.mark(&self.song, now);
@@ -522,13 +541,18 @@ impl Studio {
             return true;
         }
         let busy = self.transport.recording || self.export.running();
-        if !busy && self.song.record_dir().is_some() {
+        if busy {
+            self.draft_states_drop();
+        }
+        // What the plug-ins hold now goes in the draft (PRJ-034): the point waits for their
+        // answers, a beat or a few, never the window.
+        let states = !busy && self.draft_states_ready(now);
+        if states && self.song.record_dir().is_some() {
             match self.song.autosave_checked(now) {
                 Ok(true) => {
                     self.keep.autosaves += 1;
                     self.keep.auto_pending = true;
                     self.keep.auto_failed = false;
-                    self.keep.flash_until = now + FLASH_MS;
                 }
                 Ok(false) => {}
                 Err(e) => self.save_failed(&e),
@@ -582,12 +606,7 @@ impl Studio {
         if !self.song.is_draft() || !self.keep.is_draft_dir(&dir) {
             return None;
         }
-        let project = self.project();
-        let bare = project.name == crate::song::EMPTY_NAME
-            && project.tracks.values().all(|t| {
-                matches!(t.kind, xirius_core::model::TrackKind::Master) && t.clips.is_empty()
-            });
-        bare.then_some(dir)
+        bare_project(&self.project()).then_some(dir)
     }
 
     /// The song that was left is gone: its draft, if it was an empty one, goes too. Not
@@ -597,6 +616,24 @@ impl Studio {
             && self.song.record_dir().as_deref() != Some(dir.as_path())
         {
             self.delete_old_draft(&dir);
+        }
+        if let Some(dir) = self.keep.trash.take()
+            && self.song.record_dir().as_deref() != Some(dir.as_path())
+        {
+            self.trash_old_draft(&dir);
+        }
+    }
+
+    /// Whether leaving the song asks 「変更を保存しますか」 (PRJ-033), and for a song that has
+    /// never been saved (`Some(true)`: 「保存しないと、この曲は残りません」). Not for an
+    /// untouched new song, nor an empty draft (let go without asking), nor a saved song at its
+    /// save.
+    pub(crate) fn save_ask(&self) -> Option<bool> {
+        if self.song.dir().is_none() {
+            let kept = self.song.record_dir().is_some() || self.keep.root().is_some();
+            (kept && self.song.steps() > 0 && self.empty_draft().is_none()).then_some(true)
+        } else {
+            self.song.session().unsaved().then_some(false)
         }
     }
 
@@ -610,6 +647,16 @@ impl Studio {
         self.song.release();
         self.drop_abandoned_draft();
     }
+}
+
+/// A new song with nothing worth keeping: its first name, and no track but the master with no
+/// clip.
+fn bare_project(project: &xirius_core::model::Project) -> bool {
+    project.name == crate::song::EMPTY_NAME
+        && project
+            .tracks
+            .values()
+            .all(|t| matches!(t.kind, xirius_core::model::TrackKind::Master) && t.clips.is_empty())
 }
 
 /// Removes the folder of a draft (the caller has checked it is one). The song that kept it
@@ -634,6 +681,27 @@ pub(crate) fn remove_draft_folder(path: &Path) -> Result<(), String> {
     }
 }
 
+/// Moves a draft's folder to the trash; as [`remove_draft_folder`], a folder the song that
+/// kept it still holds is tried again for half a second.
+fn trash_draft_folder(path: &Path, bin: &xirius_session::cleanup::Trash) -> Result<(), String> {
+    #[cfg(any(test, feature = "loading-probe"))]
+    xirius_core::io_test::before("draft_remove", path).map_err(|e| e.to_string())?;
+    let mut tries = 0;
+    loop {
+        match bin(path) {
+            Ok(()) => return Ok(()),
+            // design-lint: allow(ui-blocking-io) PRJ-031: worker-only (the draft clean-up dispatches it).
+            Err(_) if !path.exists() => return Ok(()),
+            Err(e) if tries >= 10 => return Err(e),
+            Err(_) => {
+                tries += 1;
+                // design-lint: allow(ui-blocking-io) PRJ-031: worker-only (the draft clean-up dispatches it).
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    }
+}
+
 impl Studio {
     pub(crate) fn delete_old_draft(&mut self, dir: &Path) {
         if !self.transport.is_windowed() {
@@ -647,6 +715,47 @@ impl Studio {
             }
             self.keep.forget(dir);
         }
+    }
+
+    /// The draft of a new song the person said not to save goes to the system's trash
+    /// (PRJ-033), where it can still be taken back, and off the recent list. A failure is
+    /// logged: the folder is left where it was.
+    pub(crate) fn trash_old_draft(&mut self, dir: &Path) {
+        if !self.keep.is_draft_dir(dir) {
+            return;
+        }
+        self.keep.forget(dir);
+        let path = dir.to_owned();
+        let bin = self.draft_bin();
+        if !self.transport.is_windowed() {
+            if let Err(e) = trash_draft_folder(&path, &bin) {
+                crate::ancillary_io::log!("注意: {e}");
+            }
+            return;
+        }
+        if let Err(e) = crate::ancillary_io::dispatch(move || trash_draft_folder(&path, &bin)) {
+            self.error = Some(e);
+        }
+    }
+
+    fn draft_bin(&self) -> xirius_session::cleanup::Trash {
+        #[cfg(test)]
+        {
+            let bin = self.keep.test_bin.clone();
+            Arc::new(move |p: &Path| {
+                let bin = bin
+                    .as_ref()
+                    .ok_or_else(|| format!("試験ではごみ箱に移動しません: {}", p.display()))?;
+                // design-lint: allow(ui-blocking-io) PRJ-033: test-only bin, called from the worker like the real trash.
+                std::fs::create_dir_all(bin).map_err(|e| e.to_string())?;
+                // design-lint: allow(ui-blocking-io) PRJ-033: test-only bin, called from the worker like the real trash.
+                std::fs::rename(p, bin.join(p.file_name().unwrap_or_default()))
+                    .map_err(|e| e.to_string())
+            })
+        }
+        #[cfg(not(test))]
+        xirius_session::cleanup::trash_from_env()
+            .unwrap_or_else(|| Arc::new(xirius_session::os::trash))
     }
 
     /// The song is being left: its save or the close's recent-list step is in flight, so a
@@ -705,6 +814,18 @@ mod tests {
         assert!(s.run_command("track.add.audio", json!({ "name": name })));
     }
 
+    /// Closes the window until it may go, saying 「保存しない」 if the close asks (PRJ-033).
+    fn close_through(s: &mut Studio) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !s.request_close() {
+            assert!(std::time::Instant::now() < end, "the close never ended");
+            s.discard_if_asked();
+            s.wait_for_save();
+            s.keep.settle_recent();
+            s.poll_recent_close();
+        }
+    }
+
     fn add_builtin(
         s: &mut Studio,
         def: &xirius_params::BuiltinDef,
@@ -744,9 +865,10 @@ mod tests {
         for def in xirius_params::BUILTINS {
             added.push(add_builtin(&mut s, def));
             s.song.session().store();
+            // Adding is an edit: the history keeps it, the file waits for a save (PRJ-032).
             assert_eq!(
                 s.keep.mark(&s.song, u64::MAX),
-                SaveMark::Saved,
+                SaveMark::Unsaved,
                 "{}",
                 def.name
             );
@@ -878,9 +1000,9 @@ mod tests {
         s.keep.settle_recent();
         s.song.flush_writes();
         assert!(!s.request_close());
-        s.keep.settle_recent();
-        assert!(s.poll_recent_close());
-        assert!(s.request_close());
+        // The edit made while closing is not saved: the close asks first (PRJ-033).
+        assert!(s.save_question().is_some_and(|ask| !ask.new_song));
+        close_through(&mut s);
         s.release_song();
         let list = RecentList::in_dir(&root);
         assert_eq!(list.last_open(), LastOpen::Song(destination.clone()));
@@ -909,6 +1031,9 @@ mod tests {
                 }
                 Ok(())
             }));
+            assert!(!s.request_close());
+            // The draft's track is not saved: 「保存しない」 comes first (PRJ-033).
+            assert!(s.discard_if_asked());
             assert!(!s.request_close());
             s.keep.settle_recent();
             assert!(s.poll_recent_close());
@@ -949,6 +1074,8 @@ mod tests {
         let mut readonly = restore.1.clone();
         readonly.set_readonly(true);
         std::fs::set_permissions(&path, readonly).unwrap();
+        assert!(!s.request_close());
+        assert!(s.discard_if_asked());
         assert!(!s.request_close());
         s.keep.settle_recent();
         assert!(s.keep.owner.as_ref().unwrap().status().unwrap().is_err());
@@ -1036,6 +1163,8 @@ mod tests {
         }));
         add(&mut s, "draft");
         entered.recv_timeout(Duration::from_secs(15)).unwrap();
+        assert!(!s.request_close());
+        assert!(s.discard_if_asked());
         assert!(!s.request_close());
         assert!(!s.poll_recent_close());
         let since = Instant::now() - crate::recent_worker::CLOSE_WAIT;
@@ -1224,8 +1353,10 @@ mod tests {
     fn a_close_called_off_tells_the_recent_list_again() {
         use std::time::{Duration, Instant};
 
-        let (_tmp, mut s, _root) = kept("calledoff");
+        let (_tmp, mut s, root) = kept("calledoff");
         add(&mut s, "first");
+        // At its save, so no close asks 「変更を保存しますか」 (PRJ-033).
+        s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &root.join("song"));
         let end = Instant::now() + Duration::from_secs(15);
         while !s.request_close() {
             assert!(Instant::now() < end, "the close did not get ready");
@@ -1326,6 +1457,8 @@ mod tests {
             s.poll_recent_keep();
             assert_eq!(s.keep.owner.as_ref().unwrap().pending(), 0);
             assert!(!s.request_close());
+            assert!(s.discard_if_asked());
+            assert!(!s.request_close());
             s.keep.settle_recent();
             assert!(s.poll_recent_close());
             assert!(s.request_close());
@@ -1374,7 +1507,7 @@ mod tests {
     #[test]
     fn a_song_with_nothing_done_has_nothing_to_lose() {
         let (_tmp, s, _) = kept("nothing");
-        assert_eq!(s.keep.mark(&s.song, 1000), SaveMark::Saved);
+        assert_eq!(s.keep.mark(&s.song, 1000), SaveMark::Hidden);
     }
 
     #[test]
@@ -1419,11 +1552,9 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_flashes_saving_then_saved_with_no_save_made() {
+    fn an_edit_is_kept_in_a_draft_and_shows_unsaved_without_a_flash() {
         let (_tmp, mut s, root) = kept("flash");
-        let before = xirius_core::store::now_ms();
         add(&mut s, "a");
-        let after = xirius_core::store::now_ms();
         assert!(s.song.is_draft(), "the first edit made a draft folder");
         assert!(!s.song.is_saved() && s.song.dir().is_none());
         assert!(
@@ -1432,15 +1563,11 @@ mod tests {
                 .unwrap()
                 .starts_with(root.join("drafts"))
         );
-        // The flash runs from the edit itself: writing the draft may take a while on a busy
-        // machine, so the clock is read around the edit rather than after it.
-        let until = s.keep.flash_until;
-        assert!(
-            (before + FLASH_MS..=after + FLASH_MS).contains(&until),
-            "{before} {until} {after}"
-        );
-        assert_eq!(s.keep.mark(&s.song, until - 1), SaveMark::Saving);
-        assert_eq!(s.keep.mark(&s.song, until), SaveMark::Saved);
+        // Writing the draft is not a save (PRJ-032): no 保存中, and 未保存 until one is made.
+        assert_eq!(s.keep.flash_until, 0);
+        s.song.flush_writes();
+        assert_eq!(s.keep.mark(&s.song, 0), SaveMark::Unsaved);
+        assert_eq!(s.keep.mark(&s.song, u64::MAX), SaveMark::Unsaved);
     }
 
     #[test]
@@ -1517,7 +1644,7 @@ mod tests {
         s.song
             .versions()
             .iter()
-            .filter(|v| v.name == "自動保存")
+            .filter(|v| v.name == xirius_core::session::DRAFT_NAME)
             .count()
     }
 
@@ -1528,15 +1655,15 @@ mod tests {
         let t0 = xirius_core::store::now_ms();
         assert!(!s.keep_beat(t0 + 1_000) || s.keep.autosaves == 0);
         assert_eq!(s.keep.autosaves, 0, "not yet due");
-        // Due: one point, and the mark flashes 保存中 for it.
+        // Due: one point. A draft is not a save (PRJ-032): the mark stays 未保存.
         s.keep_beat(t0 + 31_000);
         assert_eq!((s.keep.autosaves, autosaves_in(&s)), (1, 1));
-        assert_eq!(s.keep.mark(&s.song, t0 + 31_000), SaveMark::Saving);
-        // The point is written on the writer's thread; the mark says 保存中 until it is.
+        assert_eq!(s.keep.mark(&s.song, t0 + 31_000), SaveMark::Unsaved);
         s.song.flush_writes();
+        s.keep_beat(t0 + 31_100);
         assert_eq!(
             s.keep.mark(&s.song, t0 + 31_000 + FLASH_MS),
-            SaveMark::Saved
+            SaveMark::Unsaved
         );
         // Nothing changed since: the next beats make none.
         s.keep_beat(t0 + 62_000);
@@ -1587,7 +1714,8 @@ mod tests {
         s.song.flush_writes();
         s.keep_beat(t0 + 31_100);
         assert!(s.keep.failed.is_none(), "only a point written clears it");
-        assert_eq!(s.keep.mark(&s.song, t0 + 40_000), SaveMark::Saved);
+        // The draft is written; the song is still not saved (PRJ-033).
+        assert_eq!(s.keep.mark(&s.song, t0 + 40_000), SaveMark::Unsaved);
     }
 
     #[test]
@@ -1612,10 +1740,12 @@ mod tests {
         assert!(took < slow, "{took:?}");
         let later = xirius_core::store::now_ms() + FLASH_MS + 1;
         assert!(s.song.writes_pending());
-        assert_eq!(s.keep.mark(&s.song, later), SaveMark::Saving);
+        // The draft's writes are not a save: 未保存 while they go and after (PRJ-033).
+        assert_eq!(s.keep.mark(&s.song, later), SaveMark::Unsaved);
         s.song.flush_writes();
         s.keep_beat(later);
-        assert_eq!(s.keep.mark(&s.song, later), SaveMark::Saved);
+        assert_eq!(s.keep.mark(&s.song, later), SaveMark::Unsaved);
+        assert!(s.keep.failed.is_none());
     }
 
     #[test]
@@ -1681,7 +1811,7 @@ mod tests {
             s.song.record_dir().is_none(),
             "nothing is made until the first edit"
         );
-        assert_eq!(s.save_mark(), SaveMark::Saved, "nothing to lose");
+        assert_eq!(s.save_mark(), SaveMark::Hidden, "nothing to lose");
         // The song it left is in the list and opens again as it was.
         let listed = s.keep.settled_recent();
         assert_eq!(listed.len(), 1);
@@ -1699,7 +1829,7 @@ mod tests {
         let g = s.geometry(1440.0, 860.0);
         assert!(s.key(&g, "n", true, false));
         assert!(s.opening.is_some());
-        s.wait_for_open_for_test();
+        assert!(opened_discarding(&mut s), "the track is not saved");
         assert!(s.start_shown());
         add(&mut s, "b");
         s.open_popup(
@@ -1709,7 +1839,7 @@ mod tests {
         let l = s.popup.as_ref().unwrap().layout(g.size);
         let new = l.cells.iter().find(|c| c.text == "新規").unwrap();
         assert!(s.popup_action(&g, new.action.clone().unwrap()));
-        s.wait_for_open_for_test();
+        assert!(opened_discarding(&mut s), "the same question");
         assert!(s.popup.is_none() && s.start_shown());
     }
 
@@ -1831,17 +1961,17 @@ mod tests {
             "a draft says so: {}",
             row.text
         );
+        let second = s.song.record_dir().unwrap();
         s.popup_action(&g, row.action.clone().unwrap());
         assert!(s.error.is_none(), "{:?}", s.error);
-        s.wait_for_open_for_test();
+        // The second song is not saved: the open asks first, and 「保存しない」 lets it go to
+        // the trash (PRJ-033).
+        assert!(opened_discarding(&mut s));
         assert!(s.project().tracks.values().any(|t| t.name == "first"));
         assert!(!s.project().tracks.values().any(|t| t.name == "second"));
-        // And the one it left is now the recent one.
+        assert!(root.join("bin").join(second.file_name().unwrap()).exists());
         let left = s.keep.settled_recent();
-        assert!(
-            left.iter()
-                .any(|r| r.dir != first && r.dir.starts_with(root.join("drafts")))
-        );
+        assert!(left.iter().all(|r| r.dir != second));
     }
 
     // ---- a song left with nothing in it keeps no draft
@@ -1866,40 +1996,48 @@ mod tests {
         dir
     }
 
-    fn leave_by(s: &mut Studio, exit: &str, root: &Path) {
+    /// Waits for the open, saying 「保存しない」 if it asked first (PRJ-033). Whether it did.
+    fn opened_discarding(s: &mut Studio) -> bool {
+        s.wait_for_open_for_test();
+        let asked = s.discard_if_asked();
+        if asked {
+            s.wait_for_open_for_test();
+        }
+        asked
+    }
+
+    /// Leaves the song by `exit`, saying 「保存しない」 if it asks. Whether it asked.
+    fn leave_by(s: &mut Studio, exit: &str, root: &Path) -> bool {
         use crate::saving::Leave;
-        match exit {
+        let asked = match exit {
             "open" => {
                 let other = saved_song(root, "other");
                 s.start_leaving(Leave::File(crate::studio::FileRequest::Open, other));
-                s.wait_for_open_for_test();
+                opened_discarding(s)
             }
             "new" => {
                 s.start_leaving(Leave::New);
-                s.wait_for_open_for_test();
+                opened_discarding(s)
             }
             "sample" => {
                 s.start_leaving(Leave::Sample);
-                s.wait_for_open_for_test();
+                opened_discarding(s)
             }
             "home" => {
                 assert!(s.close_to_home());
-                s.wait_for_open_for_test();
+                opened_discarding(s)
             }
             "close" => {
-                let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
-                while !s.request_close() {
-                    assert!(std::time::Instant::now() < end, "the close never ended");
-                    s.wait_for_save();
-                    s.keep.settle_recent();
-                    s.poll_recent_close();
-                }
+                let asked = !s.request_close() && s.save_question().is_some();
+                close_through(s);
                 s.release_song();
+                asked
             }
             other => panic!("{other}"),
-        }
+        };
         assert_eq!(s.error, None);
         s.keep.settle_recent();
+        asked
     }
 
     const EXITS: [&str; 5] = ["open", "new", "sample", "home", "close"];
@@ -1908,7 +2046,10 @@ mod tests {
     fn an_empty_draft_is_not_kept_when_the_song_is_left() {
         for exit in EXITS {
             let (_tmp, mut s, root, draft) = tempo_only(exit);
-            leave_by(&mut s, exit, &root);
+            assert!(
+                !leave_by(&mut s, exit, &root),
+                "{exit}: let go without asking"
+            );
             assert!(!draft.exists(), "{exit}: the draft folder is gone");
             assert!(
                 s.keep.settled_recent().iter().all(|r| r.dir != draft),
@@ -1920,8 +2061,10 @@ mod tests {
         }
     }
 
+    /// PRJ-033: a new song with something in it is the person's to keep: leaving asks, and
+    /// 「保存しない」 sends its draft to the trash and off the list.
     #[test]
-    fn a_draft_with_a_track_a_clip_or_a_name_is_kept() {
+    fn a_draft_with_a_track_a_clip_or_a_name_asks_and_goes_to_the_trash_unsaved() {
         for exit in EXITS {
             for what in ["track", "clip", "name"] {
                 let (_tmp, mut s, root, draft) = tempo_only(&format!("{exit}-{what}"));
@@ -1943,11 +2086,15 @@ mod tests {
                     }
                     _ => assert!(s.run_command("project.rename", json!({ "name": "mine" }))),
                 }
-                leave_by(&mut s, exit, &root);
-                assert!(draft.exists(), "{exit} {what}: the draft stays");
+                assert!(leave_by(&mut s, exit, &root), "{exit} {what}: asked");
+                assert!(!draft.exists(), "{exit} {what}: the draft is gone");
                 assert!(
-                    s.keep.settled_recent().iter().any(|r| r.dir == draft),
-                    "{exit} {what}: the row stays"
+                    root.join("bin").join(draft.file_name().unwrap()).exists(),
+                    "{exit} {what}: in the trash"
+                );
+                assert!(
+                    s.keep.settled_recent().iter().all(|r| r.dir != draft),
+                    "{exit} {what}: the row is gone"
                 );
             }
         }
@@ -1964,7 +2111,10 @@ mod tests {
             let id = *s.project().tracks.keys().next_back().unwrap();
             assert!(s.run_command("track.delete", json!({ "ids": [id] })));
             assert_eq!(s.project().tracks.len(), 1, "only the master is left");
-            leave_by(&mut s, exit, &root);
+            assert!(
+                leave_by(&mut s, exit, &root),
+                "{exit}: the deletion is unsaved"
+            );
             assert!(place.join("project.json").exists(), "{exit}");
             assert!(
                 s.keep

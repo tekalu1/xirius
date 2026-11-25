@@ -834,23 +834,28 @@ pub fn paint(pen: &mut Pen, layout: &BarLayout, view: &BarView) {
         crate::keep::SaveMark::Saving => ("sync", "保存中", c.ink),
         crate::keep::SaveMark::Unsaved => ("dot", "未保存", c.ink),
         crate::keep::SaveMark::Failed => ("alert", "保存できません", c.alert),
+        // A new song nothing has been done to shows no mark (PRJ-033).
+        crate::keep::SaveMark::Hidden => ("", "", c.ink),
     };
-    pen.icon_turned(
-        icon,
-        Rect::new(
-            s.x + pad,
-            s.y + (s.h - Layout::ICON_SIZE) / 2.0,
-            Layout::ICON_SIZE,
-            Layout::ICON_SIZE,
-        ),
-        ink,
-        if view.save == crate::keep::SaveMark::Saving {
-            view.save_turn
-        } else {
-            0.0
-        },
-    );
-    if s.w > Layout::ICON_BUTTON {
+    let shown = view.save != crate::keep::SaveMark::Hidden;
+    if shown {
+        pen.icon_turned(
+            icon,
+            Rect::new(
+                s.x + pad,
+                s.y + (s.h - Layout::ICON_SIZE) / 2.0,
+                Layout::ICON_SIZE,
+                Layout::ICON_SIZE,
+            ),
+            ink,
+            if view.save == crate::keep::SaveMark::Saving {
+                view.save_turn
+            } else {
+                0.0
+            },
+        );
+    }
+    if shown && s.w > Layout::ICON_BUTTON {
         pen.text(
             label,
             FontSize::Caption,

@@ -1351,14 +1351,15 @@ async fn each_permission_level_answers_the_ai_with_its_reason() {
     assert_eq!(r["result"]["isError"], false, "{r}");
     assert_eq!(notes(&song), before);
 
-    // 編集と保存・書き出し: the edit is saved with it, and saving runs.
+    // 編集と保存・書き出し: an edit is still only a step (AI-038); saving runs.
     level(&song, AiPermission::Save);
     let r = c.call("note_transpose", transpose).await;
     assert_eq!(r["result"]["isError"], false, "{r}");
-    assert!(!lock(&song).is_dirty(), "an AI with 保存 saves its edit");
+    assert!(lock(&song).is_dirty(), "only project.save writes the song");
     let r = c.call("project_save", json!({})).await;
     assert_eq!(r["result"]["isError"], false, "{r}");
     assert_eq!(payload(&r)["ok"], true, "{r}");
+    assert!(!lock(&song).is_dirty());
     // The server and its runs hold the song until they end; the song closes in the folder.
     drop(c);
     let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -1412,7 +1413,7 @@ async fn the_app_answers_each_call_on_its_own_thread() {
         ready.send(clip).unwrap();
         let mut answered = 0;
         while let Some(job) = jobs.blocking_recv() {
-            let r = run_and_persist(&mut s, &job.command, &job.raw, &job.opts, job.save);
+            let r = run_and_persist(&mut s, &job.command, &job.raw, &job.opts);
             job.answer(r);
             answered += 1;
         }

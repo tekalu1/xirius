@@ -106,13 +106,20 @@ impl Session {
 
     /// [`Session::save_as`], gathering the files first.
     pub fn save_as_collecting(&mut self, dir: impl AsRef<Path>) -> CmdResult<Collected> {
-        let dir = dir.as_ref();
+        let got = self.save_as_collecting_plain(dir.as_ref())?;
+        self.keep_save_version()?;
+        Ok(got)
+    }
+
+    /// [`Session::save_as_collecting`] without the "保存" version, for a save that changes
+    /// the song once more before it is done.
+    pub(super) fn save_as_collecting_plain(&mut self, dir: &Path) -> CmdResult<Collected> {
         let from = self.store.as_ref().map(|s| s.dir.clone());
         // The new folder has to be empty when the song moves in, so the files follow it.
-        self.save_as(dir)?;
+        self.save_as_plain(dir)?;
         let got = self.collect_files(from.as_deref(), dir)?;
         if got.relinked > 0 || !got.copied.is_empty() {
-            self.save()?;
+            self.save_plain()?;
         }
         Ok(got)
     }

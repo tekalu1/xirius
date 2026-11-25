@@ -97,7 +97,9 @@ cleanup・グルーヴ・通知・外部監視・クラッシュ記録・更新�
 
 `--ui-io-inventory` の安定した集計は [ui-io-audit.tsv](ui-io-audit.tsv) に記録する。
 
-MCP-009: 人の操作中に見るだけの Read に答える `ai/mod.rs` の `read_beside_person` で、`run_and_persist` が 1 つ増えた。窓のある通常の画面では Session の worker で読み（`saving.rs` の `read_on_worker`）、この呼び出しは窓の無い試験と offline の道だけで走る。保存はしない（`save` は false）。
+MCP-009: 人の操作中に見るだけの Read に答える `ai/mod.rs` の `read_beside_person` で、`run_and_persist` が 1 つ増えた。窓のある通常の画面では Session の worker で読み（`saving.rs` の `read_on_worker`）、この呼び出しは窓の無い試験と offline の道だけで走る。保存はしない。
+
+AI-038: `run_and_persist` は `project.json` を書かなくなった（`save` の引数を外した）。曲のファイルを書くのは、命令そのものが `project.save`・`project.save-as` のときだけ。窓の worker（`saving.rs` の `save_worker`）でも同じで、プラグインの状態を先に取るのは `io_command::captures` に載った命令だけになった。
 
 UI-376: 頭の列の下端の M・S（`head_foot.rs`）は、押したときに `track.mute.clear`・`track.solo.clear` かその `restore` を、行の M・S（`track_group.rs`）と同じ `command` → `Song::run` で 1 回呼ぶ。画面の入力からだけ呼び、描画の経路には置かない。この 1 件を集計に追加した。
 
@@ -128,6 +130,7 @@ UI-359 の鍵盤操作は `instrument/window.rs` の入力処理から
 | cleanup read → キャッシュ受領 → 確認窓 | 一覧の受領と表示予約を分ける。入力・コマンド・別 popup の意図で予約を無効にする | read 保持中の Esc と別 popup。遅着した一覧が後の画面を置き換えない |
 | export.cancel の別プロセス向け分岐 | 自分のジョブの中止通知と、ディスク上の cancel 要求を分ける。窓から後者へ直接入る場合は拒否する | 通常の command は worker、窓の scan 中止は所有中ジョブのメモリー通知だけ |
 | 開始画面の保存前の曲の削除（UI-351） → `keep::remove_draft_folder` | 確認の後に `delete_old_draft`（`is_draft_dir` の確認・`ancillary_io`・`keep.forget`）へ渡す。ロックの確認とフォルダーの削除は worker で行い、UI スレッドは結果を受け取るだけ。`keep.rs` の `exists`・`remove_dir_all`・`sleep` はこの worker の中（ファイルが掴まれている間の再試行）にある | 生きているロックの曲は消さず行を残して通知する。削除に失敗した曲も行を残して通知する（`home::delete_tests`） |
+| 新しい曲の「保存しない」（PRJ-033） → `keep::trash_draft_folder` | `trash_old_draft`（`is_draft_dir` の確認・`keep.forget`）から `ancillary_io` へ渡し、OS のごみ箱への移動と掴まれている間の再試行（`exists`・`sleep`）は worker で行う。`create_dir_all`・`rename` は試験だけのごみ箱（`cfg(test)` の `draft_bin`）にある | 移せなかったときはフォルダーを残して記録する。ごみ箱へ移ることを試験用のフォルダーで確かめる（`keep::tests`） |
 
 ## 利用者の操作と遅着結果の再監査
 

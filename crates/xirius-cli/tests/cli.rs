@@ -135,6 +135,7 @@ fn pitches(s: &Song) -> Vec<i64> {
 fn edit_dry_run_apply_and_undo_through_the_command_line() {
     let (s, ids) = song_with_notes();
     assert_eq!(pitches(&s), vec![60, 64]);
+    s.ok(&["project.save"]);
 
     // --dry-run: reports the change, touches nothing (not even the history).
     let before = s.project_json();
@@ -154,16 +155,20 @@ fn edit_dry_run_apply_and_undo_through_the_command_line() {
     assert_eq!(pitches(&s), vec![60, 64]);
     assert_eq!(s.ok(&["history.list"])["data"]["cursor"], steps_before);
 
-    // The same without --dry-run changes the song and saves it.
+    // The same without --dry-run changes the song; only project.save writes its file
+    // (AI-038), and the next run goes on from the step.
     let done = s.ok(&["note.transpose", "--by", "12", &ids[0], &ids[1]]);
     assert_eq!(done["dry_run"], false);
     assert!(done["step"].is_u64());
     assert_eq!(pitches(&s), vec![72, 76]);
+    assert_eq!(s.project_json(), before);
+    s.ok(&["project.save"]);
     assert_ne!(s.project_json(), before);
 
-    // One undo is one step, and it is saved too.
+    // One undo is one step.
     s.ok(&["history.undo"]);
     assert_eq!(pitches(&s), vec![60, 64]);
+    s.ok(&["project.save"]);
     assert_eq!(s.project_json(), before);
     s.ok(&["history.redo"]);
     assert_eq!(pitches(&s), vec![72, 76]);
@@ -173,14 +178,17 @@ fn edit_dry_run_apply_and_undo_through_the_command_line() {
 fn a_folder_gets_a_new_bus_in_one_step_through_the_command_line() {
     let s = Song::new();
     let f = s.id(&["folder.add", "--name", "Drums"]);
+    s.ok(&["project.save"]);
     let before = s.project_json();
     let done = s.ok(&["folder.bus.add", "--id", &f, "--name", "Drum bus"]);
     let bus = done["data"]["id"].as_str().unwrap().to_string();
+    s.ok(&["project.save"]);
     let song: Value = serde_json::from_slice(&s.project_json()).unwrap();
     assert!(song.to_string().contains("Drum bus"), "{song}");
     assert!(s.ok(&["track.list"])["data"].to_string().contains(&bus));
     // One undo takes both the bus and the connection away.
     s.ok(&["history.undo"]);
+    s.ok(&["project.save"]);
     assert_eq!(s.project_json(), before);
 }
 
@@ -377,8 +385,15 @@ fn an_ai_save_needs_the_save_permission() {
     // The work is not lost: the next run sees it.
     assert!(s.ok(&["track.list"])["data"].to_string().contains("Pad"));
 
+    // An edit-level AI may not write the song's file.
+    let _ = s.run(&["--as", "claude", "project.save"]);
+    assert!(!text(&s.project_json()).contains("Pad"));
+
+    // Save-level AI: an edit is still only a step; its project.save writes the file (AI-038).
     s.ok(&["ai.permission.set", "--level", "save"]);
     s.ok(&["--as", "claude", "track.add.audio", "--name", "Strings"]);
+    assert!(!text(&s.project_json()).contains("Strings"));
+    s.ok(&["--as", "claude", "project.save"]);
     let saved = text(&s.project_json());
     assert!(saved.contains("Pad") && saved.contains("Strings"));
 }

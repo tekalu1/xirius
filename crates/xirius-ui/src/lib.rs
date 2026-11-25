@@ -91,6 +91,7 @@ mod device_view;
 mod device_window;
 pub mod devices_shots;
 pub mod disabled_reason;
+mod draft_states;
 pub mod drag_scroll;
 pub mod draw;
 pub mod draw_length_shots;

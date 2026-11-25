@@ -41,11 +41,11 @@ impl Host for Mutex<Session> {
         command: &str,
         raw: &Map<String, Value>,
         opts: &RunOptions,
-        save: bool,
+        _save: bool,
     ) -> Result<RunResult, CmdError> {
         let mut s = lock(self);
         let reloaded = catch_up(&mut s)?;
-        let mut r = run_and_persist(&mut s, command, raw, opts, save)?;
+        let mut r = run_and_persist(&mut s, command, raw, opts)?;
         if let Some(event) = reloaded {
             r.events.insert(0, event);
         }

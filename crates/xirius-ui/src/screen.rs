@@ -880,10 +880,11 @@ impl Screen {
                     Ok(Ok(Some(path))) => {
                         this.studio.borrow_mut().start_file_request(request, &path)
                     }
-                    Ok(Ok(None)) => {}
+                    Ok(Ok(None)) => this.studio.borrow_mut().save_as_dropped(),
                     _ => {
-                        this.studio.borrow_mut().error =
-                            Some("ファイルを選択できませんでした".into())
+                        let mut studio = this.studio.borrow_mut();
+                        studio.save_as_dropped();
+                        studio.error = Some("ファイルを選択できませんでした".into())
                     }
                 }
                 cx.notify();

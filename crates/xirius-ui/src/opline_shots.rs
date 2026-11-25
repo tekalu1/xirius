@@ -68,7 +68,7 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             if let Some(clip) = s.roll_target().map(|t| t.clip.id.to_string()) {
                 let raw = json!({"ids": [clip], "by": 2});
                 let raw = raw.as_object().cloned().unwrap_or_default();
-                if let Err(e) = s.ai_run("note.transpose", &raw, &RunOptions::ai("AI"), false) {
+                if let Err(e) = s.ai_run("note.transpose", &raw, &RunOptions::ai("AI")) {
                     eprintln!("note.transpose: {e}");
                 }
             }

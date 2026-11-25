@@ -588,8 +588,16 @@ fn the_clock_makes_save_points_on_its_own_and_stops() {
     }
     clock.stop();
     assert_eq!(*made.lock().unwrap(), 1, "one save point for one change");
-    let n = shared.lock().unwrap().versions().unwrap().len();
-    assert_eq!(n, 1);
+    // The save's own version and one draft (PRJ-032).
+    let drafts = shared
+        .lock()
+        .unwrap()
+        .versions()
+        .unwrap()
+        .into_iter()
+        .filter(|v| v.name == xirius_core::session::DRAFT_NAME)
+        .count();
+    assert_eq!(drafts, 1);
     std::thread::sleep(Duration::from_millis(60));
     assert_eq!(*made.lock().unwrap(), 1, "stopped for good");
 }

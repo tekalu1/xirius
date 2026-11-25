@@ -123,8 +123,11 @@ impl Song {
         self.clips_of("Vox")
     }
 
-    /// The clips of the track `name` in the saved song.
+    /// The clips of the track `name` in the song, saved first (only a save writes
+    /// `project.json`, AI-038).
     fn clips_of(&self, name: &str) -> Vec<Value> {
+        let out = self.cmd(&["project.save", "--json"]).output().unwrap();
+        assert!(out.status.success(), "{}", text(&out.stderr));
         let file: Value =
             serde_json::from_slice(&std::fs::read(self.dir.join("project.json")).unwrap()).unwrap();
         file["project"]["tracks"]
@@ -169,7 +172,7 @@ fn play_records_the_armed_track_until_record_stop_and_saves_the_take() {
     let file = s.dir.join("Media/Recordings/Vox-1.wav");
     assert!(frames(&file) >= 96_000, "a bar at least");
 
-    // A recording still running when the input ends is placed and saved too; the song's end
+    // A recording still running when the input ends is placed too; the song's end
     // does not stop it.
     let r = s.play("record.start --at 1.1.0\nwait 2.1.0\n");
     let (out, err) = (text(&r.stdout), text(&r.stderr));

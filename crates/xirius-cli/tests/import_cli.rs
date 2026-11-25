@@ -49,7 +49,9 @@ impl Song {
         serde_json::from_slice(&out.stdout).expect("json output")
     }
 
+    /// The song's file after a `project.save` (only a save writes it, AI-038).
     fn project(&self) -> Value {
+        self.ok(&["project.save"]);
         serde_json::from_slice(&std::fs::read(self.dir.join("project.json")).unwrap()).unwrap()
     }
 }

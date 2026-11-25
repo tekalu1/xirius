@@ -207,7 +207,7 @@ impl Session {
             }
             PROGRESS.with(|p| *p.borrow_mut() = Some(progress.clone()));
             let _reset = Reset;
-            candidate.save_as_collecting(dir)?;
+            candidate.save_as_collecting_plain(dir)?;
             if let Some(name) = dir
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -218,8 +218,10 @@ impl Session {
                     json!({ "name": name }),
                     &RunOptions::human(),
                 )?;
-                candidate.save()?;
+                candidate.save_plain()?;
             }
+            // One "保存" version for the whole save as, with its name (PRJ-032).
+            candidate.keep_save_version()?;
             progress.check()?;
             Ok(())
         })();
@@ -413,11 +415,25 @@ mod tests {
                 )
                 .unwrap();
         }
+        // The save's own version (PRJ-032) is copied as well.
+        let versions: u64 = session
+            .store
+            .as_ref()
+            .unwrap()
+            .list_versions()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                fs::metadata(original.join(format!("versions/{}.json", v.id)))
+                    .unwrap()
+                    .len()
+            })
+            .sum();
         let progress = Arc::new(SaveProgress::default());
         session
             .save_as_cancellable(&root.path().join("copy"), progress.clone())
             .unwrap();
-        assert_eq!(progress.total.load(Ordering::Relaxed), 1024);
-        assert_eq!(progress.copied.load(Ordering::Relaxed), 1024);
+        assert_eq!(progress.total.load(Ordering::Relaxed), 1024 + versions);
+        assert_eq!(progress.copied.load(Ordering::Relaxed), 1024 + versions);
     }
 }

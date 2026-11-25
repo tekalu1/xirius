@@ -388,6 +388,11 @@ impl Studio {
         let card = self.preparing.take();
         self.skip_preparation_once = true;
         if self.request_open(crate::opening::Request::New) {
+            // The card holds every press, so nothing is asked: the changes stay in the
+            // song's draft (PRJ-033).
+            if let Some(open) = &mut self.opening {
+                open.asked = true;
+            }
             // Keep the same cleanup veil until the old Session is closed, too.
             self.preparing = card;
         } else {

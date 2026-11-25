@@ -129,7 +129,12 @@ fn the_screen_s_save_comes_in_as_one_step_before_the_next_command_and_undo_takes
     // Its own save is not another process's: no step comes in.
     let v = call(&gw, "track_add_audio", json!({"name": "M"}));
     assert!(reloads(&v).is_empty(), "{v}");
-    assert!(!lock(&song).is_dirty(), "an AI with 保存 saves its edit");
+    assert!(
+        lock(&song).is_dirty(),
+        "only project.save writes the song (AI-038)"
+    );
+    call(&gw, "project_save", json!({}));
+    assert!(!lock(&song).is_dirty());
     let at = cursor(&song);
     let v = call(&gw, "track_list", json!({}));
     assert!(reloads(&v).is_empty(), "{v}");
@@ -166,6 +171,7 @@ fn the_screen_s_save_comes_in_as_one_step_before_the_next_command_and_undo_takes
     assert!(reloads(&v).is_empty(), "{v}");
     assert_eq!(names(&song), ["A", "M"]);
     assert_eq!(cursor(&song), at);
+    call(&gw, "project_save", json!({}));
     assert_eq!(on_disk(&dir), ["A", "M"]);
     // That save is the server's own: it does not come in again.
     let v = call(&gw, "track_list", json!({}));
@@ -184,6 +190,7 @@ fn a_write_goes_on_from_the_screen_s_save_instead_of_writing_over_it() {
     Session::create(&dir, Project::new("Other")).unwrap();
     let (song, gw) = server(&dir);
     call(&gw, "track_add_audio", json!({"name": "M"}));
+    call(&gw, "project_save", json!({}));
     let mut screen = Session::open(&dir).unwrap();
     assert_eq!(names_of(screen.project()), ["M"]);
     add(&mut screen, "S");
@@ -198,6 +205,7 @@ fn a_write_goes_on_from_the_screen_s_save_instead_of_writing_over_it() {
         at + 2,
         "the screen's save, then the AI's track"
     );
+    call(&gw, "project_save", json!({}));
     assert_eq!(on_disk(&dir), ["M", "N", "S"], "the screen's track stays");
 
     // Undo goes back over the AI's track first, then over what came in.
@@ -205,6 +213,7 @@ fn a_write_goes_on_from_the_screen_s_save_instead_of_writing_over_it() {
     assert_eq!(names(&song), ["M", "S"]);
     call(&gw, "history_undo", json!({}));
     assert_eq!(names(&song), ["M"]);
+    call(&gw, "project_save", json!({}));
     assert_eq!(on_disk(&dir), ["M"]);
     drop(gw);
     drop(song);

@@ -199,6 +199,17 @@ fn other_app(state: &mut State, args: &[&str], input: Option<String>) {
     state.ended = None;
 }
 
+/// The other app adds the tracks and saves: only its save writes the song's file, and the
+/// window takes the song in from there (AI-038).
+fn other_adds(state: &mut State, names: &[&str]) {
+    let mut lines: String = names
+        .iter()
+        .map(|n| format!("track.add.audio --name \"{n}\"\n"))
+        .collect();
+    lines.push_str("project.save\n");
+    other_app(state, &["batch"], Some(lines));
+}
+
 /// True once the other app's process has ended well.
 fn other_ended(state: &mut State) -> bool {
     if let Some(child) = &mut state.child {
@@ -346,32 +357,26 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut 
                     }
                     crate::shot::run_for(&mut studio.borrow_mut(), 15.0, |s| s.transport.playing);
                     assert!(studio.borrow().transport.playing, "plays");
-                    other_app(state, &["track.add.audio", "--name", "Bass"], None);
+                    other_adds(state, &["Bass"]);
                 }
                 1 => click_hit(studio, window, cx, Hit::Toast(ToastPart::Button)),
                 2 => {
                     click(studio, window, cx, Target::Mute("Vocal"));
                     assert!(studio.borrow().song.session().is_dirty());
-                    other_app(state, &["track.add.audio", "--name", "Keys"], None);
+                    other_adds(state, &["Keys"]);
                 }
                 3 => click_hit(studio, window, cx, Hit::Toast(ToastPart::Close)),
-                4 => other_app(state, &["track.add.audio", "--name", "Pad"], None),
+                4 => other_adds(state, &["Pad"]),
                 5 => click_hit(studio, window, cx, Hit::Toast(ToastPart::Button)),
                 6 => key(window, cx, "ctrl-z"),
                 7 => key(window, cx, "ctrl-s"),
-                8 => {
-                    let lines: String = RUN
-                        .iter()
-                        .map(|n| format!("track.add.audio --name \"{n}\"\n"))
-                        .collect();
-                    other_app(state, &["batch"], Some(lines));
-                }
+                8 => other_adds(state, &RUN),
                 9 => {
                     let (x, y) = empty_lane(studio, window);
                     down(window, cx, x, y);
                     drag(window, cx, x + 40.0, y - 20.0);
                     assert!(studio.borrow().pointer_held);
-                    other_app(state, &["track.add.audio", "--name", "Lead"], None);
+                    other_adds(state, &["Lead"]);
                 }
                 10 => {
                     let (x, y) = empty_lane(studio, window);

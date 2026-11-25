@@ -37,6 +37,12 @@ pub const KEEP_LOADED: usize = 200;
 pub const AUTO_KEEP: usize = 20;
 /// The gap between automatic save points: 30 seconds (PRJ-009).
 pub const AUTO_INTERVAL_MS: u64 = 30 * 1000;
+/// The name of an automatic save point (a draft, PRJ-032).
+pub const DRAFT_NAME: &str = "下書き";
+/// The name of the version an explicit save leaves (PRJ-032).
+pub const SAVE_NAME: &str = "保存";
+/// Versions left by explicit saves kept (the oldest beyond go, PRJ-032).
+pub const SAVE_KEEP: usize = 50;
 /// How long after a file was written its size and time can be trusted to tell the next
 /// write (PRJ-025): the coarsest clock a song folder may be on (FAT) keeps times in steps of
 /// 2 seconds, and a write within the same step leaves the same time.
@@ -843,6 +849,9 @@ impl Session {
             );
             s.saved_step = s.hist.cursor;
             s.saved = Some(s.current.clone());
+            // The lane's saved step is that file now. A run that does not save (AI-038) would
+            // otherwise take the same file in again once it undoes back to the old step.
+            s.write_manifest()?;
         }
         s.set_disk_hash(Some(project_hash));
         opening::check()?;
@@ -960,6 +969,37 @@ impl Session {
             self.write_manifest()?;
         }
         Ok(())
+    }
+
+    /// Is there anything an explicit save would keep (PRJ-033)? The history has moved off the
+    /// step last saved, or a plugin's state, ARA or a built-in preset differs from the file.
+    /// A change made in place without a step (a record arm following the selection) is not.
+    pub fn unsaved(&self) -> bool {
+        self.hist.cursor != self.saved_step
+            || self.plugin_edits_need_save()
+            || self.plugin_states_differ()
+    }
+
+    /// Does an external plugin's state or a parameter differ from the saved file?
+    pub fn plugin_states_differ(&self) -> bool {
+        let Some(saved) = &self.saved else {
+            return false;
+        };
+        if Arc::ptr_eq(saved, &self.current) {
+            return false;
+        }
+        self.current.tracks.iter().any(|(id, track)| {
+            let before = saved.tracks.get(id);
+            track
+                .inserts
+                .iter()
+                .filter(|p| p.builtin().is_none())
+                .any(|p| {
+                    before
+                        .and_then(|t| t.inserts.iter().find(|old| old.id == p.id))
+                        .is_some_and(|old| old.state != p.state || old.params != p.params)
+                })
+        })
     }
 
     /// Does the song differ from what is saved?
@@ -2073,10 +2113,21 @@ impl Session {
         Ok(())
     }
 
+    /// Writes the song to its folder and leaves a "保存" version of it (PRJ-032), unless
+    /// nothing changed since the last save.
     pub fn save(&mut self) -> CmdResult<()> {
+        if self.save_plain()? {
+            self.keep_save_version()?;
+        }
+        Ok(())
+    }
+
+    /// [`Session::save`] without the version; true when the song differed from the file.
+    fn save_plain(&mut self) -> CmdResult<bool> {
         self.check_available()?;
         let store = self.store.clone().ok_or_else(no_store)?;
         self.apply_ara_cache()?;
+        let changed = self.unsaved() || self.is_dirty();
         self.writer.flush();
         self.rewrite_history(&store)?;
         store.write_project(&self.current)?;
@@ -2086,6 +2137,17 @@ impl Session {
         self.write_manifest()?;
         self.prune_blobs(store);
         self.saved = Some(self.current.clone());
+        Ok(changed)
+    }
+
+    /// The version an explicit save leaves: a named point the list shows as "保存". The oldest
+    /// beyond [`SAVE_KEEP`] go. A version that cannot be written does not undo the save.
+    fn keep_save_version(&mut self) -> CmdResult<()> {
+        let cur = self.current.clone();
+        self.new_version(SAVE_NAME, VersionKind::Named, &cur)?;
+        if let Some(store) = &self.store {
+            let _ = store.prune_named(SAVE_NAME, SAVE_KEEP);
+        }
         Ok(())
     }
 
@@ -2130,6 +2192,7 @@ impl Session {
     fn save_over(&mut self) -> CmdResult<Overwrite> {
         let store = self.store.clone().ok_or_else(no_store)?;
         self.apply_ara_cache()?;
+        let changed = self.unsaved() || self.is_dirty();
         self.writer.flush();
         let expected = self.expected_on_disk()?;
         let done = store.overwrite_project(&self.current, &expected)?;
@@ -2141,6 +2204,9 @@ impl Session {
         self.write_manifest()?;
         self.prune_blobs(store);
         self.saved = Some(self.current.clone());
+        if changed {
+            self.keep_save_version()?;
+        }
         Ok(done)
     }
 
@@ -2152,8 +2218,14 @@ impl Session {
     }
 
     pub fn save_as(&mut self, dir: impl AsRef<Path>) -> CmdResult<()> {
+        self.save_as_plain(dir.as_ref())?;
+        self.keep_save_version()
+    }
+
+    /// [`Session::save_as`] without the version.
+    fn save_as_plain(&mut self, dir: &Path) -> CmdResult<()> {
         self.check_available()?;
-        self.attach_new_store(dir.as_ref(), false)
+        self.attach_new_store(dir, false)
     }
 
     /// Keeps a song that has not been saved in a folder of its own, so its
@@ -2179,6 +2251,77 @@ impl Session {
         self.jump(self.saved_step)?;
         self.recovery = None;
         Ok(())
+    }
+
+    /// Starts the song from what was last saved (PRJ-032), as a person opening it sees it: what
+    /// was not saved is kept as a "下書き" version (once: one the same as the newest draft is not
+    /// added again), and the history goes to the step last saved, its steps after kept as redo.
+    /// The file is the truth where that step differs from it (a change made in place, or one
+    /// written by another program). Nothing moves after a crash, which goes on from the draft,
+    /// nor for a song with no saved place.
+    pub fn start_from_saved(&mut self) -> CmdResult<()> {
+        if self.recovery.is_some() || self.store.is_none() {
+            return Ok(());
+        }
+        let Some(saved) = self.saved.clone() else {
+            return Ok(());
+        };
+        if self.unsaved() {
+            let cur = self.current.clone();
+            if *cur != *saved && !self.same_as_newest_draft(&cur) {
+                self.new_version(DRAFT_NAME, VersionKind::Auto, &cur)?;
+            }
+        }
+        if self.hist.cursor != self.saved_step
+            && (self.hist.first..=self.hist.last()).contains(&self.saved_step)
+        {
+            self.jump(self.saved_step)?;
+        }
+        if self.hist.cursor == self.saved_step {
+            if *self.current != *saved {
+                let mut base = (*saved).clone();
+                base.next_id = base.next_id.max(self.hist.id_floor);
+                self.amend(|p| *p = base)?;
+            }
+        } else if *self.current == *saved {
+            self.saved_step = self.hist.cursor;
+            self.write_manifest()?;
+        } else {
+            // The step saved has fallen off the history: the file comes back as a new step.
+            let mut base = (*saved).clone();
+            base.next_id = base.next_id.max(self.hist.id_floor);
+            let changes = diff(&self.current, &base);
+            self.push_step(
+                base,
+                "project.reload",
+                json!({}),
+                &Author::Human,
+                changes.summary(),
+            );
+            self.saved_step = self.hist.cursor;
+            self.write_manifest()?;
+        }
+        self.saved = Some(self.current.clone());
+        self.auto_base = None;
+        Ok(())
+    }
+
+    /// Is `p` what the newest automatic version holds?
+    fn same_as_newest_draft(&mut self, p: &Project) -> bool {
+        let Some(store) = self.store().cloned() else {
+            return false;
+        };
+        let number = |v: &VersionInfo| v.id[1..].parse::<u64>().unwrap_or(0);
+        store
+            .list_versions()
+            .ok()
+            .and_then(|all| {
+                all.into_iter()
+                    .filter(|v| v.kind == VersionKind::Auto)
+                    .max_by_key(number)
+            })
+            .and_then(|v| store.read_listed_version(&v).ok())
+            .is_some_and(|newest| newest == *p)
     }
 
     /// The recovery notice has been answered.
@@ -2270,11 +2413,18 @@ impl Session {
         }
     }
 
+    /// Whether the interval of the automatic save point has passed at `now`: the next
+    /// [`Session::autosave_if_due`] looks whether the song changed. The window asks the
+    /// plugins for their state first (PRJ-034).
+    pub fn autosave_due(&self, now: u64) -> bool {
+        self.store.is_some() && now >= self.last_auto_ms + self.auto_interval_ms
+    }
+
     /// Makes an automatic save point when the song changed since the last one
     /// and the interval has passed. The UI calls this on a timer.
     pub fn autosave_if_due(&mut self, now: u64) -> CmdResult<Option<VersionInfo>> {
         self.check_available()?;
-        if self.store.is_none() || now < self.last_auto_ms + self.auto_interval_ms {
+        if !self.autosave_due(now) {
             return Ok(None);
         }
         let base = self.auto_base.clone().or_else(|| self.saved.clone());
@@ -2286,7 +2436,7 @@ impl Session {
             return Ok(None);
         }
         let cur = self.current.clone();
-        let info = self.new_version("自動保存", VersionKind::Auto, &cur)?;
+        let info = self.new_version(DRAFT_NAME, VersionKind::Auto, &cur)?;
         self.auto_base = Some(cur);
         self.last_auto_ms = now;
         Ok(Some(info))

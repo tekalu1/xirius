@@ -131,16 +131,22 @@ fn save_as_child() {
             if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
                 break;
             }
+            // 「保存」 to 「変更を保存しますか」 (PRJ-033): only that writes the song's file.
+            if s.save_question().is_some() {
+                s.answer_save(crate::unsaved::Choice::Save);
+            }
             assert!(Instant::now() < deadline, "hosted close watchdog");
-            assert!(s.keep.save_generation() - generation <= 4);
+            assert!(s.keep.save_generation() - generation <= 8);
             std::thread::sleep(Duration::from_millis(5));
         }
         if kind != "unsaved_close" && kind != "sabotage_close" {
             assert_eq!(s.song.steps(), steps, "close capture adds no edit step");
         }
+        // The close takes the plugins' state and asks; 「保存」 writes it (PRJ-033). An edit
+        // after each close asks again, up to the closes' limit (UI-354).
         assert_eq!(
             s.keep.save_generation() - generation,
-            if kind == "sabotage_close" { 4 } else { 1 }
+            if kind == "sabotage_close" { 8 } else { 2 }
         );
         let reopened = xirius_core::session::Session::open_with(
             root.join("original"),

@@ -904,7 +904,6 @@ fn accepted_and_refused_tokens_keep_permission_and_one_use_rules_on_the_worker()
                     .as_object()
                     .unwrap(),
                 &RunOptions::ai("fixture"),
-                false,
             )
             .unwrap();
         let token = held.decision.expect("file changes require approval").token;

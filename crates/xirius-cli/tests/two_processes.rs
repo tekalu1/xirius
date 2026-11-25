@@ -28,6 +28,14 @@ fn text(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
 
+/// Runs the command, then `project.save` in a run of its own: only a save writes
+/// `project.json` (AI-038).
+fn cli_saved(dir: &Path, args: &[&str]) -> Output {
+    let out = cli(dir, args);
+    cli(dir, &["project.save"]);
+    out
+}
+
 /// Runs `xirius --song <dir> <args> --json` to its end; it has to succeed.
 fn cli(dir: &Path, args: &[&str]) -> Output {
     let out = xirius(dir)
@@ -161,8 +169,8 @@ fn the_screen_and_the_program_each_undo_their_own_steps() {
     add(&mut g, "G1");
     g.save().unwrap();
 
-    // The program edits the song the screen has open, and saves (as it does after each command).
-    let out = cli(&dir, &["track.add.audio", "--name", "C1"]);
+    // The program edits the song the screen has open, and saves.
+    let out = cli_saved(&dir, &["track.add.audio", "--name", "C1"]);
     assert!(!text(&out.stderr).contains(CRASH), "{}", text(&out.stderr));
     assert!(
         dir.join("session.lock").is_file(),
@@ -270,7 +278,7 @@ fn plugin_state(p: &Project, plugin: &str) -> Option<String> {
         .and_then(|i| i.state.clone())
 }
 
-/// The plugin's state in `project.json` (the program saves after each command).
+/// The plugin's state in `project.json` (the tests save after each of the program's commands).
 fn saved_state(dir: &Path, plugin: &str) -> Option<String> {
     plugin_state(&Store::new(dir).read_project().unwrap(), plugin)
 }
@@ -313,7 +321,7 @@ fn clearing_up_after_a_save_leaves_the_other_processs_long_states() {
     // The program puts states of its own in, kept as blobs only its history points to.
     for seed in ["BBED", "CCEE"] {
         let state = big_state(seed);
-        cli(
+        cli_saved(
             &dir,
             &["plugin.state.set", "--id", &plugin, "--state", &state],
         );
@@ -330,14 +338,14 @@ fn clearing_up_after_a_save_leaves_the_other_processs_long_states() {
 
     // The program still goes back and forth through its own states, read from the disk. It
     // goes on from the screen's save, so the first undo takes that back (UI-289).
-    cli(&dir, &["history.undo"]);
+    cli_saved(&dir, &["history.undo"]);
     assert_eq!(saved_state(&dir, &plugin), Some(big_state("CCEE")));
-    cli(&dir, &["history.undo"]);
+    cli_saved(&dir, &["history.undo"]);
     assert_eq!(saved_state(&dir, &plugin), Some(big_state("BBED")));
-    cli(&dir, &["history.undo"]);
+    cli_saved(&dir, &["history.undo"]);
     assert_eq!(saved_state(&dir, &plugin), Some(big_state("AAEC")));
     cli(&dir, &["history.redo"]);
-    cli(&dir, &["history.redo"]);
+    cli_saved(&dir, &["history.redo"]);
     assert_eq!(saved_state(&dir, &plugin), Some(big_state("CCEE")));
 
     // And the screen through its own, from the disk too once it opens the song again.

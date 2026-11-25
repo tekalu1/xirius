@@ -600,7 +600,7 @@ impl Studio {
             return;
         }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; ai_run refuses window mode and connected jobs use the Session worker.
-        let r = self.ai_run(&job.command, &job.raw, &job.opts, job.save);
+        let r = self.ai_run(&job.command, &job.raw, &job.opts);
         job.answer(r);
     }
 
@@ -621,7 +621,6 @@ impl Studio {
             &job.command,
             &job.raw,
             &job.opts,
-            false,
         );
         job.answer(r);
     }
@@ -631,7 +630,6 @@ impl Studio {
         command: &str,
         raw: &serde_json::Map<String, serde_json::Value>,
         opts: &xirius_core::session::RunOptions,
-        save: bool,
     ) -> Result<RunResult, CmdError> {
         if self.transport.is_windowed() {
             return Err(CmdError::conflict("窓のコマンドは所有者の処理が必要です"));
@@ -642,7 +640,7 @@ impl Studio {
         let before = self.ai_before();
         let r =
             // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; ai_run refuses window mode and connected jobs use the Session worker.
-            xirius_mcp::persist::run_and_persist(self.song.session_mut(), command, raw, opts, save);
+            xirius_mcp::persist::run_and_persist(self.song.session_mut(), command, raw, opts);
         self.ai_complete(command, &r, before);
         r
     }

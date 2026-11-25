@@ -67,6 +67,8 @@ pub(crate) struct Opening {
     startup: bool,
     /// The empty song is for the start screen (「閉じる」): no sound is started for it.
     pub(crate) to_home: bool,
+    /// The person has answered 「変更を保存しますか」 for this open (PRJ-033).
+    pub(crate) asked: bool,
     closing: Result<Option<xirius_session::cleanup::Closed>, String>,
     mcp: Option<xirius_mcp::Job>,
 }
@@ -349,6 +351,7 @@ impl Studio {
             sample,
             startup: is_startup,
             to_home: false,
+            asked: false,
             closing,
             mcp: None,
         });
@@ -570,19 +573,36 @@ impl Studio {
                 self.ask_state_open();
                 return true;
             }
-            if open.to_home && !open.discard_states && self.song.session().plugin_edits_need_save()
-            {
+            // PRJ-033: the person says whether an unsaved song is saved before another takes
+            // its place; a script's open (MCP, AI) and the start's own open never ask.
+            let may_ask = open.replace
+                && !open.asked
+                && !open.discard_states
+                && !open.startup
+                && open.mcp.is_none()
+                && open.command.is_none();
+            if may_ask && let Some(new_song) = self.save_ask() {
                 let mut open = self.opening.take().unwrap();
                 open.pull = None;
-                self.ask_unsaved(crate::unsaved::Pending::SaveOpen(Box::new(open)));
+                self.ask_save(crate::unsaved::After::Open(Box::new(open)), new_song);
                 return true;
             }
+            let open = self.opening.as_mut().unwrap();
             let session = self.song.take_session_for_save();
             let started = if let Some(command) = &open.command {
                 open.pending.take();
                 OpenJob::start_prepared(session, command.clone(), open.id)
             } else {
-                OpenJob::start(session, open.pending.take().unwrap(), open.id)
+                let request = open.pending.take().unwrap();
+                // A song kept by the person starts from what was last saved (PRJ-032); a draft
+                // has nothing saved to start from and goes on where it was.
+                let from_saved = matches!(&request, OpenRequest::Song(path)
+                    if !self.keep.is_draft_dir(path));
+                if from_saved {
+                    OpenJob::start_from_saved(session, request, open.id)
+                } else {
+                    OpenJob::start(session, request, open.id)
+                }
             };
             match started {
                 Ok(job) => open.job = Some(job),
@@ -740,7 +760,15 @@ impl Studio {
         self.opening = Some(open);
     }
 
+    /// 「保存しない」: the open goes on; the changes stay in the song's draft (PRJ-033).
+    pub(crate) fn open_without_saving(&mut self, mut open: Opening) {
+        open.asked = true;
+        self.opening = Some(open);
+    }
+
     pub(crate) fn abandon_state_open(&mut self, mut open: Opening) {
+        // The song stays open: its draft is the person's again.
+        self.keep.trash = None;
         let error: CmdError = std::io::Error::from(std::io::ErrorKind::Interrupted).into();
         if let Some(command) = open.command.take() {
             let _ = command.fail(self.song.session_mut(), error.clone());
@@ -751,6 +779,7 @@ impl Studio {
     }
 
     fn open_preflight_failed(&mut self, error: CmdError) {
+        self.keep.trash = None;
         if let Some(mut open) = self.opening.take() {
             if let Some(pull) = open.pull.take() {
                 pull.cancel();

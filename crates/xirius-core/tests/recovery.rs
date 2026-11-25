@@ -155,6 +155,70 @@ fn an_automatic_save_point_does_not_move_where_the_song_was_saved() {
 }
 
 #[test]
+fn a_song_left_unsaved_opens_at_its_save_with_a_draft_and_the_rest_as_redo() {
+    let (_dir_tmp, dir) = temp_dir("left");
+    let mut s = Session::new("left");
+    run(&mut s, "track.add.audio", json!({"name": "saved"}));
+    s.save_as(&dir).unwrap();
+    for name in ["a", "b"] {
+        run(&mut s, "track.add.audio", json!({"name": name}));
+    }
+    assert!(s.unsaved());
+    // Undoing back to the save is the save (PRJ-033).
+    s.undo(2).unwrap();
+    assert!(!s.unsaved());
+    s.redo(2).unwrap();
+    assert!(s.unsaved());
+    s.flush_writes();
+    drop(s);
+    // Only a save writes the song's file (PRJ-032).
+    let file: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("project.json")).unwrap()).unwrap();
+    assert_eq!(
+        file["project"]["tracks"].as_object().map(|t| t.len()),
+        Some(2)
+    );
+
+    let mut s = Session::open(&dir).unwrap();
+    assert!(s.recovery().is_none(), "closed, not crashed");
+    s.start_from_saved().unwrap();
+    assert_eq!(track_names(&s), ["Master", "saved"]);
+    assert!(!s.unsaved());
+    let drafts: Vec<_> = s
+        .versions()
+        .unwrap()
+        .into_iter()
+        .filter(|v| v.name == xirius_core::session::DRAFT_NAME)
+        .collect();
+    assert_eq!(drafts.len(), 1, "what was not saved is a draft");
+    let kept = s.store().unwrap().read_version(&drafts[0].id).unwrap();
+    assert_eq!(kept.tracks.len(), 4);
+    s.redo(2).unwrap();
+    assert_eq!(track_names(&s), ["Master", "a", "b", "saved"]);
+    drop(s);
+    // Opened again: the same draft is not added twice.
+    let mut s = Session::open(&dir).unwrap();
+    s.start_from_saved().unwrap();
+    let again = s
+        .versions()
+        .unwrap()
+        .into_iter()
+        .filter(|v| v.name == xirius_core::session::DRAFT_NAME)
+        .count();
+    assert_eq!(again, 1);
+}
+
+#[test]
+fn after_a_crash_the_song_goes_on_from_its_draft_not_its_save() {
+    let (_dir_tmp, dir) = temp_dir("crashed-at-a");
+    kill_a_running_session(&dir);
+    let mut s = Session::open(&dir).unwrap();
+    s.start_from_saved().unwrap();
+    assert_eq!(track_names(&s), ["Master", "a", "b", "c", "saved"]);
+    assert_eq!(s.recovery().unwrap().steps, 3);
+}
+
+#[test]
 fn a_song_closed_properly_says_nothing_about_a_crash() {
     let (_dir_tmp, dir) = temp_dir("clean");
     let mut s = Session::new("clean");
