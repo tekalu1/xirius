@@ -262,9 +262,13 @@ impl Studio {
                 // A browser row may be over an independent window: its drop's plan
                 // lights there (UI-353).
                 self.browser_row_over(mods.shift);
+                let now = std::time::Instant::now();
                 if self.mixer.fx_drag.is_some() || self.browser.drag.is_some() {
-                    self.seam_moved(g, x, y, std::time::Instant::now());
+                    self.seam_moved(g, x, y, now);
                 }
+                // An audio row shows its ghost clip and seam; a device its line (UI-381).
+                self.file_ghost_moved(g, x, y, mods.shift, now);
+                self.lib_seam_moved(g, now);
                 return true;
             }
         }
@@ -308,8 +312,11 @@ impl Studio {
             return true;
         }
         self.ruler_drag_up();
+        // Alt as the files are let go of puts several end to end on one track (UI-381).
+        self.arrange.clip_drop.alt = mods.alt;
         if mods.alt && self.over == crate::independent::Over::Main && self.replace_file_up(g, x, y)
         {
+            self.clip_drop_end();
             return true;
         }
         if self.level_up()

@@ -305,11 +305,22 @@ impl Studio {
             if self.live_midi.assign.learning.take().is_some() {
                 return true;
             }
-            self.roll.cancel();
+            // A drag, a box or a menu goes first; only with none of them does Esc let go of
+            // the selection (UI-381).
+            let mut cancelled = self.roll.cancel().used;
+            cancelled |= self.input_map.zoom_rect_armed || self.input_map.zoom_box.is_some();
             self.input_map.zoom_rect_armed = false;
             self.input_map.zoom_box = None;
             if self.arrange.drag.take().is_some() {
                 self.arrange.touched();
+                cancelled = true;
+            }
+            if self.browser.file_drag.take().is_some() {
+                self.clip_drop_end();
+                cancelled = true;
+            }
+            if !cancelled {
+                self.clear_selection();
             }
             return true;
         }

@@ -57,11 +57,29 @@ impl Insertion {
         args["index"] = json!(self.index);
     }
 
+    /// The boundary it puts the track at, as the arrangement's seam names it (UI-381).
+    pub(crate) fn key(self) -> crate::arrange::clip_drop::Key {
+        (self.parent, self.index)
+    }
+
+    /// Its line across the column and the lanes, coming in as an audio file's does (UI-381).
     pub(crate) fn paint(self, pen: &mut Pen, studio: &Studio, g: &Geometry) {
         if let DropMark::Line { y, depth } = self.mark {
-            crate::arrange::paint::paint_track_seam(pen, studio, g, y, depth);
+            let grow = seam_grow(studio, self.key());
+            crate::arrange::paint::paint_track_seam_at(pen, studio, g, y, depth, grow, true);
         }
     }
+}
+
+/// How far the line at `key` has come in: the arrangement's seam times it (UI-381).
+fn seam_grow(studio: &Studio, key: crate::arrange::clip_drop::Key) -> f32 {
+    studio
+        .arrange
+        .clip_drop
+        .live
+        .look(std::time::Instant::now(), studio.ai.motion.reduced)
+        .filter(|l| l.spot == key)
+        .map_or(1.0, |l| l.grow)
 }
 
 /// What a double click and a drop off the tracks do (the first row of S38).
@@ -210,6 +228,9 @@ impl Studio {
         let Some(d) = self.browser.drag.take() else {
             return false;
         };
+        if self.arrange.clip_drop.paths.is_empty() {
+            self.arrange.clip_drop.live.clear();
+        }
         // The drag over, `over` stands for a fresh pointer again (UI-353).
         let over = std::mem::replace(&mut self.over, crate::independent::Over::Main);
         if over != crate::independent::Over::Main {
@@ -232,6 +253,47 @@ impl Studio {
             }
         }
         true
+    }
+
+    /// A held device moved: the line where it would make a track comes in and goes as an
+    /// audio file's seam does (UI-381), through the arrangement's seam. True while it moves.
+    pub(crate) fn lib_seam_moved(&mut self, g: &Geometry, now: std::time::Instant) -> bool {
+        let held = self
+            .browser
+            .drag
+            .as_ref()
+            .filter(|d| d.moved && d.preset.is_none())
+            .map(|d| d.at);
+        let reduced = self.ai.motion.reduced;
+        let key = match held {
+            Some((x, y)) if self.over == crate::independent::Over::Main => {
+                match self.instrument_drop_at(g, x, y) {
+                    Drop::Insert(insertion) => Some(insertion.key()),
+                    Drop::New if !self.tree().rows.is_empty() => {
+                        Some((Parent::Root, self.project().root.len()))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let cand = key.map(|k| crate::mixer::seam::CandOf {
+            track: (),
+            spot: k,
+            at: (g.column.x, g.column.y),
+            mid: true,
+        });
+        let live = &mut self.arrange.clip_drop.live;
+        if let Some((x, y)) = held {
+            live.feed(now, x, y);
+        }
+        live.dragging(now, cand, None);
+        live.advance(now, reduced, |_, k| cand.filter(|c| c.spot == k), None);
+        let moving = live.moving(now, reduced);
+        if moving {
+            self.arrange.touched();
+        }
+        moving
     }
 
     fn instrument_drop_at(&self, g: &Geometry, x: f32, y: f32) -> Drop {
@@ -346,12 +408,18 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             }
         }
         Drop::New => {
-            // Under the last row, where the new track goes.
+            // Under the last row, where the new track goes: the same line as a seam's.
             if let Some(last) = tree.rows.last() {
-                let y = g.column.y + last.bottom() - studio.scroll.1;
-                pen.mask(tracks, |pen| {
-                    pen.fill(Rect::new(tracks.x, y, tracks.w, 2.0), c.ring);
-                });
+                let grow = seam_grow(studio, (Parent::Root, studio.project().root.len()));
+                crate::arrange::paint::paint_track_seam_at(
+                    pen,
+                    studio,
+                    g,
+                    last.bottom(),
+                    0,
+                    grow,
+                    false,
+                );
             }
             NEW_LABEL.to_string()
         }

@@ -82,10 +82,19 @@ fn a_file_dragged_onto_an_audio_track_is_a_clip_there_and_one_undo_takes_it_away
     assert!(s.lib_move(x, y));
     let d = s.browser.file_drag.clone().unwrap();
     assert!(d.moved);
-    let name = s.project().tracks[&track].name.clone();
-    assert_eq!(drop_label(&s, &g, &d), Some(format!("{name} に置く")));
+    // An audio file has no chip: its ghost clip on the track says where it goes (UI-381).
+    assert_eq!(drop_label(&s, &g, &d), None);
+    assert!(s.file_ghost_moved(&g, x, y, false, std::time::Instant::now()));
+    assert_eq!(
+        s.arrange.clip_drop.aim,
+        Some(crate::arrange::clip_drop::Aim::Track {
+            track,
+            at: s.clip_drop_at(&g, x, false)
+        })
+    );
 
     assert!(s.lib_up(&g, x, y, false));
+    assert!(s.arrange.clip_drop.paths.is_empty(), "the ghost goes");
     s.settle_browser_import();
     s.browser.settle_prefs_io();
     s.follow_browser();

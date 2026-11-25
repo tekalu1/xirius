@@ -75,19 +75,15 @@ impl Studio {
     }
 
     /// Audio files put in at a point (a drop, or a drag from the browser). True when one was.
+    /// They go where the ghost showed them going (UI-381): onto the audio track under the
+    /// point, or onto new tracks at the seam; nowhere over the ruler. The start is on the grid
+    /// unless Shift is held; with Alt the files go end to end on one track.
     pub fn import_audio_at(&mut self, g: &Geometry, x: f32, y: f32, paths: &[&Path]) -> bool {
-        let at = self.drop_tick(g, x, y);
-        let mut onto = self.audio_track_at(g, x, y);
-        let mut placed = Vec::new();
-        for path in paths {
-            match self.import_audio(path, onto.take(), at) {
-                Ok(p) => placed.push(p),
-                Err(e) => self.error = Some(e),
-            }
-        }
-        let n = placed.len();
-        self.tell_placed(placed, format!("音声ファイル {n} 個を置きました"));
-        n > 0
+        let (shift, alt) = (self.arrange.clip_drop.shift, self.arrange.clip_drop.alt);
+        let aim = self.clip_drop_aim(g, x, y, shift);
+        let done = self.place_audio(aim, paths, alt);
+        self.clip_drop_end();
+        done
     }
 
     /// Says what was put in: the one line, or `many` for more. When a clip could follow the

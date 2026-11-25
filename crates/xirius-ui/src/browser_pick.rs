@@ -28,17 +28,15 @@ pub struct FileDrag {
     pub moved: bool,
 }
 
-/// What letting go of a dragged file does there, as the chip says it.
+/// What letting go of a dragged MIDI file does there, as the chip says it. An audio file has
+/// no chip: its ghost clip shows where it goes (UI-381).
 pub fn drop_label(studio: &Studio, g: &Geometry, d: &FileDrag) -> Option<String> {
     let (x, y) = d.at;
-    if studio.start_shown() || !(g.lanes.contains(x, y) || g.column.contains(x, y)) {
-        return None;
-    }
     if crate::drop_audio::is_audio(&d.path)
-        && let Some(t) = studio.audio_track_at(g, x, y)
+        || studio.start_shown()
+        || !(g.lanes.contains(x, y) || g.column.contains(x, y))
     {
-        let name = &studio.project().tracks[&t].name;
-        return Some(format!("{name} に置く"));
+        return None;
     }
     Some("新しいトラックに置く".into())
 }
@@ -202,6 +200,8 @@ impl Studio {
             // Let go on any other window in front, or off every window of ours: it ends
             // with nothing put down, and says nothing.
             Over::Window(..) | Over::Elsewhere => {}
+            // An audio file goes where its ghost showed it, and nowhere when the pointer said
+            // it would not be taken (UI-381).
             Over::Main => {
                 if d.moved
                     && !self.start_shown()
@@ -211,9 +211,41 @@ impl Studio {
                 }
             }
         }
+        if !self.arrange.clip_drop.from_os {
+            self.clip_drop_end();
+        }
         self.unlight_window_drag();
         self.over = Over::Main;
         true
+    }
+
+    /// A held file row moved to `(x, y)`: over the main window an audio file shows its ghost
+    /// clip and the seam it would open (UI-381); anywhere else they go. True when the screen
+    /// changed.
+    pub(crate) fn file_ghost_moved(
+        &mut self,
+        g: &Geometry,
+        x: f32,
+        y: f32,
+        shift: bool,
+        now: std::time::Instant,
+    ) -> bool {
+        let path = self
+            .browser
+            .file_drag
+            .as_ref()
+            .filter(|d| d.moved && crate::drop_audio::is_audio(&d.path))
+            .map(|d| d.path.clone());
+        match path {
+            Some(path) if self.over == Over::Main && !self.input_blocked() => {
+                self.clip_drop_moved(g, x, y, shift, now, &[path], false)
+            }
+            _ if !self.arrange.clip_drop.from_os && !self.arrange.clip_drop.paths.is_empty() => {
+                self.clip_drop_end();
+                true
+            }
+            _ => false,
+        }
     }
 
     /// What the OS's file window gave for a request of the browser or of 「ファイルから…」.
@@ -289,13 +321,19 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// The dragged file at the pointer, with what letting go does. Only while the pointer is
-/// over the main window: over a device window, that window's own chip says it (UI-353).
+/// The dragged MIDI file at the pointer, with what letting go does. Only while the pointer is
+/// over the main window: over a device window, that window's own chip says it (UI-353). An
+/// audio file shows its ghost clip instead (UI-381, `arrange::clip_drop::paint`).
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     if studio.over != Over::Main {
         return;
     }
-    let Some(d) = studio.browser.file_drag.as_ref().filter(|d| d.moved) else {
+    let Some(d) = studio
+        .browser
+        .file_drag
+        .as_ref()
+        .filter(|d| d.moved && !crate::drop_audio::is_audio(&d.path))
+    else {
         return;
     };
     let c = pen.c;

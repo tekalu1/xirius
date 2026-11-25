@@ -68,3 +68,5 @@ Windows 11 で `cargo build -p xirius-ui --release` が通り、窓が開いて�
 - 窓の当たり判定（`WindowControlArea`）は、最後のマウスの位置から決まる。位置を動かさずに `WM_NCHITTEST` だけ送っても、前の答えが返る。
 - GPUI のカーソルは OS の形（`CursorStyle`）だけで、自前の絵を渡せない。道具のカーソルは窓を `SetWindowSubclass` で包んで出す（`pointer_os.rs`）。道具の絵を求められている間だけ `WM_SETCURSOR` に自分で答え、それ以外は GPUI の窓手続きへ渡す（GPUI は 1 行も変えない）。
 - GPUI は `reset_cursor_style` で、窓が「ホバー中」（OS の `WM_MOUSEMOVE` で立つ旗）のときしか形を OS に渡さない。表示の外に置いた窓（`--park`）は一度もホバーにならないので、`NotAllowed`・`Arrow`・`Crosshair` のような GPUI 側の形は、OS が持つカーソルの握りからは見えない。試験は、窓が決めた形（`pointer::of_studio`）と、自前の絵を渡していないこと（`pointer_os::handed` が `None`）で確かめる。道具の絵は窓が自分で渡すので、OS の握り（`SetCursor` に渡った値）まで見る。
+- ボタンを押すと GPUI は `SetCapture` でマウスを握り、離すまで OS は `WM_SETCURSOR` を送らない。GPUI の形の変更（`WM_USER+1`）は、カーソルの有り無しが変わるときしか `SetCursor` を呼ばない。そのため押したまま引く間に形を変えても（置けない所の `OperationNotAllowed`、UI-381）画面に出ない。`pointer_os.rs` が、握っている間だけ GPUI の新しい形を自分で `SetCursor` に渡す。
+- OS（エクスプローラー）から引くファイルは OLE のドラッグで、カーソルは引いている側が `DragOver` の答えから描く。GPUI の `DragOver`（`gpui-pre-windows-0.3.8/src/window.rs`）はいつも `DROPEFFECT_COPY` を返すので、置けない所（ルーラー・テンポの行）でも「+ コピー」の形のまま。置けない所ではゴーストを出さず、離しても何もしない（UI-381）。禁止の形を出すには GPUI を直す要がある。

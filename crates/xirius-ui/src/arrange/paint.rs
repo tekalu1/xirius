@@ -837,18 +837,43 @@ pub(crate) fn paint_track_seam(
     edge: f32,
     depth: usize,
 ) {
+    paint_track_seam_at(pen, studio, g, edge, depth, 1.0, true);
+}
+
+/// The insertion line across the track column and the lanes (UI-381), drawn to `grow` of its
+/// length from the middle as it comes in, with the plus in the middle of the column when
+/// `plus` is set. `edge` is the height relative to the top of the column, as drawn.
+pub(crate) fn paint_track_seam_at(
+    pen: &mut Pen,
+    studio: &Studio,
+    g: &Geometry,
+    edge: f32,
+    depth: usize,
+    grow: f32,
+    plus: bool,
+) {
     let y = g.column.y + edge - studio.scroll.1;
     let left = g.column.x + 2.0 + depth.min(Layout::INDENT_MAX_DEPTH) as f32 * Layout::INDENT;
-    let right = g.column.right() - 2.0;
+    let right = g.lanes.right().max(g.column.right()) - 2.0;
+    let len = (right - left).max(0.0) * grow.clamp(0.0, 1.0);
     let (diameter, icon) = crate::mixer::seam::plus_size(false);
-    pen.mask(g.column, |pen| {
-        crate::mixer::seam::paint_line_plus(
-            pen,
-            (left + right) / 2.0,
-            y,
-            right - left,
-            Some((diameter, icon, 1.0)),
-        );
+    let area = Rect::new(
+        g.column.x,
+        g.column.y,
+        (g.lanes.right() - g.column.x).max(g.column.w),
+        g.column.h,
+    );
+    pen.mask(area, |pen| {
+        crate::mixer::seam::paint_line_plus(pen, (left + right) / 2.0, y, len, None);
+        if plus {
+            crate::mixer::seam::paint_line_plus(
+                pen,
+                g.column.x + g.column.w / 2.0,
+                y,
+                0.0,
+                Some((diameter, icon, grow.clamp(0.0, 1.0))),
+            );
+        }
     });
 }
 

@@ -3,13 +3,22 @@
 use crate::{drop_audio::Placed, studio::Studio};
 use serde_json::{Value, json};
 use std::{collections::VecDeque, path::PathBuf, sync::Arc};
-use xirius_core::{Args, ExtContext, id::TrackId, model::Project};
+use xirius_core::{
+    Args, ExtContext,
+    id::TrackId,
+    model::{Parent, Project},
+};
 use xirius_session::{import::Plan, read_jobs::ReadJobs};
 struct Import {
     path: PathBuf,
     track: Option<TrackId>,
     at: i64,
     midi: bool,
+    /// Where a new track goes: the folder (or the root) and the place in it (UI-381).
+    into: Option<(Parent, usize)>,
+    /// Goes on the track the last import put its clip on, right after that clip (Alt while
+    /// dropping several files); `track`, `at` and `into` stand when that import failed.
+    chain: bool,
     reservation: Arc<xirius_core::in_use::Uses>,
 }
 struct Pending {
@@ -31,6 +40,8 @@ pub(crate) struct ImportIo {
     placed: Vec<Placed>,
     pub many: Option<String>,
     session: Option<u64>,
+    /// The track and the end of the clip the last import placed, for one chained after it.
+    last: Option<(TrackId, i64)>,
 }
 impl ImportIo {
     fn follow_session(&mut self, session: u64) -> bool {
@@ -41,6 +52,7 @@ impl ImportIo {
             self.queue.clear();
             self.placed.clear();
             self.many = None;
+            self.last = None;
         }
         self.session = Some(session);
         changed
@@ -54,6 +66,20 @@ impl Studio {
         at: i64,
         midi: bool,
     ) -> Result<(), String> {
+        self.queue_browser_import_with(path, track, at, midi, None, false)
+    }
+
+    /// Like [`Studio::queue_browser_import`], with the place of a new track and whether the
+    /// clip goes right after the last import's (UI-381).
+    pub(crate) fn queue_browser_import_with(
+        &mut self,
+        path: PathBuf,
+        track: Option<TrackId>,
+        at: i64,
+        midi: bool,
+        into: Option<(Parent, usize)>,
+        chain: bool,
+    ) -> Result<(), String> {
         self.browser_import_io
             .follow_session(self.song.session().uses_id());
         if self.browser_import_io.queue.len() >= 64 {
@@ -66,6 +92,8 @@ impl Studio {
             track,
             at,
             midi,
+            into,
+            chain,
             reservation,
         });
         Ok(())
@@ -85,6 +113,7 @@ impl Studio {
             };
             let p = self.browser_import_io.pending.take().unwrap();
             changed = true;
+            self.browser_import_io.last = None;
             if !Arc::ptr_eq(&p.project, &self.project()) || p.dir != self.song.dir() {
                 self.error = Some("読み込み中に曲が変わったため、素材の配置を中止しました".into());
             } else {
@@ -118,6 +147,14 @@ impl Studio {
                             });
                             if let Some((t, c)) = made {
                                 self.select_clip_here(t, c);
+                                let end = project.tracks.get(&t).and_then(|track| {
+                                    track
+                                        .clips
+                                        .iter()
+                                        .find(|x| x.id == c)
+                                        .map(|x| x.start + x.length)
+                                });
+                                self.browser_import_io.last = end.map(|e| (t, e));
                             }
                             let mut data = plan.output.data;
                             data["song_bpm"] = json!(
@@ -145,7 +182,15 @@ impl Studio {
                 }
             }
         }
-        if let Some(import) = self.browser_import_io.queue.pop_front() {
+        if let Some(mut import) = self.browser_import_io.queue.pop_front() {
+            match self.browser_import_io.last {
+                Some((t, end)) if import.chain => {
+                    import.track = Some(t);
+                    import.at = end;
+                    import.into = None;
+                }
+                _ => {}
+            }
             let project = self.project();
             let work = project.clone();
             let dir = self.song.dir();
@@ -198,6 +243,18 @@ impl Studio {
                 }
                 if let Some(track) = import.track {
                     args["track"] = json!(track.to_string());
+                } else if let Some((parent, index)) = import.into {
+                    args["into"] = match parent {
+                        Parent::Root => json!("root"),
+                        Parent::Folder(f) => json!(f.to_string()),
+                    };
+                    let len = match parent {
+                        Parent::Root => work.root.len(),
+                        Parent::Folder(f) => {
+                            work.folders.get(&f).map_or(index, |x| x.children.len())
+                        }
+                    };
+                    args["index"] = json!(index.min(len));
                 }
                 let def = registry
                     .get(name)

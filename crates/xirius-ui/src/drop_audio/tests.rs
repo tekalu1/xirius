@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use xirius_core::id::Node;
 use xirius_core::model::ClipBody;
 
 use super::*;
@@ -109,27 +110,42 @@ fn on_an_audio_track_the_clip_goes_onto_it_at_the_bar_and_elsewhere_onto_a_new_t
     let x = s.tick_x(&g, bar3 + 600);
     assert_eq!(s.audio_track_at(&g, x, y), Some(audio));
 
+    // The start is on the grid, as a clip moved there would be (UI-381), not the bar's start.
+    let at = s.snap_tick(s.tick_at(&g, x), false);
+    assert_eq!(s.clip_drop_at(&g, x, false), at);
+    assert!(at > bar3 && at <= bar3 + 600 + i64::from(p.ppq), "{at}");
+
     let vox = tone(&dir, "Vox.wav", 0.5);
     let tracks = p.tracks.len();
     assert!(s.drop_files(&g, x, y, std::slice::from_ref(&vox)));
     s.settle_browser_import();
     assert_eq!(s.error, None);
     assert_eq!(s.project().tracks.len(), tracks);
-    assert_eq!(
-        audio_clips(&s),
-        [(audio, vox.to_string_lossy().into(), bar3)]
-    );
+    assert_eq!(audio_clips(&s), [(audio, vox.to_string_lossy().into(), at)]);
     assert_eq!(s.notice_text(), Some("「Vox」を置きました"));
     assert_eq!(s.selected_clip.map(|c| c.0), Some(audio));
 
-    // Over an instrument track: a new audio track. Two files: the second on its own too.
+    // Over an instrument track: new audio tracks right below it (UI-381). Two files: the
+    // second on its own too, below the first.
     let row = *s.tree().row_of(RowKind::Track(midi)).unwrap();
     let y = s.row_y(&g, &row) + row.h / 2.0;
     assert_eq!(s.audio_track_at(&g, x, y), None);
+    let (parent, i) = s.project().find_node(Node::Track(midi)).unwrap();
     let hat = tone(&dir, "Hat 140bpm.wav", 0.25);
     assert!(s.drop_files(&g, x, y, &[hat.clone(), vox.clone()]));
     s.settle_browser_import();
     assert_eq!(s.project().tracks.len(), tracks + 2);
+    let names: Vec<String> = s.project().children(parent)[i + 1..i + 3]
+        .iter()
+        .map(|n| match n {
+            Node::Track(t) => s.project().tracks[t].name.clone(),
+            Node::Folder(_) => String::new(),
+        })
+        .collect();
+    assert!(
+        names[0].starts_with("Hat 140bpm") && names[1].starts_with("Vox"),
+        "{names:?}"
+    );
     // The hat has a tempo of its own: the line offers to make it follow the song's.
     let toast = s.toast_shown().expect("the line stays with the offer");
     assert_eq!(toast.text, "音声ファイル 2 個を置きました");

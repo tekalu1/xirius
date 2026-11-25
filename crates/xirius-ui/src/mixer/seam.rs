@@ -69,11 +69,20 @@ fn since(a: Instant, b: Instant) -> Duration {
     b.saturating_duration_since(a)
 }
 
-/// The seam on show on a strip.
+/// A seam under the pointer, on a strip.
+pub type Cand = CandOf<TrackId, Spot>;
+/// What a frame draws of a strip's seam.
+pub type Look = LookOf<Spot>;
+/// The seam of the mixer's strips.
+pub type Live = LiveOf<TrackId, Spot>;
+
+/// The seam on show: `T` holds the seams (a strip; nothing, for the arrangement's rows) and
+/// `S` is the seam in it. The arrangement's drop of a file times its seams the same way
+/// (UI-381).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Shown {
-    pub track: TrackId,
-    pub spot: Spot,
+pub struct ShownOf<T, S> {
+    pub track: T,
+    pub spot: S,
     /// With the ＋ (the pointer's), or the line alone (a row on its way).
     pub plus: bool,
     pub drag: bool,
@@ -85,18 +94,18 @@ pub struct Shown {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Wait {
+struct Wait<T, S> {
     since: Instant,
-    track: TrackId,
-    spot: Spot,
+    track: T,
+    spot: S,
     at: (f32, f32),
 }
 
 /// A seam under the pointer.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Cand {
-    pub track: TrackId,
-    pub spot: Spot,
+pub struct CandOf<T, S> {
+    pub track: T,
+    pub spot: S,
     /// Where its line starts and its height.
     pub at: (f32, f32),
     /// In the middle of the row, not in the columns of its power mark and close.
@@ -105,8 +114,8 @@ pub struct Cand {
 
 /// What a frame draws of the seam.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Look {
-    pub spot: Spot,
+pub struct LookOf<S> {
+    pub spot: S,
     pub plus: bool,
     /// 0 to 1: the line's length from the middle, and the ＋'s size and weight.
     pub grow: f32,
@@ -115,18 +124,31 @@ pub struct Look {
     pub going: bool,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Live {
+#[derive(Clone, Debug)]
+pub struct LiveOf<T, S> {
     samples: VecDeque<(Instant, f32, f32)>,
     out: Option<(Instant, f32, f32)>,
-    pub shown: Option<Shown>,
-    wait: Option<Wait>,
+    pub shown: Option<ShownOf<T, S>>,
+    wait: Option<Wait<T, S>>,
     leave: Option<Instant>,
     /// The line is pressed: the ＋ sinks.
     pub pressed: bool,
 }
 
-impl Live {
+impl<T, S> Default for LiveOf<T, S> {
+    fn default() -> Self {
+        Self {
+            samples: VecDeque::new(),
+            out: None,
+            shown: None,
+            wait: None,
+            leave: None,
+            pressed: false,
+        }
+    }
+}
+
+impl<T: Copy + PartialEq, S: Copy + PartialEq> LiveOf<T, S> {
     /// The pointer at `(x, y)` at `now`.
     pub fn feed(&mut self, now: Instant, x: f32, y: f32) {
         self.samples.push_back((now, x, y));
@@ -175,11 +197,11 @@ impl Live {
     }
 
     /// The seam that shows and can be pressed.
-    pub fn live(&self) -> Option<&Shown> {
+    pub fn live(&self) -> Option<&ShownOf<T, S>> {
         self.shown.as_ref().filter(|s| s.going.is_none())
     }
 
-    pub fn spot_on(&self, track: TrackId) -> Option<Spot> {
+    pub fn spot_on(&self, track: T) -> Option<S> {
         self.live().filter(|s| s.track == track).map(|s| s.spot)
     }
 
@@ -192,7 +214,14 @@ impl Live {
     }
 
     /// Starts the seam `c` at once; from another seam, it slides.
-    fn start(&mut self, now: Instant, c: &Cand, plus: bool, drag: bool, from: Option<(f32, f32)>) {
+    fn start(
+        &mut self,
+        now: Instant,
+        c: &CandOf<T, S>,
+        plus: bool,
+        drag: bool,
+        from: Option<(f32, f32)>,
+    ) {
         self.wait = None;
         self.leave = None;
         match (&mut self.shown, from) {
@@ -203,7 +232,7 @@ impl Live {
                 s.drag = drag;
             }
             _ => {
-                self.shown = Some(Shown {
+                self.shown = Some(ShownOf {
                     track: c.track,
                     spot: c.spot,
                     plus,
@@ -221,7 +250,7 @@ impl Live {
     pub fn pointer(
         &mut self,
         now: Instant,
-        cand: Option<Cand>,
+        cand: Option<CandOf<T, S>>,
         from: Option<(f32, f32)>,
         hold: bool,
     ) {
@@ -264,7 +293,7 @@ impl Live {
     }
 
     /// A row on its way: its seam shows at once, without the ＋.
-    pub fn dragging(&mut self, now: Instant, cand: Option<Cand>, from: Option<(f32, f32)>) {
+    pub fn dragging(&mut self, now: Instant, cand: Option<CandOf<T, S>>, from: Option<(f32, f32)>) {
         match cand {
             Some(c)
                 if self
@@ -290,7 +319,7 @@ impl Live {
         &mut self,
         now: Instant,
         reduced: bool,
-        again: impl Fn(TrackId, Spot) -> Option<Cand>,
+        again: impl Fn(T, S) -> Option<CandOf<T, S>>,
         from: Option<(f32, f32)>,
     ) {
         if let Some(w) = self.wait
@@ -339,7 +368,7 @@ impl Live {
     }
 
     /// What to draw at `now`.
-    pub fn look(&self, now: Instant, reduced: bool) -> Option<Look> {
+    pub fn look(&self, now: Instant, reduced: bool) -> Option<LookOf<S>> {
         let s = self.shown.as_ref()?;
         let grow = match s.going {
             Some((at, from)) if reduced => {
@@ -358,7 +387,7 @@ impl Live {
             }
             _ => (0.0, 0.0),
         };
-        Some(Look {
+        Some(LookOf {
             spot: s.spot,
             plus: s.plus,
             grow,
@@ -393,8 +422,8 @@ impl Live {
     }
 
     #[cfg(test)]
-    pub fn show_for_test(&mut self, now: Instant, track: TrackId, spot: Spot, plus: bool) {
-        let c = Cand {
+    pub fn show_for_test(&mut self, now: Instant, track: T, spot: S, plus: bool) {
+        let c = CandOf {
             track,
             spot,
             at: (0.0, 0.0),

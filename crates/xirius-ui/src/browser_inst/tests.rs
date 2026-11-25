@@ -296,7 +296,31 @@ fn a_drop_between_folder_children_uses_the_reorder_boundary() {
             mark
         }
     );
-    drag(&mut s, &g, "Sampler", at);
+    let (hit, x, y) = item(&s, &g, "Sampler");
+    s.press(&g, hit);
+    assert!(s.lib_grab(&g, hit, x, y, 1));
+    assert!(s.lib_move(at.0, at.1));
+    // The line comes in through the seam an audio file uses (UI-381): at once, as a row's.
+    let now = std::time::Instant::now();
+    assert!(s.lib_seam_moved(&g, now));
+    let live = s
+        .arrange
+        .clip_drop
+        .live
+        .live()
+        .expect("the line is on show");
+    assert_eq!(live.spot, insertion.key());
+    let grow = |s: &Studio, ms: u64| {
+        s.arrange
+            .clip_drop
+            .live
+            .look(now + std::time::Duration::from_millis(ms), false)
+            .unwrap()
+            .grow
+    };
+    assert!(grow(&s, 0) < 0.01 && grow(&s, 200) > 0.99);
+    assert!(s.lib_up(&g, at.0, at.1, false));
+    assert!(s.arrange.clip_drop.live.live().is_none(), "the line goes");
     let Some(RowKind::Track(new)) = s.selected_row else {
         panic!("select the new track")
     };

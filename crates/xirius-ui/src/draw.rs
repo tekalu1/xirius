@@ -639,6 +639,7 @@ pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     paint_playhead(pen, studio, g);
     paint_head_meters(pen, studio, g);
     crate::arrange::paint::overlay(pen, studio, g);
+    crate::arrange::clip_drop::paint(pen, studio, g);
     crate::track_name::paint(pen, studio, g);
     crate::zoom_input::paint(pen, studio);
     crate::ai::overlay(pen, studio, g);
@@ -1073,8 +1074,10 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
             let state = studio.line_state(bar);
             let color = pen.c.line[LineState::ALL.iter().position(|s| *s == state).unwrap_or(0)];
             let x = g.column.x + bar.x;
-            let y0 = g.column.y + bar.y0 - studio.scroll.1;
-            let y1 = g.column.y + bar.y1 - studio.scroll.1;
+            // A file held over a seam opens a gap there (UI-381): the line stretches over it.
+            let gap = |y: f32| studio.arrange.clip_drop.shift_of(y);
+            let y0 = g.column.y + bar.y0 + gap(bar.y0) - studio.scroll.1;
+            let y1 = g.column.y + bar.y1 + gap(bar.y1) - studio.scroll.1;
             pen.shape(
                 Rect::new(x, y0, StructureLine::THICKNESS, y1 - y0),
                 color,
@@ -1131,8 +1134,9 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
                     if cr.right() < g.lanes.x || cr.x > g.lanes.right() {
                         continue;
                     }
-                    let selected = studio.selected_clip == Some((t, clip.id))
-                        || studio.arrange.clips.contains(&(t, clip.id));
+                    // The color comes from the selection alone (UI-381): the clip the editor
+                    // shows (`selected_clip`) keeps its plain face once the selection is gone.
+                    let selected = studio.arrange.clips.contains(&(t, clip.id));
                     // The take that plays carries how many takes lie under it (REC-006).
                     let takes = takes_under(&stacks, clip);
                     // The waveform stands as tall as the clip plays (UI-310).
@@ -1144,7 +1148,7 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
                         studio.wave_zoom,
                         cr.x,
                     );
-                    paint_clip(pen, track, clip, cr, selected, takes, &height, studio);
+                    paint_clip(pen, track, clip, cr, selected, takes, &height, studio, None);
                     crate::arrange::speed::paint_mark(pen, studio, clip.id, cr);
                     crate::arrange::clip_loop::paint_mark(pen, studio, clip, cr);
                 }
@@ -1917,8 +1921,11 @@ pub(crate) fn takes_under(
         .filter(|n| *n > 1)
 }
 
+/// One clip in the lanes. `ghost` is the see-through clip of a file being dragged (UI-381): the
+/// face at that opacity, no border or marks, the name, and the waveform once its peaks are
+/// made.
 #[allow(clippy::too_many_arguments)]
-fn paint_clip(
+pub(crate) fn paint_clip(
     pen: &mut Pen,
     track: &Track,
     clip: &xirius_core::model::Clip,
@@ -1927,8 +1934,46 @@ fn paint_clip(
     takes: Option<usize>,
     height: &crate::wave::Height,
     studio: &Studio,
+    ghost: Option<f32>,
 ) {
     let c = pen.c;
+    if let Some(alpha) = ghost {
+        pen.round(r, c.clip.opacity(alpha), Radius::Clip);
+        let color = color_of(c, track).opacity(alpha);
+        pen.mask(r, |pen| {
+            let pad = Space::X1.px();
+            let name_h = 16.0;
+            let name_r = Rect::new(r.x + pad, r.y + 1.0, (r.w - pad * 2.0).max(0.0), name_h);
+            pen.mask(name_r, |pen| {
+                // design-lint: allow(translucent-text-surface) ドラッグ中の影のクリップで、置く前の目安として薄い面に名前を重ねる
+                pen.text(
+                    &clip.name,
+                    FontSize::Caption,
+                    Weight::Medium,
+                    c.ink,
+                    name_r,
+                    Align::Left,
+                );
+            });
+            let inner = Rect::new(
+                r.x + pad,
+                r.y + name_h + 1.0,
+                (r.w - pad * 2.0).max(0.0),
+                (r.h - name_h - pad - 1.0).max(0.0),
+            );
+            // Only peaks already made: a file not read yet shows no hatch.
+            if let ClipBody::Audio { file, offset, .. } = &clip.body
+                && let Some(path) = crate::wave::source(studio.song().dir().as_deref(), file)
+                && matches!(
+                    crate::wave::look(&path, &studio.song().peak_store()),
+                    crate::wave::Look::Ready(_)
+                )
+            {
+                crate::wave::paint(pen, studio, clip, file, *offset, r, inner, color, height);
+            }
+        });
+        return;
+    }
     let muted = studio.clip_muted_shown(clip.id, clip.muted);
     let faint = |x: Hsla| if muted { x.opacity(0.4) } else { x };
     // Selection is the face's brightness, never a ring (UI-007).

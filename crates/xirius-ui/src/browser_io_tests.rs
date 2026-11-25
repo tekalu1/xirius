@@ -156,7 +156,9 @@ fn actual_idle_and_browser_callbacks_do_not_wait_for_each_io_route() {
             }
             _ => {
                 let g = s.geometry(1440.0, 860.0);
-                assert!(s.drop_files(&g, 0.0, 0.0, &[samples.join("pad_44k.wav")]));
+                // On the lanes: off the tracks a file is not taken (UI-381).
+                let (x, y) = (g.lanes.x + g.lanes.w / 2.0, g.lanes.y + g.lanes.h / 2.0);
+                assert!(s.drop_files(&g, x, y, &[samples.join("pad_44k.wav")]));
                 s.poll_browser_import();
             }
         }

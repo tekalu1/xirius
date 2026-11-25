@@ -35,10 +35,15 @@ impl Studio {
         let changed = self.drop_over != over
             || (!over
                 && (self.drop_dawproject.is_some()
+                    || (self.arrange.clip_drop.from_os
+                        && !self.arrange.clip_drop.paths.is_empty())
                     || self.instruments.preview.is_some()
                     || self.instruments.drop_on.is_some()));
         self.drop_over = over;
         if !over {
+            if self.arrange.clip_drop.from_os {
+                self.clip_drop_end();
+            }
             self.drop_dawproject = None;
             self.instruments.preview = None;
             self.instruments.drop_on = None;
@@ -66,7 +71,37 @@ impl Studio {
         self.instruments.drop_layers = shift;
         let named = self.drag_names(paths);
         let planned = self.window_drag(g, x, y, paths, shift);
-        self.drop_hover(true) | named | planned
+        let ghost = self.files_ghost(g, x, y, paths, shift);
+        self.drop_hover(true) | named | planned | ghost
+    }
+
+    /// Audio files from another app over the arrangement show where they land, as from the
+    /// browser (UI-381). What a device window, a `.dawproject` or the groove takes shows none.
+    fn files_ghost(
+        &mut self,
+        g: &Geometry,
+        x: f32,
+        y: f32,
+        paths: &[PathBuf],
+        shift: bool,
+    ) -> bool {
+        let audio: Vec<PathBuf> = paths
+            .iter()
+            .filter(|p| crate::drop_audio::is_audio(p))
+            .cloned()
+            .collect();
+        let taken = self.instruments.own_surface()
+            || self.instruments.drop_on.is_some()
+            || paths
+                .iter()
+                .any(|p| xirius_core::dawproject::is_dawproject(p))
+            || self.groove_over(g, x, y);
+        if audio.is_empty() || taken {
+            let had = !self.arrange.clip_drop.paths.is_empty();
+            self.clip_drop_end();
+            return had;
+        }
+        self.clip_drop_moved(g, x, y, shift, std::time::Instant::now(), &audio, true)
     }
 
     /// Files from another app dropped at `(x, y)`: [`Studio::drop_files`], all of them the
@@ -92,25 +127,29 @@ impl Studio {
         self.instruments.dragged = Default::default();
         // A `.dawproject` opens as a new song (EXP-006), wherever it falls.
         if self.drop_dawproject_file(paths) {
+            self.clip_drop_end();
             return true;
         }
         if self.groove_drop(g, x, y, paths) {
+            self.clip_drop_end();
             return true;
         }
         // On a Sampler's or a Drum Kit's window they are its samples (UI-333, UI-334).
         if self.window_drop(g, x, y, paths) {
             self.drop_over = false;
+            self.clip_drop_end();
             return true;
         }
         // A drop an independent window did not take stays there: nothing under it gets it
         // (UI-353; a lane of the main window's geometry is not under this surface).
         if self.instruments.own_surface() {
             self.drop_over = false;
+            self.clip_drop_end();
             return true;
         }
         self.drop_over = false;
         let at = self.drop_tick(g, x, y);
-        // Audio files become audio clips (UI-075).
+        // Audio files become audio clips (UI-075), where the ghost showed them (UI-381).
         let audio: Vec<&Path> = paths
             .iter()
             .map(PathBuf::as_path)

@@ -103,6 +103,11 @@ fn on_the_lanes_the_clip_starts_at_the_bar_under_the_drop() {
         .find(|c| c.id == clip)
         .unwrap();
     assert_eq!(clip.start, bar3);
+    // A MIDI file keeps the bar's start; an audio file's start is on the grid, and anywhere
+    // with Shift (UI-381).
+    let free = s.tick_at(&g, x);
+    assert_eq!(s.clip_drop_at(&g, x, true), free);
+    assert_eq!(s.clip_drop_at(&g, x, false), s.snap_tick(free, false));
     // Off the lanes it goes to the head.
     assert_eq!(s.drop_tick(&g, g.column.x + 5.0, y), 0);
     let _ = std::fs::remove_dir_all(&dir);

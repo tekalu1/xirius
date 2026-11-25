@@ -1401,9 +1401,10 @@ impl Studio {
         same.then_some(at)
     }
 
-    /// Top of a row on screen.
+    /// Top of a row on screen. A file held over a seam pushes the rows under it down by the
+    /// gap it opens (UI-381).
     pub fn row_y(&self, g: &Geometry, row: &Row) -> f32 {
-        g.column.y + row.y - self.scroll.1
+        g.column.y + row.y + self.arrange.clip_drop.shift_of(row.y) - self.scroll.1
     }
 
     // ---------------------------------------------------------------- hits

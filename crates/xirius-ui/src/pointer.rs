@@ -158,7 +158,10 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
     if let Some(cursor) = studio.ruler_grab.as_ref().and_then(|grab| grab.cursor()) {
         return pointer(cursor, studio.crosshair);
     }
-    if studio.lock_hovered(g).is_some() || studio.insert_drag_refused(g) {
+    if studio.lock_hovered(g).is_some()
+        || studio.insert_drag_refused(g)
+        || studio.clip_drop_refused()
+    {
         return Pointer::style(CursorStyle::OperationNotAllowed);
     }
     if studio.head_fader.dragging.is_some()

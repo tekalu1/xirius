@@ -326,6 +326,8 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             s.file_grab(g, Hit::Browser(BrowserHit::File(i)), fx, fy, 1);
             s.file_move((fx + x) / 2.0, (fy + y) / 2.0);
             s.file_move(x, y);
+            // Its ghost clip on the track says where it goes (UI-381).
+            s.file_ghost_moved(g, x, y, false, Instant::now());
         }
         5 => {
             let Some((x, y)) = s.browser.file_drag.as_ref().map(|d| d.at) else {

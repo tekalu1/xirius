@@ -28,6 +28,9 @@ use crate::tree::{LANE_H, Row, RowKind};
 
 #[cfg(test)]
 mod alt_tool_tests;
+pub mod clip_drop;
+#[cfg(test)]
+mod clip_drop_tests;
 pub mod clip_loop;
 pub(crate) mod clipfx;
 pub mod clipfx_paint;
@@ -113,6 +116,9 @@ pub struct Arrange {
     pub stroke: Vec<(f32, f32, Mods)>,
     /// The transform frame round the range (AUT-010: Alt+T, or 「自由変形」 in its menu).
     pub frame: Option<range_trim::RangeFrame>,
+    /// An audio file dragged over the arrangement: its ghost clip, and the seam it opens
+    /// (UI-381).
+    pub clip_drop: clip_drop::ClipDrop,
 }
 
 impl Default for Arrange {
@@ -142,6 +148,7 @@ impl Default for Arrange {
             clicks: 1,
             stroke: Vec::new(),
             frame: None,
+            clip_drop: clip_drop::ClipDrop::default(),
         }
     }
 }
@@ -1143,7 +1150,10 @@ impl Studio {
             self.point_press(&spot, if deletes { Tool::Eraser } else { tool }, press_mods);
         }
         let used = match spot {
-            Spot::None => return false,
+            Spot::None => {
+                self.bottom_press(g, x, y, mods.shift);
+                return false;
+            }
             // The upper loop band never locates the playhead.
             Spot::Loop(LoopGrip::New) => true,
             Spot::Section { .. } | Spot::Band => true,
@@ -1518,6 +1528,41 @@ impl Studio {
             }
         }
         true
+    }
+
+    /// Lets go of the selected clips and ranges, as a click on an empty lane does (UI-381).
+    /// The clip the editor shows (`selected_clip`, UI-313) stays. True when something was
+    /// selected.
+    pub(crate) fn clear_selection(&mut self) -> bool {
+        let had = !self.arrange.clips.is_empty()
+            || self.arrange.range.is_some()
+            || !self.arrange.ranges.is_empty();
+        self.arrange.clips.clear();
+        self.arrange.range = None;
+        self.arrange.ranges.clear();
+        if had {
+            self.arrange.touched();
+        }
+        had
+    }
+
+    /// A press on the empty part under the last row (`Spot::None` in the column or the
+    /// lanes): it lets go of the selection as a click on an empty lane does (UI-381). Shift
+    /// keeps the clips, as it does there.
+    fn bottom_press(&mut self, g: &Geometry, x: f32, y: f32, shift: bool) {
+        if self.popup.is_some() || !(g.column.contains(x, y) || g.lanes.contains(x, y)) {
+            return;
+        }
+        if self.tree().row_at(y - g.column.y + self.scroll.1).is_some() {
+            return;
+        }
+        if shift {
+            self.arrange.range = None;
+            self.arrange.ranges.clear();
+            self.arrange.touched();
+        } else {
+            self.clear_selection();
+        }
     }
 
     /// A press and release without moving.

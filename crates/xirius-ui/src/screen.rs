@@ -733,6 +733,8 @@ impl Screen {
         }
         let g = geometry(&studio, window);
         let (x, y) = in_body(window.mouse_position());
+        // Alt puts several audio files end to end on one track (UI-381).
+        studio.arrange.clip_drop.alt = window.modifiers().alt;
         if studio.files_landed(&g, x, y, paths.paths(), window.modifiers().shift) {
             cx.notify();
         }
@@ -1742,10 +1744,12 @@ impl Render for Screen {
             }
             let menu_animating = studio.context_hover_tick(&g, std::time::Instant::now());
             let seam_moving = studio.seam_tick(&g, std::time::Instant::now());
+            let drop_moving = studio.clip_drop_tick(&g, std::time::Instant::now());
             if studio.tick()
                 || self.loading_windows.has_pending()
                 || menu_animating
                 || seam_moving
+                || drop_moving
                 || studio.motion.moving()
                 || crate::wait::pending()
                 || crate::repaint_shots::still_frames()

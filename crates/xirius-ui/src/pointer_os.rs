@@ -20,6 +20,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     DeleteObject, ScreenToClient,
 };
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetCapture;
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, GetWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateIconIndirect, GetClientRect, GetCursorPos, GetIconInfo, GetMessageExtraInfo, HTCLIENT,
@@ -246,12 +247,35 @@ unsafe extern "system" fn subclass(
     }
     // SAFETY: the next procedure of this window, with the message as it came.
     let result = unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
-    if msg == GPUI_CURSOR_CHANGED && ours != 0 && over_client(hwnd) {
-        // GPUI has just set its own shape for the pointer; ours goes over it.
-        // SAFETY: as above.
-        unsafe { SetCursor(ours as _) };
+    if msg == GPUI_CURSOR_CHANGED {
+        // SAFETY: a plain query of the thread's capture.
+        let captured = unsafe { GetCapture() } == hwnd;
+        if let Some(cursor) = after_change(ours, lparam, captured, || over_client(hwnd)) {
+            // SAFETY: a cursor of ours or the system's shape GPUI loaded.
+            unsafe { SetCursor(cursor as _) };
+        }
     }
     result
+}
+
+/// The cursor to set once GPUI has changed the shape it wants (`lparam`, 0 for none). A tool's
+/// picture goes over GPUI's. While a button is held the window has the mouse captured and the
+/// system sends no `WM_SETCURSOR`, so GPUI's new shape (a drop refused in the middle of a drag,
+/// UI-381) is set here or it would wait for the button to be let go.
+fn after_change(
+    ours: isize,
+    lparam: LPARAM,
+    captured: bool,
+    over: impl FnOnce() -> bool,
+) -> Option<isize> {
+    let wanted = if ours != 0 {
+        ours
+    } else if captured && lparam != 0 {
+        lparam
+    } else {
+        return None;
+    };
+    over().then_some(wanted)
 }
 
 #[cfg(test)]
@@ -311,5 +335,18 @@ mod tests {
         assert_eq!(handed(hwnd), None);
         // SAFETY: our own window.
         unsafe { DestroyWindow(hwnd as HWND) };
+    }
+
+    #[test]
+    fn a_shape_changed_mid_drag_is_set_while_the_mouse_is_captured() {
+        // A tool's picture always goes over GPUI's, over the window only.
+        assert_eq!(after_change(7, 3, false, || true), Some(7));
+        assert_eq!(after_change(7, 3, true, || false), None);
+        // A held button: the system asks for no cursor, so GPUI's new one is set at once.
+        assert_eq!(after_change(0, 3, true, || true), Some(3));
+        // No button held: the system asks on the next move, as usual.
+        assert_eq!(after_change(0, 3, false, || true), None);
+        // GPUI hid the pointer: nothing to hand on.
+        assert_eq!(after_change(0, 0, true, || true), None);
     }
 }

@@ -104,10 +104,13 @@ fn the_import_script_puts_real_files_and_takes_them_back() {
                 let g = s.geometry(1440.0, 860.0 - xirius_design::Layout::TOP_BAR_H);
                 let d = s.browser.file_drag.clone().expect("held");
                 assert!(d.moved);
-                let label = crate::browser_pick::drop_label(&s, &g, &d).unwrap();
+                // No chip: the ghost clip lands on an audio track the song has (UI-381).
+                assert_eq!(crate::browser_pick::drop_label(&s, &g, &d), None);
+                let aim = s.arrange.clip_drop.aim;
                 assert!(
-                    label.ends_with(" に置く") && !label.starts_with("新しい"),
-                    "{label}"
+                    matches!(aim, Some(crate::arrange::clip_drop::Aim::Track { track, .. })
+                        if s.project().tracks[&track].kind == xirius_core::model::TrackKind::Audio),
+                    "{aim:?}"
                 );
             }
             "m06-dropped" => {
