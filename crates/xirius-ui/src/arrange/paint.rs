@@ -990,9 +990,10 @@ pub fn cursor(studio: &Studio) -> Option<Cursor> {
             Tool::Mute => Cursor::Mute,
             Tool::Audition => Cursor::Audition,
             Tool::Range => Cursor::Range,
+            // The middle of a clip keeps the arrow, held too (UI-382): no hand over every clip.
             _ => match grip {
                 Grip::Left | Grip::Right | Grip::Corner => Cursor::ResizeH,
-                Grip::Body => Cursor::Move,
+                Grip::Body => Cursor::Arrow,
             },
         },
         Spot::Fx { part, .. } => match part {

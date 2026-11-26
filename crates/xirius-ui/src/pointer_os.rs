@@ -19,12 +19,13 @@ use windows_sys::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS,
     DeleteObject, ScreenToClient,
 };
-use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetCapture;
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, GetWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateIconIndirect, GetClientRect, GetCursorPos, GetIconInfo, GetMessageExtraInfo, HTCLIENT,
-    ICONINFO, SendMessageW, SetCursor, WM_MOUSEMOVE, WM_SETCURSOR, WM_USER, WindowFromPoint,
+    ICONINFO, SM_CXCURSOR, SendMessageW, SetCursor, WM_MOUSEMOVE, WM_SETCURSOR, WM_USER,
+    WindowFromPoint,
 };
 
 use crate::pointer::{Shape, picture};
@@ -54,11 +55,29 @@ pub fn from_pen_or_touch() -> bool {
     extra & 0xFFFF_FF00 == 0xFF51_5700
 }
 
-/// The size of a cursor at the window's scale: 32 pixels at 96 dpi.
+/// The size of a cursor at the window's scale: the box the system draws its own cursors in
+/// (UI-382), so a picture of ours is as big as the arrow and the hand beside it.
 pub fn size_for(hwnd: isize) -> usize {
     // SAFETY: a plain query on a window handle.
     let dpi = unsafe { GetDpiForWindow(hwnd as HWND) };
-    (32 * dpi.max(96) as usize / 96).clamp(32, 128)
+    size_at(dpi)
+}
+
+/// The system's cursor box at `dpi` (48 pixels at 175 % on most machines, not 32 × 1.75).
+pub fn size_at(dpi: u32) -> usize {
+    let dpi = dpi.max(96);
+    // SAFETY: a plain query of a system metric.
+    let system = unsafe { GetSystemMetricsForDpi(SM_CXCURSOR, dpi) };
+    box_size(dpi, system)
+}
+
+/// The box from the system's answer, or 32 at 96 dpi when it gives none.
+fn box_size(dpi: u32, system: i32) -> usize {
+    if system > 0 {
+        (system as usize).clamp(16, 256)
+    } else {
+        (32 * dpi as usize / 96).clamp(32, 128)
+    }
 }
 
 /// The cursor of `shape` at `size` pixels, made on first use and kept.
@@ -335,6 +354,20 @@ mod tests {
         assert_eq!(handed(hwnd), None);
         // SAFETY: our own window.
         unsafe { DestroyWindow(hwnd as HWND) };
+    }
+
+    #[test]
+    fn the_cursor_box_is_the_systems_at_every_scale() {
+        for dpi in [96, 120, 144, 168, 192] {
+            // SAFETY: a plain query of a system metric.
+            let system = unsafe { GetSystemMetricsForDpi(SM_CXCURSOR, dpi) };
+            assert!(system > 0, "{dpi}: the system answers");
+            assert_eq!(size_at(dpi), system as usize, "{dpi}");
+        }
+        // No answer: 32 at 96 dpi, as before.
+        assert_eq!(box_size(168, 0), 56);
+        assert_eq!(box_size(96, 0), 32);
+        assert_eq!(box_size(168, 48), 48);
     }
 
     #[test]
