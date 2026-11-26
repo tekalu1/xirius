@@ -1,7 +1,7 @@
 #[test]
 fn command_reference_matches_the_complete_registry() {
     let expected = xirius_core::commands::docs::markdown(&xirius_session::commands::registry());
-    let actual = include_str!("../../../docs/commands.md").replace("\r\n", "\n");
+    let actual = include_str!("../../../../docs/commands.md").replace("\r\n", "\n");
     let line = actual
         .lines()
         .zip(expected.lines())

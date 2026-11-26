@@ -6956,7 +6956,7 @@ title = "曲を作る流れを、xirius のコマンド（1 コマンド 1 プ�
 area = "ARC"
 phase = "v1"
 source = "mockups/rev4-spec.md § 確かめ方"
-done_when = "crates/xirius-cli/tests/song_flow.rs が、テンポと拍子・音源のトラック・ノートを置く・動かす・クオンタイズ・ドラム・音のファイルの読み込み・分割・ループ・フェード・音量・パン・インサート・センド・オートメーション・マーカー・バウンス・フリーズ・保存・開き直し・WAV・MP3・DAWproject の書き出し・頭までの取り消しとやり直しを、CLI と MCP（--no-device）の両方で流し、各段の答えと曲の中身が同じになる。違ってよいのは AI が呼んだ印（ノートの ai・保存の控え）と、MCP が書き出しをジョブで返す形だけ"
+done_when = "crates/xirius-cli/tests/it/song_flow.rs が、テンポと拍子・音源のトラック・ノートを置く・動かす・クオンタイズ・ドラム・音のファイルの読み込み・分割・ループ・フェード・音量・パン・インサート・センド・オートメーション・マーカー・バウンス・フリーズ・保存・開き直し・WAV・MP3・DAWproject の書き出し・頭までの取り消しとやり直しを、CLI と MCP（--no-device）の両方で流し、各段の答えと曲の中身が同じになる。違ってよいのは AI が呼んだ印（ノートの ai・保存の控え）と、MCP が書き出しをジョブで返す形だけ"
 status = "done"
 
 [[item]]
@@ -7319,7 +7319,7 @@ title = "プラグインの全件再スキャンで、スキャン用の子が�
 area = "PLG"
 phase = "v1"
 source = "1.0-msi-checks.md § PLG-060（CLI の plugin.rescan --full で 442 件すべて失敗し、キャッシュが 0 件になった実機の確認）"
-done_when = "xirius.exe 自身が __scan-plugin の子になり（他のファイルを隣に要らない）、スキャン用プログラムの探し方は XIRIUS_PLUGIN_SCAN・自身（CLI・画面が起動時に指定）・隣の xirius-plugin-scan・xirius・xirius-ui の順。子がすべて起動できない、または 8 件以上開いて半数超が失敗したときは、キャッシュを書かずに理由 1 行の Err を返す（tests/scan.rs、xirius-cli の tests/cli.rs）。実機の release の CLI で plugin.rescan --full が 441 バンドル・680 件・失敗 12 件（タイムアウト）になる"
+done_when = "xirius.exe 自身が __scan-plugin の子になり（他のファイルを隣に要らない）、スキャン用プログラムの探し方は XIRIUS_PLUGIN_SCAN・自身（CLI・画面が起動時に指定）・隣の xirius-plugin-scan・xirius・xirius-ui の順。子がすべて起動できない、または 8 件以上開いて半数超が失敗したときは、キャッシュを書かずに理由 1 行の Err を返す（tests/scan.rs、xirius-cli の tests/it/cli.rs）。実機の release の CLI で plugin.rescan --full が 441 バンドル・680 件・失敗 12 件（タイムアウト）になる"
 status = "done"
 
 [[item]]
@@ -8772,7 +8772,7 @@ source = "2026-11-26 の持ち主の承認（試験の監査の §7 の 4・判�
 after = ["ARC-048"]
 done_when = "まず xirius-core の tests/ の統合試験を tests/it/main.rs の mod にまとめ（1 ファイル 1 モジュール、試験の名前は <ファイル>::<試験>）、手元のビルドとリンクの時間・試験の実行ファイルの数と大きさ・main の rust の build と shard の時間を前後で測る。縮むなら、実行ファイルの多いクレートから同じ形に広げる。窓を開く試験・別のプロセスを起こして互いに邪魔する試験・harness = false の試験は分けたまま残し、理由を書く。試験の名前を指す所（scripts/ci_tests.py・scripts/release_ci_gate.py・docs）は名前で直す。試験は減らさない"
 status = "partial"
-remaining = "xirius-core・xirius-session・xirius-engine・xirius-ui のほかのクレート"
+remaining = "xirius-core・xirius-session・xirius-engine・xirius-ui・xirius-cli のほかのクレート"
 
 [[item]]
 id = "UI-371"
