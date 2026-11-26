@@ -1189,6 +1189,34 @@ impl Studio {
         }
     }
 
+    /// The pointer's shape while the palette is open, as [`Self::palette_press`] reads it: the
+    /// hand on the ✖ and on a row that runs, the I-beam on the search words.
+    pub(crate) fn palette_pointer(&self, g: &Geometry, x: f32, y: f32) -> gpui::CursorStyle {
+        let Some(p) = &self.palette else {
+            return gpui::CursorStyle::Arrow;
+        };
+        let l = p.layout(g.size);
+        if p.form.is_none() {
+            if crate::search_box::clear_hit(l.search, Space::X4.px(), &p.field, x, y) {
+                return gpui::CursorStyle::PointingHand;
+            }
+            if l.search.contains(x, y) {
+                return gpui::CursorStyle::IBeam;
+            }
+        }
+        let runs = l
+            .rows
+            .iter()
+            .find(|(_, r)| r.contains(x, y))
+            .and_then(|(i, _)| p.hits().get(*i).map(|&k| p.rows[k].enabled))
+            .unwrap_or(false);
+        if runs {
+            gpui::CursorStyle::PointingHand
+        } else {
+            gpui::CursorStyle::Arrow
+        }
+    }
+
     /// A press while the palette is open: a row runs, outside closes it.
     pub fn palette_press(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
         let Some(p) = &self.palette else {

@@ -37,6 +37,8 @@ const ARROW: &[&str] = &[
     // A heading of the mixer's strip only opens its menu with the right button.
     "Mixer::Heading::Insert",
     "Mixer::Heading::Instrument",
+    // A command of the palette that cannot run now.
+    "Palette::Row::Off",
 ];
 
 /// The kind of a thing from its `Debug`: its names, without ids, numbers or strings
@@ -234,6 +236,126 @@ fn the_start_screen() {
     let (_tmp, s) = start_screen();
     assert!(s.home_shown());
     sweep_body("start", s);
+}
+
+/// The main window with a card or the palette over it, which takes every press: each place is
+/// named by `part`, as the card's press reads it.
+fn sweep_over(
+    scene: &str,
+    mut s: Studio,
+    part: impl Fn(&Studio, &crate::studio::Geometry, f32, f32) -> String,
+) {
+    let mut table = Table::default();
+    let g = s.geometry(SIZE.0, SIZE.1);
+    s.resized(&g);
+    for (x, y) in grid(SIZE.0, SIZE.1) {
+        s.window_moved(&g, x, y, Mods::NONE);
+        table.add(part(&s, &g, x, y), of_studio(&s, &g));
+    }
+    table.check(scene);
+}
+
+#[test]
+fn the_preparation_card_that_failed() {
+    let mut s = Studio::sample();
+    let mut card = crate::prepare_card::Card::new(Default::default());
+    card.failures
+        .push(xirius_session::build::PreparationFailure {
+            track: Some(track(&s, "Keys")),
+            name: "Keys".into(),
+            reason: "the plugin did not open".into(),
+        });
+    // A song being got ready behind the card: its failures have 再試行 and このまま開く.
+    card.background = true;
+    s.preparing = Some(card);
+    sweep_over("prepare", s, |s, g, x, y| {
+        let l = s.preparing.as_ref().unwrap().layout(g.size);
+        let named = [
+            ("Card::Retry", l.retry),
+            ("Card::Proceed", l.proceed),
+            ("Card::Later", Some(l.button)),
+        ];
+        match named
+            .iter()
+            .find(|(_, r)| r.is_some_and(|r| r.contains(x, y)))
+        {
+            Some((name, _)) => (*name).into(),
+            None if l.rect.contains(x, y) => "Body".into(),
+            None => "None".into(),
+        }
+    });
+}
+
+#[test]
+fn the_recovery_card() {
+    let mut s = Studio::sample();
+    let r = xirius_core::recovery::Recovery {
+        steps: 3,
+        last_command: Some("track.add".into()),
+        last_label: None,
+        last_at_ms: 0,
+        version: Some("v1".into()),
+    };
+    s.recovery = Some(crate::recovery_card::Card::new(&r, None, false));
+    sweep_over("recovery", s, |s, g, x, y| {
+        let l = s.recovery.as_ref().unwrap().layout(g.size);
+        match l.cells.iter().find(|c| c.rect.contains(x, y)) {
+            Some(c) if c.action.is_some() => kind(&format!("{:?}", c.action)),
+            _ if l.rect.contains(x, y) => "Body".into(),
+            _ => "None".into(),
+        }
+    });
+}
+
+#[test]
+fn the_palette() {
+    let mut s = Studio::sample();
+    let g = s.geometry(SIZE.0, SIZE.1);
+    s.open_palette(&g);
+    s.palette.as_mut().unwrap().field.set("track".into());
+    // Every pointer's shape filters the commands again, so only the palette and a little
+    // around it is swept, on a coarser grid (a row is taller than two steps).
+    let p = s.palette.as_ref().unwrap();
+    let l = p.layout(g.size);
+    let hits = p.hits();
+    let r = l.rect;
+    let places: Vec<(f32, f32, &str)> = grid(r.w + STEP * 8.0, r.h + STEP * 8.0)
+        .step_by(2)
+        .map(|(x, y)| (x + r.x - STEP * 4.0, y + r.y - STEP * 4.0))
+        .map(|(x, y)| (x, y, palette_place(p, &l, &hits, x, y)))
+        .collect();
+    let mut table = Table::default();
+    for (x, y, place) in places {
+        s.window_moved(&g, x, y, Mods::NONE);
+        table.add(place.into(), of_studio(&s, &g));
+    }
+    table.check("palette");
+}
+
+/// What of the palette is at (`x`, `y`), as its press reads it.
+fn palette_place(
+    p: &crate::palette::Palette,
+    l: &crate::palette::PaletteLayout,
+    hits: &[usize],
+    x: f32,
+    y: f32,
+) -> &'static str {
+    let row = l.rows.iter().find(|(_, r)| r.contains(x, y));
+    if crate::search_box::clear_hit(l.search, xirius_design::Space::X4.px(), &p.field, x, y) {
+        "Palette::Clear"
+    } else if l.search.contains(x, y) {
+        "Palette::Search"
+    } else if let Some((i, _)) = row {
+        if hits.get(*i).is_some_and(|&k| p.rows[k].enabled) {
+            "Palette::Row"
+        } else {
+            "Palette::Row::Off"
+        }
+    } else if l.rect.contains(x, y) {
+        "Body"
+    } else {
+        "None"
+    }
 }
 
 #[test]
