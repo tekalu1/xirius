@@ -189,8 +189,10 @@ fn a_preset_sets_its_values_in_one_step() {
     );
     assert_eq!(r.message, "Sampler のプリセットを「Bright」にしました");
     assert_eq!(s.steps().len(), steps + 1);
-    assert_eq!(params(&s).get("Cutoff"), Some(&0.9));
-    assert_eq!(params(&s).get("Attack"), Some(&0.1));
+    // Under the keys the song keeps, as it reads back from its file.
+    assert_eq!(params(&s).get("cutoff"), Some(&0.9));
+    assert_eq!(params(&s).get("attack"), Some(&0.1));
+    assert!(!params(&s).contains_key("Cutoff"));
     s.undo(1).unwrap();
     assert_eq!(params(&s), before);
     let e = s

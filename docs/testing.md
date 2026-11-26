@@ -54,6 +54,23 @@ and one still running after 5 minutes is killed with its child processes and fai
 by name. The `cargo test` runs (`--default-features`, `--doctest`, `--legacy`, `--plugins`)
 do not go through nextest and have no such limit.
 
+## Adding a feature
+
+Some tests are made from the tables the code already keeps: a new row gets its checks without a
+new test, and a row left without them fails the run, naming the row.
+
+- **A command that goes into the history** (`CommandDef::history`): add a step for it to
+  `core::every_history_command_undoes_and_redoes` (`crates/xirius-core/tests/it/core.rs`). A
+  registered history command that no step runs fails it as `not covered by this test: [<name>]`.
+  Each step checks that the song stays valid, that the command makes one step, and that undo and
+  redo give back the songs before and after. The song is saved half way and at the end, the
+  session dropped and the folder opened again: every state a step made reads back from the files
+  as it was in memory (a field the model does not write or read fails as `state <n>, made by
+  <command>: [<path of the field>]`), project.json is the song, and the first state and the last
+  come back by jumping. A command's own test then checks what the command does, and needs no
+  save-and-reopen of its own; it keeps one only for a song the steps do not make (an old file, a
+  field that is not written).
+
 ## Build artifacts
 
 The `dev` and `test` profiles use `debug = "line-tables-only"` and keep Cargo's default

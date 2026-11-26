@@ -185,12 +185,14 @@ fn load_preset(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> 
     let Some(Value::Array(list)) = a.0.get("values") else {
         return Err(CmdError::invalid("values に値の一覧を指定してください"));
     };
-    let mut values = Vec::new();
+    let mut values = std::collections::BTreeMap::new();
     for (i, item) in list.iter().enumerate() {
         let param = item.get("param").and_then(Value::as_str);
         let value = item.get("value").and_then(Value::as_f64);
         match (param, value) {
-            (Some(k), Some(v)) => values.push((k.to_string(), v)),
+            (Some(k), Some(v)) => {
+                values.insert(k.to_string(), v);
+            }
             _ => {
                 return Err(CmdError::invalid(format!(
                     "{} 番目に param と value を指定してください",
@@ -206,6 +208,11 @@ fn load_preset(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> 
         .iter_mut()
         .find(|x| x.id == id)
         .expect("found");
+    // A built-in's value under another spelling of its key (`Cutoff`, the Sampler's `tune`)
+    // goes under the key the song keeps, as the song opened from its file has it.
+    if let Some(def) = x.builtin() {
+        crate::model::fix_keys(def, &mut values);
+    }
     x.params.extend(values);
     // The device keeps the preset's name in the song, so its tag still names it after the
     // knobs move and after a restart (UI-332).
