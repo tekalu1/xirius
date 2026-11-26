@@ -327,8 +327,9 @@ pub fn route(action: &str) -> Option<Route> {
 pub fn arrange_zone(spot: &crate::arrange::Spot) -> Option<&'static str> {
     use crate::arrange::Spot;
     match spot {
+        // The extended arrow's lower edge is still the body's for the mouse map (EDT-001).
         Spot::Clip {
-            grip: crate::arrange::Grip::Body,
+            grip: crate::arrange::Grip::Body | crate::arrange::Grip::Cut,
             ..
         } => Some("clip-body"),
         Spot::Clip {

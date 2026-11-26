@@ -29,10 +29,17 @@ impl Studio {
     }
 
     pub(super) fn smart_click(&mut self, g: &Geometry, d: &Drag) -> bool {
-        if d.tool != Tool::Select || d.mods.shift || d.mods.alt || d.mods.ctrl {
+        // Only the extended arrow cuts on the lower edge; the basic one moves the clip (EDT-001).
+        if !self.roll.extended
+            || d.tool != Tool::Select
+            || d.mods.shift
+            || d.mods.alt
+            || d.mods.ctrl
+        {
             return false;
         }
         let (track, clip) = match d.spot {
+            // The band and the edges inside it: a click at a cut joins (the y check below).
             Spot::Clip { track, clip, .. }
             | Spot::Fx {
                 track,
@@ -49,7 +56,7 @@ impl Studio {
             return false;
         };
         let r = self.clip_rect(g, row, c);
-        if d.from.1 < r.bottom() - 8.0 {
+        if d.from.1 < r.bottom() - Arrange::CUT_BAND {
             return false;
         }
         let end = c.start + c.length;

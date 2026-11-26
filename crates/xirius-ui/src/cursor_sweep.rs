@@ -224,6 +224,15 @@ fn the_arrangement_and_the_roll_with_the_pencil() {
     sweep_body("pencil", s);
 }
 
+/// The extended arrow cuts on a clip's lower edge and changes notes by their edges (EDT-001,
+/// UI-292).
+#[test]
+fn the_arrangement_and_the_roll_with_the_extended_arrow() {
+    let mut s = Studio::sample();
+    s.roll.extended = true;
+    sweep_body("extended", s);
+}
+
 #[test]
 fn the_mixer() {
     let mut s = Studio::sample();
