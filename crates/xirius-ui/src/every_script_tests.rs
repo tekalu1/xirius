@@ -305,6 +305,8 @@ fn play_part(part: usize) {
     // A plugin's window opens off every screen, as the parked window opens it.
     // SAFETY: as in `TestTemp::new`, before the test starts a thread.
     unsafe { std::env::set_var(xirius_vst3::OFFSCREEN_ENV, "1") };
+    // The plugin hosts the scripts start keep their crash records here, not in the person's.
+    let _records = crate::shot::CrashRecords::new();
     let _part_tmp = TestTemp::new();
     let part_dir = std::env::temp_dir();
     let only = std::env::var("XIRIUS_SCRIPT").ok();
