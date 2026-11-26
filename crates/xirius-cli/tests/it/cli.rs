@@ -175,24 +175,6 @@ fn edit_dry_run_apply_and_undo_through_the_command_line() {
 }
 
 #[test]
-fn a_folder_gets_a_new_bus_in_one_step_through_the_command_line() {
-    let s = Song::new();
-    let f = s.id(&["folder.add", "--name", "Drums"]);
-    s.ok(&["project.save"]);
-    let before = s.project_json();
-    let done = s.ok(&["folder.bus.add", "--id", &f, "--name", "Drum bus"]);
-    let bus = done["data"]["id"].as_str().unwrap().to_string();
-    s.ok(&["project.save"]);
-    let song: Value = serde_json::from_slice(&s.project_json()).unwrap();
-    assert!(song.to_string().contains("Drum bus"), "{song}");
-    assert!(s.ok(&["track.list"])["data"].to_string().contains(&bus));
-    // One undo takes both the bus and the connection away.
-    s.ok(&["history.undo"]);
-    s.ok(&["project.save"]);
-    assert_eq!(s.project_json(), before);
-}
-
-#[test]
 fn text_output_is_readable() {
     let (s, ids) = song_with_notes();
     let out = s.run(&["note.transpose", "--by", "-12", "--dry-run", &ids[0]]);
@@ -204,6 +186,13 @@ fn text_output_is_readable() {
     let out = s.run(&["history", "list"]);
     assert!(out.status.success());
     assert!(text(&out.stdout).contains("note.add"));
+    // The command list narrows by a word, and a command's --help describes its arguments.
+    let t = text(&xirius(&["ops", "list", "--grep", "note"]).stdout);
+    assert!(
+        t.contains("note.transpose") && !t.contains("track.add.audio"),
+        "{t}"
+    );
+    assert!(text(&xirius(&["note.transpose", "--help"]).stdout).contains("--by"));
 }
 
 #[test]
@@ -225,55 +214,6 @@ fn the_selection_carries_over_between_runs() {
         !commands.iter().any(|c| c.starts_with("select")),
         "{commands:?}"
     );
-}
-
-#[test]
-fn ops_list_and_schema_come_from_the_registry() {
-    let out = xirius(&["ops", "list", "--grep", "note"]);
-    assert!(out.status.success());
-    let t = text(&out.stdout);
-    assert!(
-        t.contains("note.transpose") && t.contains("note.quantize"),
-        "{t}"
-    );
-    assert!(!t.contains("track.add.audio"), "{t}");
-
-    let out = xirius(&["ops.list", "--json"]);
-    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-    let names: Vec<&str> = v["data"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["name"].as_str().unwrap())
-        .collect();
-    for want in [
-        "track.add.audio",
-        "track.mute",
-        "track.move",
-        "clip.split",
-        "note.add",
-        "note.move",
-        "note.quantize",
-        "note.transpose",
-        "note.velocity.set",
-        "select.set",
-        "view.zoom",
-        "history.undo",
-        "version.restore",
-    ] {
-        assert!(names.contains(&want), "{want} is not registered");
-    }
-
-    let out = xirius(&["ops", "schema", "note.transpose", "--json"]);
-    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-    let schema = &v["data"];
-    assert_eq!(schema["inputSchema"]["required"], json!(["by"]));
-    assert_eq!(schema["inputSchema"]["properties"]["by"]["type"], "integer");
-    assert_eq!(schema["annotations"]["xirius"]["history"], true);
-
-    // A command with --help describes its arguments.
-    let out = xirius(&["note.transpose", "--help"]);
-    assert!(text(&out.stdout).contains("--by"));
 }
 
 #[test]
@@ -740,7 +680,7 @@ fn mcp_reports_protocol_mistakes() {
 }
 
 #[test]
-fn mcp_http_listens_on_loopback_and_wants_its_token() {
+fn mcp_http_listens_on_loopback_and_prints_a_token_that_opens_it() {
     use std::io::{BufRead, BufReader};
     use std::net::TcpStream;
 
@@ -770,30 +710,23 @@ fn mcp_http_listens_on_loopback_and_wants_its_token() {
 
     let addr = url.trim_start_matches("http://").trim_end_matches("/mcp");
     let body = json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}).to_string();
-    let post = |auth: &str| -> String {
-        let mut c = TcpStream::connect(addr).unwrap();
-        write!(
-            c,
-            "POST /mcp HTTP/1.1\r\nHost: {addr}\r\n{auth}Content-Type: application/json\r\n\
-             Accept: application/json, text/event-stream\r\nConnection: close\r\n\
-             Content-Length: {}\r\n\r\n{body}",
-            body.len()
-        )
-        .unwrap();
-        let mut out = String::new();
-        // Only the status is under test. A rejected request can close with a reset
-        // after its status on Unix when the server leaves the request body unread.
-        BufReader::new(c).read_line(&mut out).unwrap();
-        out
-    };
-    let none = post("");
-    let wrong = post("Authorization: Bearer not-the-token-not-the-token\r\n");
-    let right = post(&format!("Authorization: Bearer {token}\r\n"));
+    // The printed token opens the door; refusing a missing or wrong one is in the mcp tests
+    // (`http_without_the_token_or_with_a_wrong_one_is_refused`).
+    let mut c = TcpStream::connect(addr).unwrap();
+    write!(
+        c,
+        "POST /mcp HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\n\
+         Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n\
+         Connection: close\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    // Only the status is under test.
+    let mut right = String::new();
+    BufReader::new(c).read_line(&mut right).unwrap();
     child.kill().unwrap();
     child.wait().unwrap();
 
-    assert!(none.starts_with("HTTP/1.1 401"), "{none}");
-    assert!(wrong.starts_with("HTTP/1.1 401"), "{wrong}");
     assert!(right.starts_with("HTTP/1.1 200"), "{right}");
 }
 

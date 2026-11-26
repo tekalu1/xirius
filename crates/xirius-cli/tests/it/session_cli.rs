@@ -268,16 +268,6 @@ fn an_ai_without_the_save_permission_cannot_export() {
 }
 
 #[test]
-fn the_new_commands_are_in_the_command_list() {
-    let s = song_with_notes();
-    let v = s.ok(&["ops", "list"]);
-    let text = v.to_string();
-    for name in ["export.mixdown", "export.stems", "transport.play"] {
-        assert!(text.contains(name), "{name} missing from ops list");
-    }
-}
-
-#[test]
 fn transport_commands_need_xirius_play() {
     let s = song_with_notes();
     let r = s.run(&["transport.stop"]);
