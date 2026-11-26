@@ -506,7 +506,15 @@ mod tests {
             .into(),
             ..plain(48.0)
         };
-        let rows: Vec<(&str, Snap, Meter, (Tick, Tick), Vec<(GridTier, Want)>)> = vec![
+        // (row, the snap, the meter, the view from and to, the lines on each tier)
+        type Row = (
+            &'static str,
+            Snap,
+            Meter,
+            (Tick, Tick),
+            Vec<(GridTier, Want)>,
+        );
+        let rows: Vec<Row> = vec![
             (
                 // The auto step is 1/2 beat (8 px): it is the split, so no finer line.
                 "4/4 at 16 px a beat shows bars, beats and eighths",

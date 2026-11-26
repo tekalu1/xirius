@@ -41,7 +41,9 @@ fn build_lays_out_rows_by_the_shape_rules() {
         .map(|c| Entry::new(c, operation()))
         .collect();
     every_category.push(Entry::new(Category::Edit, operation()).direct());
-    let cases: Vec<(&str, Vec<Entry>, Result<Vec<String>, Error>)> = vec![
+    // (row, the entries, the labels `build` gives or its error)
+    type Case = (&'static str, Vec<Entry>, Result<Vec<String>, Error>);
+    let cases: Vec<Case> = vec![
         (
             "one-row categories go to the root after the direct rows",
             vec![
