@@ -14,6 +14,12 @@ archive.include = [
     { path = "debug/deps/libxirius_test_clap.dylib", relative-to = "target", on-missing = "ignore" },
 ]
 
+# The longest tests start first, so none is left to run on alone at the end of a shard: the
+# parts of every_script_tests that play the slowest scripts (its `ALONE`) and the cursor sweeps.
+[[profile.default.overrides]]
+filter = 'test(/^every_script_tests::every_step_of_the_scripts_plays_without_a_window_part_[0-2]$/) | test(/^cursor_sweep::/)'
+priority = 50
+
 [profile.ci]
 fail-fast = false
 # A test that fails and then passes is run once more and reported as flaky: ci_tests.py lists it
