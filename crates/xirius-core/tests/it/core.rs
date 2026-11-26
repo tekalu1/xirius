@@ -1203,7 +1203,7 @@ fn every_history_command_undoes_and_redoes() {
     rig.step("version.restore", json!({"id": v.id}));
 
     // every registered command that goes into the history was covered above
-    // (the ai.* ones need a request or a question first: tests/ai_work.rs)
+    // (the ai.* ones need a request or a question first: ai_work.rs)
     let reg = Registry::standard();
     let uncovered: Vec<&str> = reg
         .all()
