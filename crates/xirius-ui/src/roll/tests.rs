@@ -141,7 +141,7 @@ fn feel_04_shift_snap_and_modifier_changes_without_pointer_motion() {
 #[test]
 fn feel_05_hit_regions_cursors_tips_and_resize() {
     for (zone, cursor, delta, text) in [
-        (Zone::Body, Cursor::Move, (24.0, -14.0), " · "),
+        (Zone::Body, Cursor::Arrow, (24.0, -14.0), " · "),
         (Zone::EdgeL, Cursor::ResizeH, (12.0, 0.0), " · "),
         (Zone::EdgeR, Cursor::ResizeH, (24.0, 0.0), "長さ"),
         (Zone::Velocity, Cursor::ResizeV, (0.0, -20.0), "ベロシティ"),
@@ -194,7 +194,7 @@ fn the_arrow_is_basic_by_default_and_the_extended_places_show_their_cursor_and_a
     let top = at(&s, &g, 0, Zone::Velocity);
     moved(&mut s, &g, top, Mods::NONE);
     let c = context(&s, &g);
-    assert_eq!(s.roll.cursor(Some(&c)), Cursor::Move);
+    assert_eq!(s.roll.cursor(Some(&c)), Cursor::Arrow);
     assert!(s.roll.zone_band(&c).is_none(), "no band in the basic mode");
 
     s.roll.extended = true;
@@ -222,7 +222,7 @@ fn the_arrow_is_basic_by_default_and_the_extended_places_show_their_cursor_and_a
     let middle = at(&s, &g, 0, Zone::Body);
     moved(&mut s, &g, middle, Mods::NONE);
     let c = context(&s, &g);
-    assert_eq!(s.roll.cursor(Some(&c)), Cursor::Move);
+    assert_eq!(s.roll.cursor(Some(&c)), Cursor::Arrow);
     assert!(
         s.roll.zone_band(&c).is_none(),
         "the middle of the note has no band"

@@ -47,6 +47,21 @@ impl Shape {
             Shape::Eraser => (4.0, 28.0),
         }
     }
+
+    /// How much of its 32-unit drawing the picture keeps, drawn in toward the working point
+    /// (UI-382): about two thirds, so that in the system's cursor box the hand is as big as
+    /// the system's pointing hand. The long cross and scissors keep a little less.
+    fn scale(self) -> f32 {
+        match self {
+            Shape::Scissors | Shape::Range => 0.6,
+            Shape::OpenHand
+            | Shape::ClosedHand
+            | Shape::Pencil
+            | Shape::Eraser
+            | Shape::Mute
+            | Shape::Audition => 0.68,
+        }
+    }
 }
 
 /// What the window asks of the system for the pointer now.
@@ -238,7 +253,9 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
         || studio
             .roll_ctx(g)
             .is_some_and(|ctx| studio.roll.frame(ctx.body).ruler.contains(x, y));
-    if cursor == Cursor::Arrow && over_ruler {
+    let held =
+        studio.arrange.drag.as_ref().is_some_and(|d| d.started) || studio.roll.drag.is_some();
+    if cursor == Cursor::Arrow && over_ruler && !held {
         return Pointer::style(CursorStyle::Crosshair);
     }
     pointer(cursor, studio.crosshair)
@@ -403,10 +420,11 @@ fn parts(shape: Shape) -> (Vec<Prim>, Vec<Prim>) {
         ),
         Shape::Range => (
             vec![
-                Prim::Line((16.0, 2.0), (16.0, 12.0), 2.4),
-                Prim::Line((16.0, 20.0), (16.0, 30.0), 2.4),
-                Prim::Line((2.0, 16.0), (12.0, 16.0), 2.4),
-                Prim::Line((20.0, 16.0), (30.0, 16.0), 2.4),
+                // Wide enough to keep two pixels at 32 once drawn in to 0.6.
+                Prim::Line((16.0, 2.0), (16.0, 12.0), 3.4),
+                Prim::Line((16.0, 20.0), (16.0, 30.0), 3.4),
+                Prim::Line((2.0, 16.0), (12.0, 16.0), 3.4),
+                Prim::Line((20.0, 16.0), (30.0, 16.0), 3.4),
             ],
             vec![],
         ),
@@ -420,12 +438,15 @@ pub struct Picture {
     pub bgra: Vec<u8>,
 }
 
-/// Draws `shape` at `size` pixels square (32 at the usual scale). Each pixel is the mean of
-/// 4 × 4 samples; the outline is the body grown by a little over a unit.
+/// Draws `shape` at `size` pixels square (the system's cursor box). Each pixel is the mean of
+/// 4 × 4 samples; the drawing is shrunk toward its working point by `Shape::scale`, and the
+/// outline is the body grown by a unit.
 pub fn picture(shape: Shape, size: usize) -> Picture {
     const SAMPLES: usize = 4;
     let unit = size as f32 / 32.0;
     let (body, marks) = parts(shape);
+    let (hx, hy) = shape.hot();
+    let scale = shape.scale();
     let mut white = vec![0.0f32; size * size];
     let mut black = vec![0.0f32; size * size];
     for y in 0..size {
@@ -433,10 +454,11 @@ pub fn picture(shape: Shape, size: usize) -> Picture {
             let (mut w, mut k) = (0u32, 0u32);
             for sy in 0..SAMPLES {
                 for sx in 0..SAMPLES {
-                    let p = (
+                    let at = (
                         (x as f32 + (sx as f32 + 0.5) / SAMPLES as f32) / unit,
                         (y as f32 + (sy as f32 + 0.5) / SAMPLES as f32) / unit,
                     );
+                    let p = (hx + (at.0 - hx) / scale, hy + (at.1 - hy) / scale);
                     if body.iter().any(|b| b.covers(p)) {
                         w += 1;
                         if marks.iter().any(|m| m.covers(p)) {
@@ -451,7 +473,7 @@ pub fn picture(shape: Shape, size: usize) -> Picture {
         }
     }
     // The outline: the strongest body coverage within a radius of the pixel.
-    let reach = (1.3 * unit).max(1.0);
+    let reach = unit.max(1.0);
     let r = reach.ceil() as i32;
     let mut bgra = vec![0u8; size * size * 4];
     for y in 0..size as i32 {
@@ -481,7 +503,6 @@ pub fn picture(shape: Shape, size: usize) -> Picture {
             bgra[i * 4..i * 4 + 4].copy_from_slice(&[v, v, v, (alpha * 255.0).round() as u8]);
         }
     }
-    let (hx, hy) = shape.hot();
     let at = |v: f32| ((v * unit) as usize).min(size - 1);
     Picture {
         size,
@@ -621,6 +642,38 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The opaque extent (alpha of a half or more) of a picture: its width and height in pixels.
+    fn extent(pic: &Picture) -> (usize, usize) {
+        let size = pic.size;
+        let solid = |x: usize, y: usize| pic.bgra[(y * size + x) * 4 + 3] >= 128;
+        let cols: Vec<_> = (0..size)
+            .filter(|&x| (0..size).any(|y| solid(x, y)))
+            .collect();
+        let rows: Vec<_> = (0..size)
+            .filter(|&y| (0..size).any(|x| solid(x, y)))
+            .collect();
+        let span = |v: &[usize]| v.last().map_or(0, |l| l - v[0] + 1);
+        (span(&cols), span(&rows))
+    }
+
+    #[test]
+    fn the_pictures_are_as_big_as_the_systems_own_cursors() {
+        for shape in Shape::ALL {
+            for size in [32, 40, 48, 64] {
+                let (w, h) = extent(&picture(shape, size));
+                let most = size * 7 / 10;
+                assert!(
+                    w <= most && h <= most,
+                    "{shape:?} at {size}: {w}×{h} fills more than 70 % of the box"
+                );
+            }
+        }
+        // In the 48-pixel box of 175 %, the open hand is about the system's pointing hand
+        // (25 × 32 there), not the 37 × 54 it was in a box of 56.
+        let (w, h) = extent(&picture(Shape::OpenHand, 48));
+        assert!((20..=28).contains(&w) && (27..=34).contains(&h), "{w}×{h}");
     }
 
     /// Writes each picture as raw BGRA (`<shape>-<size>.bgra`, with its working point in

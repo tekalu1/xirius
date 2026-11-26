@@ -565,7 +565,8 @@ impl Roll {
         };
         if let Some(d) = &self.drag {
             return match d.mode {
-                Mode::Move => Cursor::Move,
+                // A note keeps the arrow, held too (UI-382).
+                Mode::Move => Cursor::Arrow,
                 Mode::ResizeL | Mode::ResizeR => Cursor::ResizeH,
                 Mode::Velocity => Cursor::ResizeV,
                 Mode::Erase => Cursor::Erase,
@@ -628,8 +629,7 @@ impl Roll {
                 Some((_, Zone::EdgeL | Zone::EdgeR)) => Cursor::ResizeH,
                 Some((_, Zone::Velocity)) => Cursor::ResizeV,
                 Some((_, Zone::Split)) => Cursor::Split,
-                Some((_, Zone::Body)) => Cursor::Move,
-                None => Cursor::Arrow,
+                Some((_, Zone::Body)) | None => Cursor::Arrow,
             },
         }
     }

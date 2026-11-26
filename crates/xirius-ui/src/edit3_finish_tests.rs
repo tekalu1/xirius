@@ -269,7 +269,7 @@ fn edt_047_cursor_zones_follow_height_and_keep_the_edges() {
                 if height >= 12.0 {
                     Cursor::ResizeV
                 } else {
-                    Cursor::Move
+                    Cursor::Arrow
                 },
             ),
             (
@@ -277,10 +277,10 @@ fn edt_047_cursor_zones_follow_height_and_keep_the_edges() {
                 if height >= 12.0 {
                     Cursor::Split
                 } else {
-                    Cursor::Move
+                    Cursor::Arrow
                 },
             ),
-            (v.y(n.pitch) + height / 2.0, Cursor::Move),
+            (v.y(n.pitch) + height / 2.0, Cursor::Arrow),
         ] {
             s.roll.moved(&ctx, x, y, Mods::NONE);
             assert_eq!(s.roll.cursor(Some(&ctx)), expected);
