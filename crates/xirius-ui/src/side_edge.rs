@@ -569,9 +569,12 @@ mod tests {
     fn each_edge_stops_at_its_panels_limits() {
         type Holds = fn(&Geometry, &Geometry) -> bool;
         let rows: [(&str, Grip, f32, Holds); 6] = [
-            ("the drawer down to the roll's least", Grip::Drawer, -2000.0, |_, g| {
-                g.drawer.h == drawer_edge::ROLL_MIN_H
-            }),
+            (
+                "the drawer down to the roll's least",
+                Grip::Drawer,
+                -2000.0,
+                |_, g| g.drawer.h == drawer_edge::ROLL_MIN_H,
+            ),
             (
                 "the drawer up to two rows of the arrangement, in order in the window",
                 Grip::Drawer,
@@ -584,15 +587,24 @@ mod tests {
                         && g.drawer.bottom() <= H
                 },
             ),
-            ("the browser down to its least", Grip::Browser, -1000.0, |_, g| {
-                g.panel.w == BROWSER_MIN_W
-            }),
-            ("the browser up to its most", Grip::Browser, 2000.0, |_, g| {
-                g.panel.w == BROWSER_MAX_W
-            }),
-            ("the head no narrower than its rows", Grip::Head, -1000.0, |was, g| {
-                g.column.w == was.column.w
-            }),
+            (
+                "the browser down to its least",
+                Grip::Browser,
+                -1000.0,
+                |_, g| g.panel.w == BROWSER_MIN_W,
+            ),
+            (
+                "the browser up to its most",
+                Grip::Browser,
+                2000.0,
+                |_, g| g.panel.w == BROWSER_MAX_W,
+            ),
+            (
+                "the head no narrower than its rows",
+                Grip::Head,
+                -1000.0,
+                |was, g| g.column.w == was.column.w,
+            ),
             ("the head up to its most", Grip::Head, 2000.0, |_, g| {
                 g.lanes.w >= ARRANGE_MIN_W && g.column.w <= HEAD_MAX_W
             }),

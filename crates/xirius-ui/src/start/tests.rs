@@ -488,17 +488,29 @@ fn the_foot_follows_what_the_body_shows() {
         let strip = s.error_rect(&g).y;
         let notice = crate::notice::place(&s, &g, "片付けました", None);
         check(middle(notice), format!("notice in the middle: {notice:?}"));
-        check(notice.bottom() <= strip, format!("notice above the strip: {notice:?}"));
+        check(
+            notice.bottom() <= strip,
+            format!("notice above the strip: {notice:?}"),
+        );
         s.warn("「drumloop」を伸縮できません".into(), None);
         let toast = crate::toast::layout(&s, &g).expect("shown").rect;
         check(toast.x >= foot.x, format!("toast at the left: {toast:?}"));
-        check(toast.right() <= foot.right(), format!("toast inside: {toast:?}"));
-        check(toast.bottom() <= strip, format!("toast above the strip: {toast:?}"));
+        check(
+            toast.right() <= foot.right(),
+            format!("toast inside: {toast:?}"),
+        );
+        check(
+            toast.bottom() <= strip,
+            format!("toast above the strip: {toast:?}"),
+        );
         toast_insets.push(toast.x - foot.x);
         s.live_midi.assign.learning = Some(xirius_prefs::midimap::Target::Volume("1".into()));
         let (pill, _) = s.midi_pill(&g).expect("learning");
         check(middle(pill), format!("pill in the middle: {pill:?}"));
-        check(pill.bottom() <= strip, format!("pill above the strip: {pill:?}"));
+        check(
+            pill.bottom() <= strip,
+            format!("pill above the strip: {pill:?}"),
+        );
     }
     assert!(failures.is_empty(), "{failures:#?}");
     assert!(
