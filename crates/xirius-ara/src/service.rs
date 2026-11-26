@@ -344,7 +344,18 @@ impl Service {
         archive: Option<(Vec<u8>, String)>,
         notify: Arc<dyn Fn() + Send + Sync>,
     ) -> Service {
-        Service::open(Host::shared(key), loader, archive, notify)
+        Service::start_shared_with(key, loader, archive, notify, CALL_LIMIT)
+    }
+
+    /// As [`Service::start_shared`], with the calls of a thread it starts limited to `limit`.
+    pub fn start_shared_with(
+        key: &str,
+        loader: Loader,
+        archive: Option<(Vec<u8>, String)>,
+        notify: Arc<dyn Fn() + Send + Sync>,
+        limit: Duration,
+    ) -> Service {
+        Service::open(Host::shared(key, limit), loader, archive, notify)
     }
 
     fn open(
@@ -829,13 +840,13 @@ type SharedHost = (String, Arc<Host>, Sender<Job>);
 static SHARED_HOSTS: Mutex<Vec<SharedHost>> = Mutex::new(Vec::new());
 
 impl Host {
-    fn shared(key: &str) -> Result<(Arc<Host>, Sender<Job>), String> {
+    fn shared(key: &str, limit: Duration) -> Result<(Arc<Host>, Sender<Job>), String> {
         let mut hosts = lock(&SHARED_HOSTS);
         hosts.retain(|(_, h, _)| !h.ended.load(Ordering::Acquire));
         if let Some((_, h, tx)) = hosts.iter().find(|(k, _, _)| k == key) {
             return Ok((h.clone(), tx.clone()));
         }
-        let (h, tx) = Host::spawn(Some(key), CALL_LIMIT)?;
+        let (h, tx) = Host::spawn(Some(key), limit)?;
         hosts.push((key.to_string(), h.clone(), tx.clone()));
         Ok((h, tx))
     }

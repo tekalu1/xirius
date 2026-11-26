@@ -224,9 +224,10 @@ fn wait(s: &mut Studio, secs: f32, done: impl Fn(&Studio) -> bool) {
     }
 }
 
-/// The peaks of `path` are there to draw.
-fn drawn(path: &Path, store: &Path) -> bool {
-    matches!(wave::look(path, store), Look::Ready(_))
+/// The import that copies `path` has ended and its peaks are there to draw. They are not
+/// asked for before: a file not yet copied is remembered as missing.
+fn drawn(s: &Studio, path: &Path, store: &Path) -> bool {
+    !s.browser_import_busy() && matches!(wave::look(path, store), Look::Ready(_))
 }
 
 /// Where the browser shows the file row `name`, as a hit.
@@ -336,7 +337,7 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             s.file_up(g, x, y, false);
             let path = imported(s, "loop_120bpm.wav");
             let store = s.song().peak_store();
-            wait(s, 10.0, |_| drawn(&path, &store));
+            wait(s, 10.0, |s| drawn(s, &path, &store));
         }
         6 => {
             let files = [place().join("pad_44k.wav"), place().join("chords.mid")];
@@ -346,7 +347,7 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             s.clamp_scroll(g);
             let pad = imported(s, "pad_44k.wav");
             let store = s.song().peak_store();
-            wait(s, 10.0, |_| drawn(&pad, &store));
+            wait(s, 10.0, |s| drawn(s, &pad, &store));
         }
         7 => s.finish_picked(FileRequest::Place, &[place().join("Drums")]),
         _ => {}

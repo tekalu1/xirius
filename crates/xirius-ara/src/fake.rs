@@ -69,11 +69,27 @@ pub struct Config {
     /// Opens a native, parked window for the host-process UI tests.
     #[serde(default)]
     pub native_editor: bool,
+    /// When not 0, the limit of the watches of a worker this fixture is sent to, in place of
+    /// their 30 seconds: the client's on a worker that stopped answering, and the worker's on
+    /// an analysis or render call. A test waits past a short one instead of the real one.
+    #[serde(default)]
+    pub watch_ms: u64,
+}
+
+impl Config {
+    /// The watches' limit: `watch_ms`, or `default` when it is 0.
+    pub fn watch_or(&self, default: Duration) -> Duration {
+        if self.watch_ms == 0 {
+            default
+        } else {
+            Duration::from_millis(self.watch_ms)
+        }
+    }
 }
 
 thread_local! {
     /// The configuration of the next document made on this thread.
-    static NEXT: Cell<Config> = const { Cell::new(Config { open_reply_ms: 0, stalled_poll_ms: 0, prepare_ms: 0, editor_ms: 0, analysis_ms: 0, fault_on_analysis: false, fault_on_own_thread: false, hang_in_render: false, tail: 0.0, render_spin_us: 0, restore_content_only: false, native_editor: false }) };
+    static NEXT: Cell<Config> = const { Cell::new(Config { open_reply_ms: 0, stalled_poll_ms: 0, prepare_ms: 0, editor_ms: 0, analysis_ms: 0, fault_on_analysis: false, fault_on_own_thread: false, hang_in_render: false, tail: 0.0, render_spin_us: 0, restore_content_only: false, native_editor: false, watch_ms: 0 }) };
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {

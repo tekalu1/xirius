@@ -21,6 +21,9 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// A loaded worker that leaves a request unanswered this long is ended.
+const STALL_LIMIT: Duration = Duration::from_secs(30);
+
 enum Job {
     Sync(Song),
     Wire(WireCommand),
@@ -122,6 +125,7 @@ impl RemoteService {
         let mut output = process.stdout.take().expect("piped ARA stdout");
         *lock(&child) = Some(process);
         let pending = Arc::new(Mutex::new(None::<Instant>));
+        let stall_limit = fixture.map_or(STALL_LIMIT, |config| config.watch_or(STALL_LIMIT));
         let watcher_pending = pending.clone();
         let watcher_child = child.clone();
         let watcher_state = state.clone();
@@ -133,8 +137,7 @@ impl RemoteService {
                     state.loaded && !state.opening_editor
                 };
                 if active
-                    && lock(&watcher_pending)
-                        .is_some_and(|since| since.elapsed() > Duration::from_secs(30))
+                    && lock(&watcher_pending).is_some_and(|since| since.elapsed() > stall_limit)
                 {
                     if let Some(process) = lock(&watcher_child).as_mut() {
                         let _ = process.kill();

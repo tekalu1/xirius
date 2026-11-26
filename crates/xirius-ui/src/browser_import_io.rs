@@ -315,6 +315,10 @@ impl Studio {
         }
         changed
     }
+    /// A browser import is still being read or waits its turn.
+    pub(crate) fn browser_import_busy(&self) -> bool {
+        self.browser_import_io.pending.is_some() || !self.browser_import_io.queue.is_empty()
+    }
     #[cfg(test)]
     pub(crate) fn settle_browser_import(&mut self) {
         let end = std::time::Instant::now() + std::time::Duration::from_secs(60);

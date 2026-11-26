@@ -92,6 +92,17 @@ fn options(plugins: &Path, cache: &Path) -> ScanOptions {
 /// (ARC-037).
 const BUNDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The same for the tests that do not look at the progress while the hanging bundle holds the
+/// scan. Shorter on Windows only, where a busy machine does not use it up (ARC-037).
+const QUICK_TIMEOUT: Duration = Duration::from_secs(if cfg!(windows) { 3 } else { 10 });
+
+fn quick_options(plugins: &Path, cache: &Path) -> ScanOptions {
+    ScanOptions {
+        timeout: QUICK_TIMEOUT,
+        ..options(plugins, cache)
+    }
+}
+
 /// What the frames saw while the scan ran.
 #[derive(Default)]
 struct Seen {
@@ -212,7 +223,7 @@ fn scanning_again_from_the_insert_list_fills_it_when_done() {
     let plugins = root.join("VST3");
     let (_, real) = bundles(&plugins);
     let cache = root.join("plugins.json");
-    let mut s = Studio::new(Song::sample_with(options(&plugins, &cache)));
+    let mut s = Studio::new(Song::sample_with(quick_options(&plugins, &cache)));
 
     // Nothing scanned yet: the list says so and offers a scan.
     let list = s.insert_list();
@@ -477,7 +488,7 @@ fn the_browser_lists_what_could_not_be_used_and_tries_one_again() {
     let plugins = root.join("VST3");
     let (n, _) = bundles(&plugins);
     let cache = root.join("plugins.json");
-    let mut s = Studio::new(Song::sample_with(options(&plugins, &cache)));
+    let mut s = Studio::new(Song::sample_with(quick_options(&plugins, &cache)));
     s.browser.press_rail(RailTab::Effects);
     let g = s.geometry(1600.0, 1000.0);
 
@@ -592,7 +603,7 @@ fn the_settings_plugin_page_scans_again_lists_the_result_and_tries_one_bundle_ag
     let plugins = root.join("VST3");
     let (_, _) = bundles(&plugins);
     let cache = root.join("plugins.json");
-    let mut s = Studio::new(Song::sample_with(options(&plugins, &cache)));
+    let mut s = Studio::new(Song::sample_with(quick_options(&plugins, &cache)));
     let g = s.geometry(1600.0, 1000.0);
     s.open_settings(Section::Plugins);
     let at = xirius_ui::studio::Rect::new(0.0, 0.0, 0.0, 0.0);

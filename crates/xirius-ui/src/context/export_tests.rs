@@ -68,6 +68,10 @@ fn exported(
     assert!(s.error.is_none(), "{:?}", s.error);
     let g = s.geometry(1600.0, 900.0);
     s.open_export(ANCHOR);
+    // One beat in place of the whole sample song: the cards only need a finished file.
+    s.export_action(crate::export::Act::Range(crate::export::Range::Selection));
+    s.export.fixed_span = Some((0, i64::from(s.project().ppq)));
+    s.export.fixed_song = s.song.dir();
     assert!(s.export_action(crate::export::Act::Go));
     assert!(until(&mut s, |s| cards(s)[0].state == State::Done));
     (dir_tmp, s, g, dir)

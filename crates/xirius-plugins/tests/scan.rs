@@ -135,12 +135,14 @@ fn a_crashing_or_hanging_bundle_does_not_stop_the_scan() {
 
     // A bundle that hangs is given up on after the timeout, and the scan goes on. Scanned
     // apart from the real plugin, with a shorter timeout that still leaves a busy machine time
-    // to start the scan process for the bundle that is not a DLL.
+    // to start the scan process for the bundle that is not a DLL. On Windows the timeout counts
+    // only the time the process gets (ARC-037), so a busy machine does not use it up; elsewhere
+    // it is wall time.
     let hanging = root.join("Hanging");
     fake_bundle(&hanging, "Hangs On Load", b"MZ");
     fake_bundle(&hanging, "Not A Dll", b"this is not a library");
     let mut opts = options(&hanging, &root.join("hanging.json"));
-    opts.timeout = Duration::from_secs(10);
+    opts.timeout = Duration::from_secs(if cfg!(windows) { 2 } else { 10 });
     opts.extra_args = vec!["--hang-on".into(), "Hangs On Load".into()];
     let r = scan(&opts).expect("scan");
     assert_eq!((r.bundles, r.probed, r.failed), (2, 2, 2));
