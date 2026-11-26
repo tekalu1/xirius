@@ -19,11 +19,14 @@ struct Import {
     /// Goes on the track the last import put its clip on, right after that clip (Alt while
     /// dropping several files); `track`, `at` and `into` stand when that import failed.
     chain: bool,
+    /// What the arrangement knows this import by while its ghost waits for it (UI-386).
+    ticket: u64,
     reservation: Arc<xirius_core::in_use::Uses>,
 }
 struct Pending {
     id: u64,
     key: u64,
+    ticket: u64,
     project: Arc<Project>,
     dir: Option<PathBuf>,
     midi: bool,
@@ -42,8 +45,14 @@ pub(crate) struct ImportIo {
     session: Option<u64>,
     /// The track and the end of the clip the last import placed, for one chained after it.
     last: Option<(TrackId, i64)>,
+    tickets: u64,
 }
 impl ImportIo {
+    /// Whether the import known by `ticket` still waits: queued or being read.
+    pub(crate) fn holds(&self, ticket: u64) -> bool {
+        self.pending.as_ref().is_some_and(|p| p.ticket == ticket)
+            || self.queue.iter().any(|i| i.ticket == ticket)
+    }
     fn follow_session(&mut self, session: u64) -> bool {
         let changed = self.session.is_some_and(|old| old != session);
         if changed {
@@ -67,10 +76,11 @@ impl Studio {
         midi: bool,
     ) -> Result<(), String> {
         self.queue_browser_import_with(path, track, at, midi, None, false)
+            .map(|_| ())
     }
 
     /// Like [`Studio::queue_browser_import`], with the place of a new track and whether the
-    /// clip goes right after the last import's (UI-381).
+    /// clip goes right after the last import's (UI-381). Returns the import's ticket.
     pub(crate) fn queue_browser_import_with(
         &mut self,
         path: PathBuf,
@@ -79,7 +89,7 @@ impl Studio {
         midi: bool,
         into: Option<(Parent, usize)>,
         chain: bool,
-    ) -> Result<(), String> {
+    ) -> Result<u64, String> {
         self.browser_import_io
             .follow_session(self.song.session().uses_id());
         if self.browser_import_io.queue.len() >= 64 {
@@ -87,6 +97,8 @@ impl Studio {
         }
         let reservation = Arc::new(xirius_core::in_use::Uses::default());
         reservation.reserve(self.song.dir().as_deref(), &path);
+        self.browser_import_io.tickets += 1;
+        let ticket = self.browser_import_io.tickets;
         self.browser_import_io.queue.push_back(Import {
             path,
             track,
@@ -94,9 +106,10 @@ impl Studio {
             midi,
             into,
             chain,
+            ticket,
             reservation,
         });
-        Ok(())
+        Ok(ticket)
     }
     pub(crate) fn poll_browser_import(&mut self) -> bool {
         let mut changed = self
@@ -145,6 +158,8 @@ impl Studio {
                                     .find(|c| !had.contains(&c.id))
                                     .map(|c| (t.id, c.id))
                             });
+                            // The ghost gives way to the clip in this frame (UI-386).
+                            self.clip_drop_landed(p.ticket, made.map(|(_, c)| c));
                             if let Some((t, c)) = made {
                                 self.select_clip_here(t, c);
                                 let end = project.tracks.get(&t).and_then(|track| {
@@ -277,6 +292,7 @@ impl Studio {
                 self.browser_import_io.pending = Some(Pending {
                     id,
                     key,
+                    ticket: import.ticket,
                     project,
                     dir,
                     midi,
