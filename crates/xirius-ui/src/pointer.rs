@@ -154,8 +154,17 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
             },
         );
     }
-    if studio.palette.is_some() || studio.recovery.is_some() || studio.sound_preparing() {
-        return Pointer::style(CursorStyle::Arrow);
+    // The cards and the palette take every press; their buttons and rows have the hand.
+    if studio.palette.is_some() {
+        return Pointer::style(studio.palette_pointer(g, x, y));
+    }
+    if studio.recovery.is_some() || studio.sound_preparing() {
+        let over = studio.recovery_over_button(g, x, y) || studio.prepare_over_button(g, x, y);
+        return Pointer::style(if over {
+            CursorStyle::PointingHand
+        } else {
+            CursorStyle::Arrow
+        });
     }
     if studio.instruments.sizing() {
         return Pointer::style(CursorStyle::ResizeUpLeftDownRight);

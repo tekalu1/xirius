@@ -418,6 +418,17 @@ impl Studio {
         true
     }
 
+    /// Whether (`x`, `y`) is on one of the card's buttons, as [`Self::prepare_press`] reads them.
+    pub(crate) fn prepare_over_button(&self, g: &Geometry, x: f32, y: f32) -> bool {
+        self.preparing.as_ref().is_some_and(|card| {
+            let l = card.layout(g.size);
+            [l.retry, l.proceed, Some(l.button)]
+                .into_iter()
+                .flatten()
+                .any(|r| r.contains(x, y))
+        })
+    }
+
     pub(crate) fn prepare_retry(&mut self) {
         if !self
             .preparing

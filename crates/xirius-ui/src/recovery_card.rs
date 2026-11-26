@@ -164,6 +164,16 @@ impl Studio {
         true
     }
 
+    /// Whether (`x`, `y`) is on one of the card's buttons, as [`Self::recovery_press`] reads them.
+    pub(crate) fn recovery_over_button(&self, g: &Geometry, x: f32, y: f32) -> bool {
+        self.recovery.as_ref().is_some_and(|card| {
+            card.layout(g.size)
+                .cells
+                .iter()
+                .any(|c| c.rect.contains(x, y) && matches!(c.action, Some(Action::Recovery(_))))
+        })
+    }
+
     pub fn recovery_hover(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
         let Some(card) = &mut self.recovery else {
             return false;
