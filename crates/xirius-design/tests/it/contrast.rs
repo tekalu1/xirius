@@ -76,8 +76,8 @@ fn lightness(c: Color) -> f64 {
     }
 }
 
-#[test]
-fn every_text_reads_at_4_5_on_its_face_in_both_themes() {
+/// 文字の表: 文字と、その下の面の組の全部。
+fn text_rows() -> Vec<Row> {
     let mut rows = Vec::new();
     for theme in Theme::ALL {
         // 許された面と文字の組（Pair）。
@@ -134,6 +134,12 @@ fn every_text_reads_at_4_5_on_its_face_in_both_themes() {
             false,
         ));
     }
+    rows
+}
+
+#[test]
+fn every_text_reads_at_4_5_on_its_face_in_both_themes() {
+    let rows = text_rows();
     let (failures, worst) = check_rows(&rows, MIN_TEXT_CONTRAST);
     println!("文字 × 面: {} 行、最小 {worst:.2}:1", rows.len());
     assert!(
@@ -142,8 +148,8 @@ fn every_text_reads_at_4_5_on_its_face_in_both_themes() {
     );
 }
 
-#[test]
-fn every_graphic_stands_out_at_3_on_its_face_in_both_themes() {
+/// 図形の表: 中身・アクセント・線・メーター・鍵・スイッチと、その下の面の組の全部。
+fn graphic_rows() -> Vec<Row> {
     let mut rows = Vec::new();
     for theme in Theme::ALL {
         // 中身（ノート・波形・打点）・アクセント・分類の点・構造線は、中立の面の上で。
@@ -291,11 +297,77 @@ fn every_graphic_stands_out_at_3_on_its_face_in_both_themes() {
             ));
         }
     }
+    rows
+}
+
+#[test]
+fn every_graphic_stands_out_at_3_on_its_face_in_both_themes() {
+    let rows = graphic_rows();
     let (failures, worst) = check_rows(&rows, MIN_GRAPHIC_CONTRAST);
     println!("図形 × 面: {} 行、最小 {worst:.2}:1", rows.len());
     assert!(
         failures.is_empty(),
         "図形が 3:1 に届かない行: {failures:#?}"
+    );
+}
+
+/// 表の写し（`tests/contrast.txt`）。色を変えると、どの行の比が動いたかが差分に出る。
+const SNAPSHOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contrast.txt");
+const WRITE: &str = "XIRIUS_WRITE_CONTRAST=1 cargo nextest run -p xirius-design contrast";
+
+fn hex(c: Color) -> String {
+    let rgb = format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
+    if c.is_opaque() {
+        rgb
+    } else {
+        format!("{rgb}{:02x}", c.a)
+    }
+}
+
+fn snapshot() -> String {
+    let mut out = format!(
+        "# 試験が出す表で、手で直さない（{WRITE}）。\n# 表\t行\t前の色\t面の色\t比\t下限\n"
+    );
+    for (table, rows, min) in [
+        ("text", text_rows(), MIN_TEXT_CONTRAST),
+        ("graphic", graphic_rows(), MIN_GRAPHIC_CONTRAST),
+    ] {
+        for r in rows {
+            out.push_str(&format!(
+                "{table}\t{}\t{}\t{}\t{:.2}\t{min}\n",
+                r.name,
+                hex(r.fg),
+                hex(r.face),
+                contrast_ratio(r.fg, r.face),
+            ));
+        }
+    }
+    out
+}
+
+#[test]
+fn the_contrast_table_matches_its_snapshot() {
+    let want = snapshot();
+    if std::env::var_os("XIRIUS_WRITE_CONTRAST").is_some() {
+        std::fs::write(SNAPSHOT, &want).unwrap();
+        return;
+    }
+    let have = std::fs::read_to_string(SNAPSHOT)
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
+    if have == want {
+        return;
+    }
+    let (mut a, mut b) = (have.lines(), want.lines());
+    let mut n = 1;
+    let (old, new) = loop {
+        match (a.next(), b.next()) {
+            (Some(x), Some(y)) if x == y => n += 1,
+            (x, y) => break (x.unwrap_or("（無い）"), y.unwrap_or("（無い）")),
+        }
+    };
+    panic!(
+        "tests/contrast.txt:{n} が表と違う（変えるつもりなら {WRITE}）\n  写し: {old}\n  表:   {new}"
     );
 }
 

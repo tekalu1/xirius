@@ -1,5 +1,5 @@
-//! 見本では書きにくい挙動: 出力の形・設定・ワークスペースの走査・例外の印の効き方。
-//! 規則ごとの合否（面の上辺の光・細い線・テストの中を見ないことなど）は fixtures の見本が持つ。
+//! 見本では書きにくい挙動: 出力の形・読めないソース・設定・ワークスペースの走査。
+//! 規則ごとの合否と例外の印の効き方（面の上辺の光・細い線・テストの中を見ないこと・理由の無い印など）は fixtures の見本が持つ。
 
 use std::fs;
 
@@ -26,20 +26,6 @@ fn output_is_file_line_rule() {
 #[test]
 fn unreadable_source_is_a_parse_error() {
     assert_eq!(rules("fn f( {"), vec![Rule::ParseError]);
-}
-
-#[test]
-fn an_allow_for_another_rule_does_not_suppress() {
-    let src = "// design-lint: allow(raw-color) 色の例外\nfn f() { div().border_1(); }\n";
-    let got = rules(src);
-    assert!(got.contains(&Rule::Border));
-    assert!(got.contains(&Rule::UnusedAllow));
-}
-
-#[test]
-fn meta_rules_cannot_be_allowed() {
-    let src = "// design-lint: allow(unused-allow) 試し\nfn f() {}\n";
-    assert_eq!(rules(src), vec![Rule::UnknownRule]);
 }
 
 /// A folder of the test's own, removed when dropped (also when the test fails).
@@ -120,12 +106,4 @@ fn config_needs_a_reason_and_rejects_unknown_keys() {
 fn a_missing_config_file_means_defaults() {
     let c = Config::load(std::path::Path::new("definitely/not/here.toml")).unwrap();
     assert!(c.exempt.is_empty());
-}
-
-#[test]
-fn a_line_can_be_allowed_with_a_reason_but_not_without() {
-    let ok = "fn f() {\n    // design-lint: allow(line) 再生位置の針。区切りではない\n    let a = div().w(px(2.0)).h_full().bg(c);\n}\n";
-    assert!(rules(ok).is_empty(), "{:?}", rules(ok));
-    let bare = "fn f() {\n    // design-lint: allow(line)\n    let a = div().w(px(2.0)).h_full().bg(c);\n}\n";
-    assert!(rules(bare).contains(&Rule::AllowWithoutReason));
 }
