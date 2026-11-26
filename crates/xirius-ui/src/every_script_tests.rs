@@ -314,9 +314,10 @@ fn play_part(part: usize) {
     let mut done = Played::default();
     let mut scripts = Vec::new();
     for (i, (name, shots)) in crate::SCRIPTS.iter().enumerate() {
-        let picked = match &only {
-            Some(o) => o == name,
-            None => i % PARTS == part,
+        let picked = match (&only, ALONE.iter().position(|n| n == name)) {
+            (Some(o), _) => o == name,
+            (None, Some(alone)) => alone == part,
+            (None, None) => part >= ALONE.len() && i % (PARTS - ALONE.len()) == part - ALONE.len(),
         };
         if !picked || NOT_PLAYED.iter().any(|(n, _)| n == name) {
             continue;
@@ -337,13 +338,22 @@ fn play_part(part: usize) {
         if let Err(e) = play_script(name, shots, &mut done) {
             failures.push(e);
         }
-        // The bounces and freezes a script started run on after its song went.
+        // The bounces and freezes a script started run on after its song went, and nothing
+        // checks them any more (feel2 asks for two of 400 bars, to see one wait for the other):
+        // this process's are stopped (one that waited in the queue, as it starts), and waited
+        // for until they have let go of their files.
         let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        while xirius_core::running::list()
-            .iter()
-            .any(|j| j.pid == std::process::id())
-            && std::time::Instant::now() < end
-        {
+        loop {
+            let mine: Vec<_> = xirius_core::running::list()
+                .into_iter()
+                .filter(|j| j.pid == std::process::id())
+                .collect();
+            if mine.is_empty() || std::time::Instant::now() >= end {
+                break;
+            }
+            for job in mine {
+                xirius_core::running::cancel(Some(&job.id));
+            }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         eprintln!("{name}: {:?}", started.elapsed());
@@ -394,8 +404,12 @@ macro_rules! parts {
     };
 }
 
-// Eleven, so the slowest scripts (audioproc, wire, feel2 and export-v1, 20 s to 40 s each in a
-// debug build) fall in parts of their own.
+/// The slowest scripts (20 s to 40 s each in a debug build, up to 100 s on CI), each played by a
+/// part of its own: the first parts, in this order. The rest are shared out among the others.
+const ALONE: &[&str] = &["audioproc", "wire", "export-v1"];
+
+// CI's `--partition slice:N/4` deals the tests out in turn, by name, so parts 0 to 2 (one slow
+// script each) fall in different shards, and `.config/nextest.toml` starts them first.
 parts! {
     every_step_of_the_scripts_plays_without_a_window_part_0 = 0,
     every_step_of_the_scripts_plays_without_a_window_part_1 = 1,
@@ -405,14 +419,18 @@ parts! {
     every_step_of_the_scripts_plays_without_a_window_part_5 = 5,
     every_step_of_the_scripts_plays_without_a_window_part_6 = 6,
     every_step_of_the_scripts_plays_without_a_window_part_7 = 7,
-    every_step_of_the_scripts_plays_without_a_window_part_8 = 8,
-    every_step_of_the_scripts_plays_without_a_window_part_9 = 9,
-    every_step_of_the_scripts_plays_without_a_window_part_10 = 10,
 }
 
-/// Every row of `NOT_PLAYED` and `ENDS` names a script or a shot there is.
+/// Every row of `NOT_PLAYED`, `ALONE` and `ENDS` names a script or a shot there is.
 #[test]
 fn the_rows_left_out_and_the_ends_name_scripts_and_shots() {
+    assert!(ALONE.len() < PARTS, "no part is left for the other scripts");
+    for name in ALONE {
+        assert!(
+            crate::SCRIPTS.iter().any(|(n, _)| n == name),
+            "ALONE names no script: {name}"
+        );
+    }
     for (name, why) in NOT_PLAYED {
         assert!(
             crate::SCRIPTS.iter().any(|(n, _)| n == name),
