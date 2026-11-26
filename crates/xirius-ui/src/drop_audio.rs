@@ -77,13 +77,17 @@ impl Studio {
     /// Audio files put in at a point (a drop, or a drag from the browser). True when one was.
     /// They go where the ghost showed them going (UI-381): onto the audio track under the
     /// point, or onto new tracks at the seam; nowhere over the ruler. The start is on the grid
-    /// unless Shift is held; with Alt the files go end to end on one track.
+    /// unless Shift is held; with Alt the files go end to end on one track. The first file's
+    /// ghost stays until it is read (UI-386).
     pub fn import_audio_at(&mut self, g: &Geometry, x: f32, y: f32, paths: &[&Path]) -> bool {
         let (shift, alt) = (self.arrange.clip_drop.shift, self.arrange.clip_drop.alt);
         let aim = self.clip_drop_aim(g, x, y, shift);
-        let done = self.place_audio(aim, paths, alt);
+        let first = self.place_audio(aim, paths, alt);
+        if let Some((ticket, path)) = &first {
+            self.clip_drop_land(*ticket, path.clone(), aim);
+        }
         self.clip_drop_end();
-        done
+        first.is_some()
     }
 
     /// Says what was put in: the one line, or `many` for more. When a clip could follow the

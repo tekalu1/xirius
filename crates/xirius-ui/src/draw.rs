@@ -1149,6 +1149,13 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
                         cr.x,
                     );
                     paint_clip(pen, track, clip, cr, selected, takes, &height, studio, None);
+                    // A dropped file's clip comes up from its ghost (UI-386): the lane shows
+                    // through less and less.
+                    if let Some(alpha) =
+                        studio.clip_drop_landed_alpha(clip.id, std::time::Instant::now())
+                    {
+                        pen.round(cr, face.opacity(1.0 - alpha), Radius::Clip);
+                    }
                     crate::arrange::speed::paint_mark(pen, studio, clip.id, cr);
                     crate::arrange::clip_loop::paint_mark(pen, studio, clip, cr);
                 }

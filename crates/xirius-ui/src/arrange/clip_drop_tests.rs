@@ -381,6 +381,61 @@ fn a_file_let_go_at_a_seam_is_a_new_track_there_with_its_clip_selected() {
 }
 
 #[test]
+fn the_ghost_row_stays_until_its_track_takes_its_place_and_goes_if_the_file_fails() {
+    let dir = folder("landing");
+    let kick = tone(dir.path(), "Kick.wav", 0.5);
+    let bad = dir.path().join("Bad.wav");
+    std::fs::write(&bad, b"not audio").unwrap();
+    let mut s = Studio::sample();
+    let g = s.geometry(1600.0, 1000.0);
+    let (row, (parent, i)) = audio_below_a_row(&s);
+    let full = s.arrange.track_h;
+    let (x, y) = (mid_x(&g), screen_y(&g, &row, 1.0));
+    let t0 = Instant::now();
+    hold(&mut s, &g, x, y, t0, std::slice::from_ref(&kick));
+    s.clip_drop_tick(&g, ms(t0, 120));
+    let below = s.row_y(&g, &row);
+    assert!(s.import_audio_at(&g, x, y, &[kick.as_path()]));
+    s.drop_over = false;
+    // A frame while the file is read: the ghost and its gap stay, nothing moves.
+    s.clip_drop_tick(&g, ms(t0, 130));
+    assert!(s.arrange.clip_drop.landing.is_some());
+    assert!((s.row_y(&g, &row) - below).abs() < 0.01);
+    s.settle_browser_import();
+    // In the frame the clip is put in, its track stands where the ghost row stood.
+    assert!(s.arrange.clip_drop.landing.is_none());
+    let tree = s.tree();
+    let new = tree
+        .row_of(RowKind::Track(new_track_at(&s, parent, i)))
+        .unwrap();
+    assert!((s.row_y(&g, new) - (below - full)).abs() < 0.01);
+    let moved = tree.row_of(RowKind::Track(track_of(&row))).unwrap();
+    assert!((s.row_y(&g, moved) - below).abs() < 0.01);
+    // It comes up from the ghost's opacity to full over 120 ms.
+    let (c, at) = s.arrange.clip_drop.landed.unwrap();
+    assert_eq!(s.clip_drop_landed_alpha(c, at), Some(GHOST_ALPHA));
+    assert_eq!(
+        s.clip_drop_landed_alpha(c, at + Duration::from_millis(120)),
+        None
+    );
+
+    // A file that cannot be read: the ghost goes and the gap closes, nothing is put in.
+    let mut s = Studio::sample();
+    let g = s.geometry(1600.0, 1000.0);
+    let tracks = s.project().tracks.len();
+    hold(&mut s, &g, x, y, t0, std::slice::from_ref(&bad));
+    s.clip_drop_tick(&g, ms(t0, 120));
+    assert!(s.import_audio_at(&g, x, y, &[bad.as_path()]));
+    s.drop_over = false;
+    s.settle_browser_import();
+    s.clip_drop_tick(&g, ms(t0, 130));
+    assert!(s.arrange.clip_drop.landing.is_none());
+    s.clip_drop_tick(&g, ms(t0, 130 + 120));
+    assert!(!s.arrange.clip_drop.has_gaps());
+    assert_eq!(s.project().tracks.len(), tracks);
+}
+
+#[test]
 fn several_files_stack_on_new_tracks_and_with_alt_go_end_to_end() {
     let dir = folder("several");
     let one = tone(dir.path(), "One.wav", 1.0);

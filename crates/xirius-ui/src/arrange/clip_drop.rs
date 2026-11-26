@@ -10,6 +10,11 @@
 //!
 //! Several files are stacked: the first where the pointer is, each other on a new track right
 //! below it, in order. With Alt they go end to end on the one track.
+//!
+//! Let go of, the first file's ghost (and the gap it opened) stays as it was while the file is
+//! read (UI-386): the clip takes its place in the frame it is put in, and comes up from the
+//! ghost's opacity to full over 120 ms. A file that cannot be read leaves no ghost behind: it
+//! goes, and the gap closes.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -91,9 +96,30 @@ pub struct ClipDrop {
     /// The files come from the system, not from the browser.
     pub from_os: bool,
     pub pointer: Option<(f32, f32)>,
+    /// The file let go of, waiting to be read: its ghost stays.
+    pub landing: Option<Landing>,
+    /// The clip a landing became and when: it comes up to full opacity.
+    pub landed: Option<(ClipId, Instant)>,
+}
+
+/// A file let go of whose import waits (UI-386).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Landing {
+    /// The import's ticket ([`Studio::queue_browser_import_with`]).
+    pub ticket: u64,
+    pub path: PathBuf,
+    pub aim: Aim,
 }
 
 impl ClipDrop {
+    /// The seam whose gap a landing keeps open.
+    fn landing_seam(&self) -> Option<SeamAt> {
+        match self.landing.as_ref()?.aim {
+            Aim::Seam { seam, .. } => Some(seam),
+            Aim::Track { .. } | Aim::Refused => None,
+        }
+    }
+
     /// How far a row whose top is at `tree_y` (relative to the top of the track column) moves
     /// down for the gaps above it.
     pub fn shift_of(&self, tree_y: f32) -> f32 {
@@ -359,7 +385,8 @@ impl Studio {
         self.clip_drop_gaps(now);
     }
 
-    /// Opens the gap of the seam on show and closes the others. True while one moves.
+    /// Opens the gap of the seam on show and closes the others; a landing keeps its own open.
+    /// True while one moves.
     fn clip_drop_gaps(&mut self, now: Instant) -> bool {
         let full = self.arrange.track_h;
         let reduced = self.clip_drop_reduced();
@@ -369,8 +396,11 @@ impl Studio {
             .live()
             .map(|s| s.spot)
             .and_then(|k| d.shown_at.filter(|s| s.key == k));
+        let landing = d.landing_seam().map(|s| s.key);
         for gap in &mut d.gaps {
-            let want = target.filter(|t| t.key == gap.seam.key);
+            let want = target
+                .filter(|t| t.key == gap.seam.key)
+                .or_else(|| (landing == Some(gap.seam.key)).then_some(gap.seam));
             if want.is_some() != gap.open {
                 gap.from = gap.amount;
                 gap.began = now;
@@ -446,6 +476,57 @@ impl Studio {
 
     /// A frame: the seam's wait and grace, the gap's growing. True while something moves.
     pub(crate) fn clip_drop_tick(&mut self, g: &Geometry, now: Instant) -> bool {
+        let landing = self.clip_drop_landing_tick(now);
+        self.clip_drop_held_tick(g, now) || landing
+    }
+
+    /// A landing's frame: the import is looked at every frame rather than at the idle poll, so
+    /// the clip takes the ghost's place as soon as it can. True while one waits or fades.
+    fn clip_drop_landing_tick(&mut self, now: Instant) -> bool {
+        if let Some(ticket) = self.arrange.clip_drop.landing.as_ref().map(|l| l.ticket) {
+            self.poll_browser_import();
+            if self.arrange.clip_drop.landing.is_some() && !self.browser_import_io.holds(ticket) {
+                // It failed, or the song changed: the ghost goes and its gap closes.
+                self.arrange.clip_drop.landing = None;
+                self.arrange.touched();
+            }
+        }
+        let reduced = self.clip_drop_reduced();
+        let d = &mut self.arrange.clip_drop;
+        let fading = d.landed.is_some_and(|(_, at)| {
+            !reduced && now.saturating_duration_since(at).as_millis() < u128::from(Tok::Fast.ms())
+        });
+        if !fading && d.landed.take().is_some() {
+            self.arrange.touched();
+        }
+        self.arrange.clip_drop.landing.is_some() || fading
+    }
+
+    /// The opacity the clip a landing became is painted at, if it is still coming up.
+    pub(crate) fn clip_drop_landed_alpha(&self, clip: ClipId, now: Instant) -> Option<f32> {
+        let (id, at) = self.arrange.clip_drop.landed?;
+        if id != clip || self.clip_drop_reduced() {
+            return None;
+        }
+        let k = now.saturating_duration_since(at).as_secs_f32() * 1000.0 / Tok::Fast.ms() as f32;
+        (k < 1.0).then(|| GHOST_ALPHA + (1.0 - GHOST_ALPHA) * ease(k))
+    }
+
+    /// The file let go of with `ticket` is put in, as `clip`: its ghost and the gap go in the
+    /// same frame, so the new row stands where the ghost row stood.
+    pub(crate) fn clip_drop_landed(&mut self, ticket: u64, clip: Option<ClipId>) {
+        let d = &mut self.arrange.clip_drop;
+        if d.landing.as_ref().is_none_or(|l| l.ticket != ticket) {
+            return;
+        }
+        let key = d.landing_seam().map(|s| s.key);
+        d.landing = None;
+        d.gaps.retain(|g| Some(g.seam.key) != key);
+        d.landed = clip.map(|c| (c, Instant::now()));
+        self.arrange.touched();
+    }
+
+    fn clip_drop_held_tick(&mut self, g: &Geometry, now: Instant) -> bool {
         let reduced = self.clip_drop_reduced();
         if self.arrange.clip_drop.paths.is_empty() {
             // A device dragged from the browser shows its line through the same seam.
@@ -475,13 +556,15 @@ impl Studio {
         self.arrange.clip_drop.live.moving(now, reduced) || gaps
     }
 
-    /// The files are let go of or the drag is called off: the ghost, the seam and the gap go.
+    /// The files are let go of or the drag is called off: the ghost, the seam and the gap go,
+    /// all but a landing's.
     pub(crate) fn clip_drop_end(&mut self) {
         let d = &mut self.arrange.clip_drop;
         let had = !d.gaps.is_empty() || !d.paths.is_empty();
         d.live.clear();
         d.live.forget();
-        d.gaps.clear();
+        let keep = d.landing_seam().map(|s| s.key);
+        d.gaps.retain(|g| Some(g.seam.key) == keep);
         d.shown_at = None;
         d.aim = None;
         d.paths.clear();
@@ -521,12 +604,18 @@ impl Studio {
     }
 
     /// Puts the files where `aim` says: stacked, the first there and each other on a new
-    /// track right below; with `alt`, end to end on the first one's track. True when one was.
-    pub(crate) fn place_audio(&mut self, aim: Aim, paths: &[&Path], alt: bool) -> bool {
+    /// track right below; with `alt`, end to end on the first one's track. The first file put
+    /// in and its import's ticket, when one was.
+    pub(crate) fn place_audio(
+        &mut self,
+        aim: Aim,
+        paths: &[&Path],
+        alt: bool,
+    ) -> Option<(u64, PathBuf)> {
         let p = self.project();
         type Step = (Option<TrackId>, Tick, Option<Key>, bool);
         let plan: Vec<Step> = match aim {
-            Aim::Refused => return false,
+            Aim::Refused => return None,
             Aim::Track { track, at } => {
                 let next = p
                     .find_node(Node::Track(track))
@@ -547,35 +636,48 @@ impl Studio {
             }
         };
         let mut placed = Vec::new();
+        let mut first = None;
         for (path, (track, at, into, chain)) in paths.iter().zip(plan) {
             match self.queue_browser_import_with(path.to_path_buf(), track, at, false, into, chain)
             {
-                Ok(()) => placed.push(crate::drop_audio::Placed {
-                    line: String::new(),
-                    follows: None,
-                }),
+                Ok(ticket) => {
+                    first.get_or_insert_with(|| (ticket, path.to_path_buf()));
+                    placed.push(crate::drop_audio::Placed {
+                        line: String::new(),
+                        follows: None,
+                    });
+                }
                 Err(e) => self.error = Some(e),
             }
         }
         let n = placed.len();
         self.tell_placed(placed, format!("音声ファイル {n} 個を置きました"));
-        n > 0
+        first
+    }
+
+    /// The file let go of waits for its import with its ghost where it showed.
+    pub(crate) fn clip_drop_land(&mut self, ticket: u64, path: PathBuf, aim: Aim) {
+        self.arrange.clip_drop.landing = Some(Landing { ticket, path, aim });
+        self.arrange.touched();
     }
 }
 
 /// The ghost of the first file held: on its track, or in the ghost row of the seam it opened,
-/// with the seam's line; and its start marked on the ruler.
+/// with the seam's line; and its start marked on the ruler. Once let go of, the ghost alone
+/// stays until the file is read.
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     let d = &studio.arrange.clip_drop;
-    let Some(path) = d.paths.first() else {
-        return;
+    let (path, aim, landing) = match (d.paths.first(), d.aim, &d.landing) {
+        (Some(path), Some(aim), _) => (path, aim, false),
+        (None, _, Some(l)) => (&l.path, l.aim, true),
+        _ => return,
     };
     if studio.start_shown() || studio.over != crate::independent::Over::Main {
         return;
     }
-    let at = match d.aim {
-        Some(Aim::Track { at, .. } | Aim::Seam { at, .. }) => at,
-        _ => return,
+    let at = match aim {
+        Aim::Track { at, .. } | Aim::Seam { at, .. } => at,
+        Aim::Refused => return,
     };
     let c = pen.c;
     let p = studio.project();
@@ -605,8 +707,8 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         g.column.h,
     );
     let tree = studio.tree();
-    match d.aim {
-        Some(Aim::Track { track, .. }) => {
+    match aim {
+        Aim::Track { track, .. } => {
             if let (Some(t), Some(row)) = (p.tracks.get(&track), tree.row_of(RowKind::Track(track)))
             {
                 let r = studio.clip_rect(g, row, &clip);
@@ -626,7 +728,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
                 });
             }
         }
-        Some(Aim::Seam { seam, .. }) => {
+        Aim::Seam { seam, .. } => {
             let own = d.gap_of(seam.key);
             let edge = seam.edge + d.shift_of(seam.edge) - if seam.bottom { 0.0 } else { own };
             let top = g.column.y + edge - studio.scroll.1;
@@ -689,16 +791,21 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
                     });
                 });
             }
-            let grow = d
-                .live
-                .look(now, reduced)
-                .filter(|l| l.spot == seam.key)
-                .map_or(1.0, |l| l.grow);
-            crate::arrange::paint::paint_track_seam_at(
-                pen, studio, g, edge, seam.depth, grow, false,
-            );
+            if !landing {
+                let grow = d
+                    .live
+                    .look(now, reduced)
+                    .filter(|l| l.spot == seam.key)
+                    .map_or(1.0, |l| l.grow);
+                crate::arrange::paint::paint_track_seam_at(
+                    pen, studio, g, edge, seam.depth, grow, false,
+                );
+            }
         }
-        _ => {}
+        Aim::Refused => {}
+    }
+    if landing {
+        return;
     }
     // The start on the ruler: a line and its bar, beat and tick.
     let x = studio.tick_x(g, at);
