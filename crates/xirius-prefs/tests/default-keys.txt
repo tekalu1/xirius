@@ -1,0 +1,1338 @@
+# Every preset's keys and the mouse's defaults (crates/xirius-prefs/tests/it/default_keys.rs).
+# keys	preset	context	key	Windows	Mac	command / mouse	context	modifier	action
+keys	studio-pro	arrange	Backspace	Backspace	⌫	clip.delete
+keys	studio-pro	arrange	D	D	D	clip.duplicate
+keys	studio-pro	arrange	Delete	Del	⌫	clip.delete
+keys	studio-pro	arrange	G	G	G	clip.join
+keys	studio-pro	arrange	H	H	H	auto.lane.next
+keys	studio-pro	arrange	Insert	Insert	Insert	marker.add
+keys	studio-pro	arrange	J	J	J	auto.mode --mode read
+keys	studio-pro	arrange	K	K	K	auto.mode --mode touch
+keys	studio-pro	arrange	Menu	Menu	Menu	view.context-menu
+keys	studio-pro	arrange	Q	Q	Q	clip.quantize
+keys	studio-pro	arrange	X	X	X	clip.fade.cross
+keys	studio-pro	arrange	Y	Y	Y	marker.add
+keys	studio-pro	arrange	Mod+B	Ctrl+B	⌘B	clip.bounce
+keys	studio-pro	arrange	Mod+G	Ctrl+G	⌘G	clip.split.grid
+keys	studio-pro	arrange	Mod+L	Ctrl+L	⌘L	clip.move.cursor
+keys	studio-pro	arrange	Mod+M	Ctrl+M	⌘M	clip.ara.attach
+keys	studio-pro	arrange	Mod+P	Ctrl+P	⌘P	clip.add.midi
+keys	studio-pro	arrange	Mod+R	Ctrl+R	⌘R	clip.reverse
+keys	studio-pro	arrange	Alt+D	Alt+D	⌥D	section.duplicate
+keys	studio-pro	arrange	Alt+G	Alt+G	⌥G	take.prev
+keys	studio-pro	arrange	Alt+H	Alt+H	⌥H	take.next
+keys	studio-pro	arrange	Alt+Left	Alt+←	⌥←	clip.nudge --dir left
+keys	studio-pro	arrange	Alt+N	Alt+N	⌥N	clip.normalize
+keys	studio-pro	arrange	Alt+NumPad+	Alt+NumPad+	⌥NumPad+	clip.gain.set --by 1
+keys	studio-pro	arrange	Alt+NumPad-	Alt+NumPad-	⌥NumPad-	clip.gain.set --by -1
+keys	studio-pro	arrange	Alt+R	Alt+R	⌥R	range.from-clips
+keys	studio-pro	arrange	Alt+Right	Alt+→	⌥→	clip.nudge --dir right
+keys	studio-pro	arrange	Alt+T	Alt+T	⌥T	range.transform
+keys	studio-pro	arrange	Alt+X	Alt+X	⌥X	clip.split
+keys	studio-pro	arrange	Mod+Alt+B	Ctrl+Alt+B	⌥⌘B	clip.bounce --new-track
+keys	studio-pro	arrange	Mod+Alt+D	Ctrl+Alt+D	⌥⌘D	range.time.delete
+keys	studio-pro	arrange	Mod+Alt+I	Ctrl+Alt+I	⌥⌘I	range.time.insert
+keys	studio-pro	arrange	Mod+Alt+L	Ctrl+Alt+L	⌥⌘L	clip.loop.set --toggle
+keys	studio-pro	arrange	Mod+Alt+Left	Ctrl+Alt+←	⌥⌘←	clip.nudge --dir left --unit bar
+keys	studio-pro	arrange	Mod+Alt+M	Ctrl+Alt+M	⌥⌘M	clip.ara.detach
+keys	studio-pro	arrange	Mod+Alt+Right	Ctrl+Alt+→	⌥⌘→	clip.nudge --dir right --unit bar
+keys	studio-pro	arrange	Mod+Alt+X	Ctrl+Alt+X	⌥⌘X	clip.split.range
+keys	studio-pro	arrange	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	studio-pro	arrange	Shift+H	Shift+H	⇧H	auto.lane.next --back
+keys	studio-pro	arrange	Shift+Insert	Shift+Insert	⇧Insert	marker.add.named
+keys	studio-pro	arrange	Shift+M	Shift+M	⇧M	clip.mute
+keys	studio-pro	arrange	Shift+R	Shift+R	⇧R	range.from-clips
+keys	studio-pro	arrange	Shift+X	Shift+X	⇧X	clip.fade.set --auto
+keys	studio-pro	arrange	Shift+Y	Shift+Y	⇧Y	marker.add.named
+keys	studio-pro	arrange	Mod+Shift+D	Ctrl+Shift+D	⇧⌘D	select.off-tracks
+keys	studio-pro	arrange	Mod+Shift+X	Ctrl+Shift+X	⇧⌘X	clip.split.range --range loop
+keys	studio-pro	arrange	Alt+Shift+End	Alt+Shift+End	⌥⇧End	select.span --way end
+keys	studio-pro	arrange	Alt+Shift+Home	Alt+Shift+Home	⌥⇧Home	select.span --way start
+keys	studio-pro	arrange	Alt+Shift+NumPad+	Alt+Shift+NumPad+	⌥⇧NumPad+	clip.gain.set --by 0.1
+keys	studio-pro	arrange	Alt+Shift+NumPad-	Alt+Shift+NumPad-	⌥⇧NumPad-	clip.gain.set --by -0.1
+keys	studio-pro	automation	Backspace	Backspace	⌫	clip.delete
+keys	studio-pro	automation	D	D	D	clip.duplicate
+keys	studio-pro	automation	Delete	Del	⌫	clip.delete
+keys	studio-pro	automation	H	H	H	auto.lane.next
+keys	studio-pro	automation	J	J	J	auto.mode --mode read
+keys	studio-pro	automation	K	K	K	auto.mode --mode touch
+keys	studio-pro	automation	Alt+Left	Alt+←	⌥←	edit.nudge.left
+keys	studio-pro	automation	Alt+Right	Alt+→	⌥→	edit.nudge.right
+keys	studio-pro	automation	Shift+H	Shift+H	⇧H	auto.lane.next --back
+keys	studio-pro	edit	1	1	1	tool.select
+keys	studio-pro	edit	2	2	2	tool.range
+keys	studio-pro	edit	3	3	3	tool.cut
+keys	studio-pro	edit	4	4	4	tool.erase
+keys	studio-pro	edit	5	5	5	tool.draw
+keys	studio-pro	edit	6	6	6	tool.mute
+keys	studio-pro	edit	8	8	8	tool.listen
+keys	studio-pro	edit	A	A	A	view.lanes
+keys	studio-pro	edit	E	E	E	view.zoom.time --by 1
+keys	studio-pro	edit	F	F	F	view.autoscroll
+keys	studio-pro	edit	M	M	M	track.mute
+keys	studio-pro	edit	N	N	N	view.snap
+keys	studio-pro	edit	PageDown	PageDown	PageDown	view.page --way down
+keys	studio-pro	edit	PageUp	PageUp	PageUp	view.page --way up
+keys	studio-pro	edit	R	R	R	track.arm
+keys	studio-pro	edit	S	S	S	track.solo
+keys	studio-pro	edit	U	U	U	track.monitor
+keys	studio-pro	edit	W	W	W	view.zoom.time --by -1
+keys	studio-pro	edit	Z	Z	Z	view.zoom.toggle
+keys	studio-pro	edit	Mod++	Ctrl++	⌘+	view.zoom.time --by 1
+keys	studio-pro	edit	Mod+-	Ctrl+-	⌘-	view.zoom.time --by -1
+keys	studio-pro	edit	Mod+A	Ctrl+A	⌘A	select.all
+keys	studio-pro	edit	Mod+C	Ctrl+C	⌘C	edit.copy
+keys	studio-pro	edit	Mod+D	Ctrl+D	⌘D	select.clear
+keys	studio-pro	edit	Mod+I	Ctrl+I	⌘I	select.invert
+keys	studio-pro	edit	Mod+NumPad+	Ctrl+NumPad+	⌘NumPad+	view.zoom.time --by 1
+keys	studio-pro	edit	Mod+NumPad-	Ctrl+NumPad-	⌘NumPad-	view.zoom.time --by -1
+keys	studio-pro	edit	Mod+V	Ctrl+V	⌘V	edit.paste
+keys	studio-pro	edit	Mod+X	Ctrl+X	⌘X	edit.cut
+keys	studio-pro	edit	Alt+Backspace	Alt+Backspace	⌥⌫	view.zoom.undo
+keys	studio-pro	edit	Alt+E	Alt+E	⌥E	view.zoom.redo
+keys	studio-pro	edit	Alt+L	Alt+L	⌥L	select.in-loop
+keys	studio-pro	edit	Alt+S	Alt+S	⌥S	view.zoom.selection --horizontal
+keys	studio-pro	edit	Alt+W	Alt+W	⌥W	view.zoom.undo
+keys	studio-pro	edit	Alt+Z	Alt+Z	⌥Z	view.zoom.full
+keys	studio-pro	edit	Shift+E	Shift+E	⇧E	view.zoom.data --by 1
+keys	studio-pro	edit	Shift+L	Shift+L	⇧L	view.zoom.loop
+keys	studio-pro	edit	Shift+S	Shift+S	⇧S	view.zoom.selection
+keys	studio-pro	edit	Shift+T	Shift+T	⇧T	track.delete
+keys	studio-pro	edit	Shift+W	Shift+W	⇧W	view.zoom.data --by -1
+keys	studio-pro	edit	Shift+Z	Shift+Z	⇧Z	view.zoom.store
+keys	studio-pro	edit	Mod+Shift+A	Ctrl+Shift+A	⇧⌘A	select.on-tracks
+keys	studio-pro	edit	Mod+Shift+G	Ctrl+Shift+G	⇧⌘G	view.snap
+keys	studio-pro	edit	Mod+Shift+NumPad+	Ctrl+Shift+NumPad+	⇧⌘NumPad+	view.zoom.data --by 1
+keys	studio-pro	edit	Mod+Shift+NumPad-	Ctrl+Shift+NumPad-	⇧⌘NumPad-	view.zoom.data --by -1
+keys	studio-pro	edit	Mod+Shift+V	Ctrl+Shift+V	⇧⌘V	edit.paste --at original
+keys	studio-pro	export	Mod+Enter	Ctrl+Enter	⌘↩	view.export-run
+keys	studio-pro	global	#	#	#	transport.panic
+keys	studio-pro	global	,	,	,	transport.seek --at 0
+keys	studio-pro	global	/	/	/	transport.loop
+keys	studio-pro	global	C	C	C	transport.metronome
+keys	studio-pro	global	CapsLock	CapsLock	CapsLock	view.pc-keyboard
+keys	studio-pro	global	Down	↓	↓	select.step --dir down
+keys	studio-pro	global	End	End	End	select.step --dir end
+keys	studio-pro	global	Enter	Enter	↩	transport.start
+keys	studio-pro	global	F11	F11	F11	plugin.editor.open
+keys	studio-pro	global	F2	F2	F2	clip.open
+keys	studio-pro	global	F3	F3	F3	view.mixer
+keys	studio-pro	global	F4	F4	F4	browser.tab --tab inspector
+keys	studio-pro	global	F5	F5	F5	view.browser
+keys	studio-pro	global	F6	F6	F6	browser.tab --tab instruments
+keys	studio-pro	global	F7	F7	F7	browser.tab --tab effects
+keys	studio-pro	global	F9	F9	F9	browser.tab --tab files
+keys	studio-pro	global	Home	Home	Home	select.step --dir start
+keys	studio-pro	global	I	I	I	record.punch
+keys	studio-pro	global	L	L	L	transport.locate-selection
+keys	studio-pro	global	Left	←	←	select.step --dir left
+keys	studio-pro	global	MediaForward	MediaForward	MediaForward	transport.goto --to next-beat
+keys	studio-pro	global	MediaPlayPause	MediaPlayPause	MediaPlayPause	transport.play
+keys	studio-pro	global	MediaRecord	MediaRecord	MediaRecord	record.start
+keys	studio-pro	global	MediaRewind	MediaRewind	MediaRewind	transport.goto --to prev-beat
+keys	studio-pro	global	MediaStop	MediaStop	MediaStop	transport.stop
+keys	studio-pro	global	NumPad*	NumPad*	NumPad*	record.start
+keys	studio-pro	global	NumPad+	NumPad+	NumPad+	transport.goto --to next-beat
+keys	studio-pro	global	NumPad-	NumPad-	NumPad-	transport.goto --to prev-beat
+keys	studio-pro	global	NumPad.	NumPad.	NumPad.	transport.seek --at 0
+keys	studio-pro	global	NumPad/	NumPad/	NumPad/	transport.loop
+keys	studio-pro	global	NumPad0	NumPad0	NumPad0	transport.stop
+keys	studio-pro	global	NumPad1	NumPad1	NumPad1	transport.goto --to loop-start
+keys	studio-pro	global	NumPad2	NumPad2	NumPad2	transport.goto --to loop-end
+keys	studio-pro	global	NumPad3	NumPad3	NumPad3	transport.goto --to marker-1
+keys	studio-pro	global	NumPad4	NumPad4	NumPad4	transport.goto --to marker-2
+keys	studio-pro	global	NumPad5	NumPad5	NumPad5	transport.goto --to marker-3
+keys	studio-pro	global	NumPad6	NumPad6	NumPad6	transport.goto --to marker-4
+keys	studio-pro	global	NumPad7	NumPad7	NumPad7	transport.goto --to marker-5
+keys	studio-pro	global	NumPad8	NumPad8	NumPad8	transport.goto --to marker-6
+keys	studio-pro	global	NumPad9	NumPad9	NumPad9	transport.goto --to marker-7
+keys	studio-pro	global	O	O	O	record.preroll
+keys	studio-pro	global	P	P	P	loop.selection
+keys	studio-pro	global	Right	→	→	select.step --dir right
+keys	studio-pro	global	Space	Space	Space	transport.play
+keys	studio-pro	global	T	T	T	view.add-track
+keys	studio-pro	global	Tab	Tab	⇥	view.focus --way next
+keys	studio-pro	global	Up	↑	↑	select.step --dir up
+keys	studio-pro	global	Mod+,	Ctrl+,	⌘,	view.settings
+keys	studio-pro	global	Mod+.	Ctrl+.	⌘.	project.settings
+keys	studio-pro	global	Mod+E	Ctrl+E	⌘E	export.open
+keys	studio-pro	global	Mod+F	Ctrl+F	⌘F	browser.search
+keys	studio-pro	global	Mod+F4	Ctrl+F4	⌘F4	project.close
+keys	studio-pro	global	Mod+K	Ctrl+K	⌘K	view.palette
+keys	studio-pro	global	Mod+N	Ctrl+N	⌘N	project.new
+keys	studio-pro	global	Mod+NumPad.	Ctrl+NumPad.	⌘NumPad.	transport.goto
+keys	studio-pro	global	Mod+O	Ctrl+O	⌘O	project.open
+keys	studio-pro	global	Mod+Q	Ctrl+Q	⌘Q	app.quit
+keys	studio-pro	global	Mod+S	Ctrl+S	⌘S	project.save
+keys	studio-pro	global	Mod+Space	Ctrl+Space	⌘Space	transport.locate-mouse
+keys	studio-pro	global	Mod+T	Ctrl+T	⌘T	transport.locate
+keys	studio-pro	global	Mod+W	Ctrl+W	⌘W	project.close
+keys	studio-pro	global	Mod+Y	Ctrl+Y	⌘Y	history.redo
+keys	studio-pro	global	Mod+Z	Ctrl+Z	⌘Z	history.undo
+keys	studio-pro	global	Alt+NumPad1	Alt+NumPad1	⌥NumPad1	loop.start.set
+keys	studio-pro	global	Alt+NumPad2	Alt+NumPad2	⌥NumPad2	loop.end.set
+keys	studio-pro	global	Alt+PageDown	Alt+PageDown	⌥PageDown	plugin.preset.next
+keys	studio-pro	global	Alt+PageUp	Alt+PageUp	⌥PageUp	plugin.preset.prev
+keys	studio-pro	global	Mod+Alt+1	Ctrl+Alt+1	⌥⌘1	quantize.program --program A
+keys	studio-pro	global	Mod+Alt+2	Ctrl+Alt+2	⌥⌘2	quantize.program --program B
+keys	studio-pro	global	Mod+Alt+3	Ctrl+Alt+3	⌥⌘3	quantize.program --program C
+keys	studio-pro	global	Mod+Alt+4	Ctrl+Alt+4	⌥⌘4	quantize.program --program D
+keys	studio-pro	global	Mod+Alt+5	Ctrl+Alt+5	⌥⌘5	quantize.program --program E
+keys	studio-pro	global	Mod+Alt+6	Ctrl+Alt+6	⌥⌘6	quantize.program --program F
+keys	studio-pro	global	Mod+Alt+7	Ctrl+Alt+7	⌥⌘7	quantize.program --program G
+keys	studio-pro	global	Mod+Alt+C	Ctrl+Alt+C	⌥⌘C	track.reveal --in mixer
+keys	studio-pro	global	Mod+Alt+R	Ctrl+Alt+R	⌥⌘R	edit.ripple
+keys	studio-pro	global	Mod+Alt+S	Ctrl+Alt+S	⌥⌘S	track.solo.clear
+keys	studio-pro	global	Mod+Alt+T	Ctrl+Alt+T	⌥⌘T	track.reveal
+keys	studio-pro	global	Shift+B	Shift+B	⇧B	transport.goto --to prev-marker
+keys	studio-pro	global	Shift+C	Shift+C	⇧C	record.count-in
+keys	studio-pro	global	Shift+Down	Shift+↓	⇧↓	select.step --dir down --extend
+keys	studio-pro	global	Shift+End	Shift+End	⇧End	select.step --dir end --extend
+keys	studio-pro	global	Shift+F	Shift+F	⇧F	view.fullscreen
+keys	studio-pro	global	Shift+F11	Shift+F11	⇧F11	view.instrument
+keys	studio-pro	global	Shift+Home	Shift+Home	⇧Home	select.step --dir start --extend
+keys	studio-pro	global	Shift+Left	Shift+←	⇧←	select.step --dir left --extend
+keys	studio-pro	global	Shift+MediaForward	Shift+MediaForward	⇧MediaForward	transport.goto --to next-bar
+keys	studio-pro	global	Shift+MediaRewind	Shift+MediaRewind	⇧MediaRewind	transport.goto --to prev-bar
+keys	studio-pro	global	Shift+N	Shift+N	⇧N	transport.goto --to next-marker
+keys	studio-pro	global	Shift+NumPad+	Shift+NumPad+	⇧NumPad+	transport.goto --to next-bar
+keys	studio-pro	global	Shift+NumPad-	Shift+NumPad-	⇧NumPad-	transport.goto --to prev-bar
+keys	studio-pro	global	Shift+P	Shift+P	⇧P	loop.selection --no-snap
+keys	studio-pro	global	Shift+Right	Shift+→	⇧→	select.step --dir right --extend
+keys	studio-pro	global	Shift+Tab	Shift+Tab	⇧⇥	view.focus --way prev
+keys	studio-pro	global	Shift+Up	Shift+↑	⇧↑	select.step --dir up --extend
+keys	studio-pro	global	Mod+Shift+Down	Ctrl+Shift+↓	⇧⌘↓	select.step --dir down --extend
+keys	studio-pro	global	Mod+Shift+E	Ctrl+Shift+E	⇧⌘E	view.export-stems
+keys	studio-pro	global	Mod+Shift+End	Ctrl+Shift+End	⇧⌘End	select.step --dir end --extend
+keys	studio-pro	global	Mod+Shift+Home	Ctrl+Shift+Home	⇧⌘Home	select.step --dir start --extend
+keys	studio-pro	global	Mod+Shift+L	Ctrl+Shift+L	⇧⌘L	view.tracklist.collapse
+keys	studio-pro	global	Mod+Shift+Left	Ctrl+Shift+←	⇧⌘←	select.step --dir left --extend
+keys	studio-pro	global	Mod+Shift+M	Ctrl+Shift+M	⇧⌘M	track.mute.clear
+keys	studio-pro	global	Mod+Shift+O	Ctrl+Shift+O	⇧⌘O	clip.import
+keys	studio-pro	global	Mod+Shift+Right	Ctrl+Shift+→	⇧⌘→	select.step --dir right --extend
+keys	studio-pro	global	Mod+Shift+S	Ctrl+Shift+S	⇧⌘S	project.save-as
+keys	studio-pro	global	Mod+Shift+Up	Ctrl+Shift+↑	⇧⌘↑	select.step --dir up --extend
+keys	studio-pro	global	Mod+Shift+Z	Ctrl+Shift+Z	⇧⌘Z	history.redo
+keys	studio-pro	global	Alt+Shift+B	Alt+Shift+B	⌥⇧B	transport.goto --to prev-event
+keys	studio-pro	global	Alt+Shift+N	Alt+Shift+N	⌥⇧N	transport.goto --to next-event
+keys	studio-pro	global	Alt+Shift+R	Alt+Shift+R	⌥⇧R	view.record-panel
+keys	studio-pro	global	Mod+Alt+Shift+S	Ctrl+Alt+Shift+S	⌥⇧⌘S	version.save
+keys	studio-pro	lane	Backspace	Backspace	⌫	note.delete
+keys	studio-pro	lane	D	D	D	note.duplicate
+keys	studio-pro	lane	Delete	Del	⌫	note.delete
+keys	studio-pro	mixer	Backspace	Backspace	⌫	edit.delete
+keys	studio-pro	mixer	Delete	Del	⌫	edit.delete
+keys	studio-pro	mixer	Menu	Menu	Menu	view.context-menu
+keys	studio-pro	mixer	[	[	[	mixer.channel.prev
+keys	studio-pro	mixer	]	]	]	mixer.channel.next
+keys	studio-pro	mixer	{	{	{	mixer.bank --way prev
+keys	studio-pro	mixer	}	}	}	mixer.bank --way next
+keys	studio-pro	mixer	Mod+C	Ctrl+C	⌘C	edit.copy
+keys	studio-pro	mixer	Mod+V	Ctrl+V	⌘V	edit.paste
+keys	studio-pro	mixer	Mod+X	Ctrl+X	⌘X	edit.cut
+keys	studio-pro	mixer	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	studio-pro	roll	Backspace	Backspace	⌫	note.delete
+keys	studio-pro	roll	D	D	D	note.duplicate
+keys	studio-pro	roll	Delete	Del	⌫	note.delete
+keys	studio-pro	roll	Down	↓	↓	note.transpose --by -1
+keys	studio-pro	roll	G	G	G	note.join
+keys	studio-pro	roll	Left	←	←	edit.nudge.left --grid 1/16
+keys	studio-pro	roll	Menu	Menu	Menu	view.context-menu
+keys	studio-pro	roll	Q	Q	Q	note.quantize
+keys	studio-pro	roll	Right	→	→	edit.nudge.right --grid 1/16
+keys	studio-pro	roll	Up	↑	↑	note.transpose --by 1
+keys	studio-pro	roll	Mod+G	Ctrl+G	⌘G	note.split.grid
+keys	studio-pro	roll	Alt+Down	Alt+↓	⌥↓	note.transpose --by -1
+keys	studio-pro	roll	Alt+Left	Alt+←	⌥←	edit.nudge.left
+keys	studio-pro	roll	Alt+Q	Alt+Q	⌥Q	note.quantize --strength 50
+keys	studio-pro	roll	Alt+Right	Alt+→	⌥→	edit.nudge.right
+keys	studio-pro	roll	Alt+Up	Alt+↑	⌥↑	note.transpose --by 1
+keys	studio-pro	roll	Shift+Down	Shift+↓	⇧↓	note.transpose --by -12
+keys	studio-pro	roll	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	studio-pro	roll	Shift+M	Shift+M	⇧M	note.mute
+keys	studio-pro	roll	Shift+Q	Shift+Q	⇧Q	note.quantize --restore
+keys	studio-pro	roll	Shift+Up	Shift+↑	⇧↑	note.transpose --by 12
+keys	studio-pro	roll	Alt+Shift+Down	Alt+Shift+↓	⌥⇧↓	note.transpose --by -12
+keys	studio-pro	roll	Alt+Shift+Up	Alt+Shift+↑	⌥⇧↑	note.transpose --by 12
+keys	cubase	arrange	Backspace	Backspace	⌫	clip.delete
+keys	cubase	arrange	Delete	Del	⌫	clip.delete
+keys	cubase	arrange	G	G	G	clip.join
+keys	cubase	arrange	H	H	H	auto.lane.next
+keys	cubase	arrange	Insert	Insert	Insert	marker.add
+keys	cubase	arrange	J	J	J	auto.mode --mode read
+keys	cubase	arrange	K	K	K	auto.mode --mode touch
+keys	cubase	arrange	Menu	Menu	Menu	view.context-menu
+keys	cubase	arrange	Q	Q	Q	clip.quantize
+keys	cubase	arrange	X	X	X	clip.fade.cross
+keys	cubase	arrange	Y	Y	Y	marker.add
+keys	cubase	arrange	Mod+B	Ctrl+B	⌘B	clip.bounce
+keys	cubase	arrange	Mod+D	Ctrl+D	⌘D	clip.duplicate
+keys	cubase	arrange	Mod+G	Ctrl+G	⌘G	clip.split.grid
+keys	cubase	arrange	Mod+L	Ctrl+L	⌘L	clip.move.cursor
+keys	cubase	arrange	Mod+M	Ctrl+M	⌘M	clip.ara.attach
+keys	cubase	arrange	Mod+P	Ctrl+P	⌘P	clip.add.midi
+keys	cubase	arrange	Mod+R	Ctrl+R	⌘R	clip.reverse
+keys	cubase	arrange	Alt+D	Alt+D	⌥D	section.duplicate
+keys	cubase	arrange	Alt+G	Alt+G	⌥G	take.prev
+keys	cubase	arrange	Alt+H	Alt+H	⌥H	take.next
+keys	cubase	arrange	Alt+Left	Alt+←	⌥←	clip.nudge --dir left
+keys	cubase	arrange	Alt+N	Alt+N	⌥N	clip.normalize
+keys	cubase	arrange	Alt+NumPad+	Alt+NumPad+	⌥NumPad+	clip.gain.set --by 1
+keys	cubase	arrange	Alt+NumPad-	Alt+NumPad-	⌥NumPad-	clip.gain.set --by -1
+keys	cubase	arrange	Alt+R	Alt+R	⌥R	range.from-clips
+keys	cubase	arrange	Alt+Right	Alt+→	⌥→	clip.nudge --dir right
+keys	cubase	arrange	Alt+T	Alt+T	⌥T	range.transform
+keys	cubase	arrange	Alt+X	Alt+X	⌥X	clip.split
+keys	cubase	arrange	Mod+Alt+B	Ctrl+Alt+B	⌥⌘B	clip.bounce --new-track
+keys	cubase	arrange	Mod+Alt+D	Ctrl+Alt+D	⌥⌘D	range.time.delete
+keys	cubase	arrange	Mod+Alt+I	Ctrl+Alt+I	⌥⌘I	range.time.insert
+keys	cubase	arrange	Mod+Alt+L	Ctrl+Alt+L	⌥⌘L	clip.loop.set --toggle
+keys	cubase	arrange	Mod+Alt+Left	Ctrl+Alt+←	⌥⌘←	clip.nudge --dir left --unit bar
+keys	cubase	arrange	Mod+Alt+M	Ctrl+Alt+M	⌥⌘M	clip.ara.detach
+keys	cubase	arrange	Mod+Alt+Right	Ctrl+Alt+→	⌥⌘→	clip.nudge --dir right --unit bar
+keys	cubase	arrange	Mod+Alt+X	Ctrl+Alt+X	⌥⌘X	clip.split.range
+keys	cubase	arrange	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	cubase	arrange	Shift+H	Shift+H	⇧H	auto.lane.next --back
+keys	cubase	arrange	Shift+Insert	Shift+Insert	⇧Insert	marker.add.named
+keys	cubase	arrange	Shift+M	Shift+M	⇧M	clip.mute
+keys	cubase	arrange	Shift+R	Shift+R	⇧R	range.from-clips
+keys	cubase	arrange	Shift+X	Shift+X	⇧X	clip.fade.set --auto
+keys	cubase	arrange	Shift+Y	Shift+Y	⇧Y	marker.add.named
+keys	cubase	arrange	Mod+Shift+D	Ctrl+Shift+D	⇧⌘D	select.off-tracks
+keys	cubase	arrange	Mod+Shift+X	Ctrl+Shift+X	⇧⌘X	clip.split.range --range loop
+keys	cubase	arrange	Alt+Shift+End	Alt+Shift+End	⌥⇧End	select.span --way end
+keys	cubase	arrange	Alt+Shift+Home	Alt+Shift+Home	⌥⇧Home	select.span --way start
+keys	cubase	arrange	Alt+Shift+NumPad+	Alt+Shift+NumPad+	⌥⇧NumPad+	clip.gain.set --by 0.1
+keys	cubase	arrange	Alt+Shift+NumPad-	Alt+Shift+NumPad-	⌥⇧NumPad-	clip.gain.set --by -0.1
+keys	cubase	automation	Backspace	Backspace	⌫	clip.delete
+keys	cubase	automation	D	D	D	clip.duplicate
+keys	cubase	automation	Delete	Del	⌫	clip.delete
+keys	cubase	automation	H	H	H	auto.lane.next
+keys	cubase	automation	J	J	J	auto.mode --mode read
+keys	cubase	automation	K	K	K	auto.mode --mode touch
+keys	cubase	automation	Alt+Left	Alt+←	⌥←	edit.nudge.left
+keys	cubase	automation	Alt+Right	Alt+→	⌥→	edit.nudge.right
+keys	cubase	automation	Shift+H	Shift+H	⇧H	auto.lane.next --back
+keys	cubase	edit	1	1	1	tool.select
+keys	cubase	edit	2	2	2	tool.range
+keys	cubase	edit	3	3	3	tool.cut
+keys	cubase	edit	5	5	5	tool.erase
+keys	cubase	edit	7	7	7	tool.mute
+keys	cubase	edit	8	8	8	tool.draw
+keys	cubase	edit	9	9	9	tool.listen
+keys	cubase	edit	A	A	A	view.lanes
+keys	cubase	edit	E	E	E	view.zoom.time --by 1
+keys	cubase	edit	F	F	F	view.autoscroll
+keys	cubase	edit	M	M	M	track.mute
+keys	cubase	edit	N	N	N	view.snap
+keys	cubase	edit	PageDown	PageDown	PageDown	view.page --way down
+keys	cubase	edit	PageUp	PageUp	PageUp	view.page --way up
+keys	cubase	edit	R	R	R	track.arm
+keys	cubase	edit	S	S	S	track.solo
+keys	cubase	edit	U	U	U	track.monitor
+keys	cubase	edit	W	W	W	view.zoom.time --by -1
+keys	cubase	edit	Z	Z	Z	view.zoom.toggle
+keys	cubase	edit	Mod++	Ctrl++	⌘+	view.zoom.time --by 1
+keys	cubase	edit	Mod+-	Ctrl+-	⌘-	view.zoom.time --by -1
+keys	cubase	edit	Mod+A	Ctrl+A	⌘A	select.all
+keys	cubase	edit	Mod+C	Ctrl+C	⌘C	edit.copy
+keys	cubase	edit	Mod+I	Ctrl+I	⌘I	select.invert
+keys	cubase	edit	Mod+NumPad+	Ctrl+NumPad+	⌘NumPad+	view.zoom.time --by 1
+keys	cubase	edit	Mod+NumPad-	Ctrl+NumPad-	⌘NumPad-	view.zoom.time --by -1
+keys	cubase	edit	Mod+V	Ctrl+V	⌘V	edit.paste
+keys	cubase	edit	Mod+X	Ctrl+X	⌘X	edit.cut
+keys	cubase	edit	Alt+Backspace	Alt+Backspace	⌥⌫	view.zoom.undo
+keys	cubase	edit	Alt+E	Alt+E	⌥E	view.zoom.redo
+keys	cubase	edit	Alt+L	Alt+L	⌥L	select.in-loop
+keys	cubase	edit	Alt+S	Alt+S	⌥S	view.zoom.selection --horizontal
+keys	cubase	edit	Alt+W	Alt+W	⌥W	view.zoom.undo
+keys	cubase	edit	Alt+Z	Alt+Z	⌥Z	view.zoom.full
+keys	cubase	edit	Shift+E	Shift+E	⇧E	view.zoom.data --by 1
+keys	cubase	edit	Shift+L	Shift+L	⇧L	view.zoom.loop
+keys	cubase	edit	Shift+S	Shift+S	⇧S	view.zoom.selection
+keys	cubase	edit	Shift+T	Shift+T	⇧T	track.delete
+keys	cubase	edit	Shift+W	Shift+W	⇧W	view.zoom.data --by -1
+keys	cubase	edit	Shift+Z	Shift+Z	⇧Z	view.zoom.store
+keys	cubase	edit	Mod+Shift+A	Ctrl+Shift+A	⇧⌘A	select.on-tracks
+keys	cubase	edit	Mod+Shift+G	Ctrl+Shift+G	⇧⌘G	view.snap
+keys	cubase	edit	Mod+Shift+NumPad+	Ctrl+Shift+NumPad+	⇧⌘NumPad+	view.zoom.data --by 1
+keys	cubase	edit	Mod+Shift+NumPad-	Ctrl+Shift+NumPad-	⇧⌘NumPad-	view.zoom.data --by -1
+keys	cubase	edit	Mod+Shift+V	Ctrl+Shift+V	⇧⌘V	edit.paste --at original
+keys	cubase	export	Mod+Enter	Ctrl+Enter	⌘↩	view.export-run
+keys	cubase	global	#	#	#	transport.panic
+keys	cubase	global	,	,	,	transport.seek --at 0
+keys	cubase	global	/	/	/	transport.loop
+keys	cubase	global	C	C	C	transport.metronome
+keys	cubase	global	CapsLock	CapsLock	CapsLock	view.pc-keyboard
+keys	cubase	global	Down	↓	↓	select.step --dir down
+keys	cubase	global	End	End	End	select.step --dir end
+keys	cubase	global	Enter	Enter	↩	transport.start
+keys	cubase	global	F11	F11	F11	plugin.editor.open
+keys	cubase	global	F2	F2	F2	clip.open
+keys	cubase	global	F3	F3	F3	view.mixer
+keys	cubase	global	F4	F4	F4	browser.tab --tab inspector
+keys	cubase	global	F5	F5	F5	view.browser
+keys	cubase	global	F6	F6	F6	browser.tab --tab instruments
+keys	cubase	global	F7	F7	F7	browser.tab --tab effects
+keys	cubase	global	F9	F9	F9	browser.tab --tab files
+keys	cubase	global	Home	Home	Home	select.step --dir start
+keys	cubase	global	I	I	I	record.punch
+keys	cubase	global	L	L	L	transport.locate-selection
+keys	cubase	global	Left	←	←	select.step --dir left
+keys	cubase	global	MediaForward	MediaForward	MediaForward	transport.goto --to next-beat
+keys	cubase	global	MediaPlayPause	MediaPlayPause	MediaPlayPause	transport.play
+keys	cubase	global	MediaRecord	MediaRecord	MediaRecord	record.start
+keys	cubase	global	MediaRewind	MediaRewind	MediaRewind	transport.goto --to prev-beat
+keys	cubase	global	MediaStop	MediaStop	MediaStop	transport.stop
+keys	cubase	global	NumPad*	NumPad*	NumPad*	record.start
+keys	cubase	global	NumPad+	NumPad+	NumPad+	transport.goto --to next-beat
+keys	cubase	global	NumPad-	NumPad-	NumPad-	transport.goto --to prev-beat
+keys	cubase	global	NumPad.	NumPad.	NumPad.	transport.seek --at 0
+keys	cubase	global	NumPad/	NumPad/	NumPad/	transport.loop
+keys	cubase	global	NumPad0	NumPad0	NumPad0	transport.stop
+keys	cubase	global	NumPad1	NumPad1	NumPad1	transport.goto --to loop-start
+keys	cubase	global	NumPad2	NumPad2	NumPad2	transport.goto --to loop-end
+keys	cubase	global	NumPad3	NumPad3	NumPad3	transport.goto --to marker-1
+keys	cubase	global	NumPad4	NumPad4	NumPad4	transport.goto --to marker-2
+keys	cubase	global	NumPad5	NumPad5	NumPad5	transport.goto --to marker-3
+keys	cubase	global	NumPad6	NumPad6	NumPad6	transport.goto --to marker-4
+keys	cubase	global	NumPad7	NumPad7	NumPad7	transport.goto --to marker-5
+keys	cubase	global	NumPad8	NumPad8	NumPad8	transport.goto --to marker-6
+keys	cubase	global	NumPad9	NumPad9	NumPad9	transport.goto --to marker-7
+keys	cubase	global	O	O	O	record.preroll
+keys	cubase	global	P	P	P	loop.selection
+keys	cubase	global	Right	→	→	select.step --dir right
+keys	cubase	global	Space	Space	Space	transport.play
+keys	cubase	global	T	T	T	view.add-track
+keys	cubase	global	Tab	Tab	⇥	view.focus --way next
+keys	cubase	global	Up	↑	↑	select.step --dir up
+keys	cubase	global	Mod+,	Ctrl+,	⌘,	view.settings
+keys	cubase	global	Mod+.	Ctrl+.	⌘.	project.settings
+keys	cubase	global	Mod+E	Ctrl+E	⌘E	export.open
+keys	cubase	global	Mod+F	Ctrl+F	⌘F	browser.search
+keys	cubase	global	Mod+F4	Ctrl+F4	⌘F4	project.close
+keys	cubase	global	Mod+K	Ctrl+K	⌘K	view.palette
+keys	cubase	global	Mod+N	Ctrl+N	⌘N	project.new
+keys	cubase	global	Mod+NumPad.	Ctrl+NumPad.	⌘NumPad.	transport.goto
+keys	cubase	global	Mod+O	Ctrl+O	⌘O	project.open
+keys	cubase	global	Mod+Q	Ctrl+Q	⌘Q	app.quit
+keys	cubase	global	Mod+S	Ctrl+S	⌘S	project.save
+keys	cubase	global	Mod+Space	Ctrl+Space	⌘Space	transport.locate-mouse
+keys	cubase	global	Mod+T	Ctrl+T	⌘T	transport.locate
+keys	cubase	global	Mod+W	Ctrl+W	⌘W	project.close
+keys	cubase	global	Mod+Z	Ctrl+Z	⌘Z	history.undo
+keys	cubase	global	Alt+NumPad1	Alt+NumPad1	⌥NumPad1	loop.start.set
+keys	cubase	global	Alt+NumPad2	Alt+NumPad2	⌥NumPad2	loop.end.set
+keys	cubase	global	Alt+PageDown	Alt+PageDown	⌥PageDown	plugin.preset.next
+keys	cubase	global	Alt+PageUp	Alt+PageUp	⌥PageUp	plugin.preset.prev
+keys	cubase	global	Mod+Alt+1	Ctrl+Alt+1	⌥⌘1	quantize.program --program A
+keys	cubase	global	Mod+Alt+2	Ctrl+Alt+2	⌥⌘2	quantize.program --program B
+keys	cubase	global	Mod+Alt+3	Ctrl+Alt+3	⌥⌘3	quantize.program --program C
+keys	cubase	global	Mod+Alt+4	Ctrl+Alt+4	⌥⌘4	quantize.program --program D
+keys	cubase	global	Mod+Alt+5	Ctrl+Alt+5	⌥⌘5	quantize.program --program E
+keys	cubase	global	Mod+Alt+6	Ctrl+Alt+6	⌥⌘6	quantize.program --program F
+keys	cubase	global	Mod+Alt+7	Ctrl+Alt+7	⌥⌘7	quantize.program --program G
+keys	cubase	global	Mod+Alt+C	Ctrl+Alt+C	⌥⌘C	track.reveal --in mixer
+keys	cubase	global	Mod+Alt+R	Ctrl+Alt+R	⌥⌘R	edit.ripple
+keys	cubase	global	Mod+Alt+S	Ctrl+Alt+S	⌥⌘S	track.solo.clear
+keys	cubase	global	Mod+Alt+T	Ctrl+Alt+T	⌥⌘T	track.reveal
+keys	cubase	global	Shift+B	Shift+B	⇧B	transport.goto --to prev-marker
+keys	cubase	global	Shift+C	Shift+C	⇧C	record.count-in
+keys	cubase	global	Shift+Down	Shift+↓	⇧↓	select.step --dir down --extend
+keys	cubase	global	Shift+End	Shift+End	⇧End	select.step --dir end --extend
+keys	cubase	global	Shift+F	Shift+F	⇧F	view.fullscreen
+keys	cubase	global	Shift+F11	Shift+F11	⇧F11	view.instrument
+keys	cubase	global	Shift+Home	Shift+Home	⇧Home	select.step --dir start --extend
+keys	cubase	global	Shift+Left	Shift+←	⇧←	select.step --dir left --extend
+keys	cubase	global	Shift+MediaForward	Shift+MediaForward	⇧MediaForward	transport.goto --to next-bar
+keys	cubase	global	Shift+MediaRewind	Shift+MediaRewind	⇧MediaRewind	transport.goto --to prev-bar
+keys	cubase	global	Shift+N	Shift+N	⇧N	transport.goto --to next-marker
+keys	cubase	global	Shift+NumPad+	Shift+NumPad+	⇧NumPad+	transport.goto --to next-bar
+keys	cubase	global	Shift+NumPad-	Shift+NumPad-	⇧NumPad-	transport.goto --to prev-bar
+keys	cubase	global	Shift+P	Shift+P	⇧P	loop.selection --no-snap
+keys	cubase	global	Shift+Right	Shift+→	⇧→	select.step --dir right --extend
+keys	cubase	global	Shift+Tab	Shift+Tab	⇧⇥	view.focus --way prev
+keys	cubase	global	Shift+Up	Shift+↑	⇧↑	select.step --dir up --extend
+keys	cubase	global	Mod+Shift+Down	Ctrl+Shift+↓	⇧⌘↓	select.step --dir down --extend
+keys	cubase	global	Mod+Shift+E	Ctrl+Shift+E	⇧⌘E	view.export-stems
+keys	cubase	global	Mod+Shift+End	Ctrl+Shift+End	⇧⌘End	select.step --dir end --extend
+keys	cubase	global	Mod+Shift+Home	Ctrl+Shift+Home	⇧⌘Home	select.step --dir start --extend
+keys	cubase	global	Mod+Shift+L	Ctrl+Shift+L	⇧⌘L	view.tracklist.collapse
+keys	cubase	global	Mod+Shift+Left	Ctrl+Shift+←	⇧⌘←	select.step --dir left --extend
+keys	cubase	global	Mod+Shift+M	Ctrl+Shift+M	⇧⌘M	track.mute.clear
+keys	cubase	global	Mod+Shift+O	Ctrl+Shift+O	⇧⌘O	clip.import
+keys	cubase	global	Mod+Shift+Right	Ctrl+Shift+→	⇧⌘→	select.step --dir right --extend
+keys	cubase	global	Mod+Shift+S	Ctrl+Shift+S	⇧⌘S	project.save-as
+keys	cubase	global	Mod+Shift+Up	Ctrl+Shift+↑	⇧⌘↑	select.step --dir up --extend
+keys	cubase	global	Mod+Shift+Z	Ctrl+Shift+Z	⇧⌘Z	history.redo
+keys	cubase	global	Alt+Shift+B	Alt+Shift+B	⌥⇧B	transport.goto --to prev-event
+keys	cubase	global	Alt+Shift+N	Alt+Shift+N	⌥⇧N	transport.goto --to next-event
+keys	cubase	global	Alt+Shift+R	Alt+Shift+R	⌥⇧R	view.record-panel
+keys	cubase	global	Mod+Alt+Shift+S	Ctrl+Alt+Shift+S	⌥⇧⌘S	version.save
+keys	cubase	lane	Backspace	Backspace	⌫	note.delete
+keys	cubase	lane	D	D	D	note.duplicate
+keys	cubase	lane	Delete	Del	⌫	note.delete
+keys	cubase	mixer	Backspace	Backspace	⌫	edit.delete
+keys	cubase	mixer	Delete	Del	⌫	edit.delete
+keys	cubase	mixer	Menu	Menu	Menu	view.context-menu
+keys	cubase	mixer	[	[	[	mixer.channel.prev
+keys	cubase	mixer	]	]	]	mixer.channel.next
+keys	cubase	mixer	{	{	{	mixer.bank --way prev
+keys	cubase	mixer	}	}	}	mixer.bank --way next
+keys	cubase	mixer	Mod+C	Ctrl+C	⌘C	edit.copy
+keys	cubase	mixer	Mod+V	Ctrl+V	⌘V	edit.paste
+keys	cubase	mixer	Mod+X	Ctrl+X	⌘X	edit.cut
+keys	cubase	mixer	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	cubase	roll	Backspace	Backspace	⌫	note.delete
+keys	cubase	roll	Delete	Del	⌫	note.delete
+keys	cubase	roll	Down	↓	↓	note.transpose --by -1
+keys	cubase	roll	G	G	G	note.join
+keys	cubase	roll	Left	←	←	edit.nudge.left --grid 1/16
+keys	cubase	roll	Menu	Menu	Menu	view.context-menu
+keys	cubase	roll	Q	Q	Q	note.quantize
+keys	cubase	roll	Right	→	→	edit.nudge.right --grid 1/16
+keys	cubase	roll	Up	↑	↑	note.transpose --by 1
+keys	cubase	roll	Mod+D	Ctrl+D	⌘D	note.duplicate
+keys	cubase	roll	Mod+G	Ctrl+G	⌘G	note.split.grid
+keys	cubase	roll	Alt+Down	Alt+↓	⌥↓	note.transpose --by -1
+keys	cubase	roll	Alt+Left	Alt+←	⌥←	edit.nudge.left
+keys	cubase	roll	Alt+Q	Alt+Q	⌥Q	note.quantize --strength 50
+keys	cubase	roll	Alt+Right	Alt+→	⌥→	edit.nudge.right
+keys	cubase	roll	Alt+Up	Alt+↑	⌥↑	note.transpose --by 1
+keys	cubase	roll	Shift+Down	Shift+↓	⇧↓	note.transpose --by -12
+keys	cubase	roll	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	cubase	roll	Shift+M	Shift+M	⇧M	note.mute
+keys	cubase	roll	Shift+Q	Shift+Q	⇧Q	note.quantize --restore
+keys	cubase	roll	Shift+Up	Shift+↑	⇧↑	note.transpose --by 12
+keys	cubase	roll	Alt+Shift+Down	Alt+Shift+↓	⌥⇧↓	note.transpose --by -12
+keys	cubase	roll	Alt+Shift+Up	Alt+Shift+↑	⌥⇧↑	note.transpose --by 12
+keys	logic	arrange	Backspace	Backspace	⌫	clip.delete
+keys	logic	arrange	Delete	Del	⌫	clip.delete
+keys	logic	arrange	G	G	G	clip.join
+keys	logic	arrange	H	H	H	auto.lane.next
+keys	logic	arrange	Insert	Insert	Insert	marker.add
+keys	logic	arrange	J	J	J	auto.mode --mode read
+keys	logic	arrange	Menu	Menu	Menu	view.context-menu
+keys	logic	arrange	Q	Q	Q	clip.quantize
+keys	logic	arrange	X	X	X	clip.fade.cross
+keys	logic	arrange	Y	Y	Y	marker.add
+keys	logic	arrange	Mod+B	Ctrl+B	⌘B	clip.bounce
+keys	logic	arrange	Mod+G	Ctrl+G	⌘G	clip.split.grid
+keys	logic	arrange	Mod+L	Ctrl+L	⌘L	clip.move.cursor
+keys	logic	arrange	Mod+M	Ctrl+M	⌘M	clip.ara.attach
+keys	logic	arrange	Mod+P	Ctrl+P	⌘P	clip.add.midi
+keys	logic	arrange	Mod+R	Ctrl+R	⌘R	clip.duplicate
+keys	logic	arrange	Mod+T	Ctrl+T	⌘T	clip.split
+keys	logic	arrange	Alt+D	Alt+D	⌥D	section.duplicate
+keys	logic	arrange	Alt+G	Alt+G	⌥G	take.prev
+keys	logic	arrange	Alt+H	Alt+H	⌥H	take.next
+keys	logic	arrange	Alt+Left	Alt+←	⌥←	clip.nudge --dir left
+keys	logic	arrange	Alt+N	Alt+N	⌥N	clip.normalize
+keys	logic	arrange	Alt+NumPad+	Alt+NumPad+	⌥NumPad+	clip.gain.set --by 1
+keys	logic	arrange	Alt+NumPad-	Alt+NumPad-	⌥NumPad-	clip.gain.set --by -1
+keys	logic	arrange	Alt+R	Alt+R	⌥R	range.from-clips
+keys	logic	arrange	Alt+Right	Alt+→	⌥→	clip.nudge --dir right
+keys	logic	arrange	Alt+T	Alt+T	⌥T	range.transform
+keys	logic	arrange	Mod+Alt+B	Ctrl+Alt+B	⌥⌘B	clip.bounce --new-track
+keys	logic	arrange	Mod+Alt+D	Ctrl+Alt+D	⌥⌘D	range.time.delete
+keys	logic	arrange	Mod+Alt+I	Ctrl+Alt+I	⌥⌘I	range.time.insert
+keys	logic	arrange	Mod+Alt+L	Ctrl+Alt+L	⌥⌘L	clip.loop.set --toggle
+keys	logic	arrange	Mod+Alt+Left	Ctrl+Alt+←	⌥⌘←	clip.nudge --dir left --unit bar
+keys	logic	arrange	Mod+Alt+M	Ctrl+Alt+M	⌥⌘M	clip.ara.detach
+keys	logic	arrange	Mod+Alt+Right	Ctrl+Alt+→	⌥⌘→	clip.nudge --dir right --unit bar
+keys	logic	arrange	Mod+Alt+X	Ctrl+Alt+X	⌥⌘X	clip.split.range
+keys	logic	arrange	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	logic	arrange	Shift+H	Shift+H	⇧H	auto.lane.next --back
+keys	logic	arrange	Shift+Insert	Shift+Insert	⇧Insert	marker.add.named
+keys	logic	arrange	Shift+M	Shift+M	⇧M	clip.mute
+keys	logic	arrange	Shift+R	Shift+R	⇧R	range.from-clips
+keys	logic	arrange	Shift+X	Shift+X	⇧X	clip.fade.set --auto
+keys	logic	arrange	Shift+Y	Shift+Y	⇧Y	marker.add.named
+keys	logic	arrange	Mod+Shift+D	Ctrl+Shift+D	⇧⌘D	select.off-tracks
+keys	logic	arrange	Mod+Shift+X	Ctrl+Shift+X	⇧⌘X	clip.split.range --range loop
+keys	logic	arrange	Alt+Shift+End	Alt+Shift+End	⌥⇧End	select.span --way end
+keys	logic	arrange	Alt+Shift+Home	Alt+Shift+Home	⌥⇧Home	select.span --way start
+keys	logic	arrange	Alt+Shift+NumPad+	Alt+Shift+NumPad+	⌥⇧NumPad+	clip.gain.set --by 0.1
+keys	logic	arrange	Alt+Shift+NumPad-	Alt+Shift+NumPad-	⌥⇧NumPad-	clip.gain.set --by -0.1
+keys	logic	automation	Backspace	Backspace	⌫	clip.delete
+keys	logic	automation	D	D	D	clip.duplicate
+keys	logic	automation	Delete	Del	⌫	clip.delete
+keys	logic	automation	H	H	H	auto.lane.next
+keys	logic	automation	J	J	J	auto.mode --mode read
+keys	logic	automation	Alt+Left	Alt+←	⌥←	edit.nudge.left
+keys	logic	automation	Alt+Right	Alt+→	⌥→	edit.nudge.right
+keys	logic	automation	Shift+H	Shift+H	⇧H	auto.lane.next --back
+keys	logic	edit	1	1	1	tool.select
+keys	logic	edit	2	2	2	tool.range
+keys	logic	edit	3	3	3	tool.cut
+keys	logic	edit	4	4	4	tool.erase
+keys	logic	edit	5	5	5	tool.draw
+keys	logic	edit	6	6	6	tool.mute
+keys	logic	edit	8	8	8	tool.listen
+keys	logic	edit	A	A	A	view.lanes
+keys	logic	edit	E	E	E	view.zoom.time --by 1
+keys	logic	edit	F	F	F	view.autoscroll
+keys	logic	edit	M	M	M	track.mute
+keys	logic	edit	N	N	N	view.snap
+keys	logic	edit	PageDown	PageDown	PageDown	view.page --way down
+keys	logic	edit	PageUp	PageUp	PageUp	view.page --way up
+keys	logic	edit	R	R	R	track.arm
+keys	logic	edit	S	S	S	track.solo
+keys	logic	edit	U	U	U	track.monitor
+keys	logic	edit	W	W	W	view.zoom.time --by -1
+keys	logic	edit	Z	Z	Z	view.zoom.toggle
+keys	logic	edit	Mod++	Ctrl++	⌘+	view.zoom.time --by 1
+keys	logic	edit	Mod+-	Ctrl+-	⌘-	view.zoom.time --by -1
+keys	logic	edit	Mod+A	Ctrl+A	⌘A	select.all
+keys	logic	edit	Mod+C	Ctrl+C	⌘C	edit.copy
+keys	logic	edit	Mod+D	Ctrl+D	⌘D	select.clear
+keys	logic	edit	Mod+I	Ctrl+I	⌘I	select.invert
+keys	logic	edit	Mod+NumPad+	Ctrl+NumPad+	⌘NumPad+	view.zoom.time --by 1
+keys	logic	edit	Mod+NumPad-	Ctrl+NumPad-	⌘NumPad-	view.zoom.time --by -1
+keys	logic	edit	Mod+V	Ctrl+V	⌘V	edit.paste
+keys	logic	edit	Mod+X	Ctrl+X	⌘X	edit.cut
+keys	logic	edit	Alt+Backspace	Alt+Backspace	⌥⌫	view.zoom.undo
+keys	logic	edit	Alt+E	Alt+E	⌥E	view.zoom.redo
+keys	logic	edit	Alt+L	Alt+L	⌥L	select.in-loop
+keys	logic	edit	Alt+S	Alt+S	⌥S	view.zoom.selection --horizontal
+keys	logic	edit	Alt+W	Alt+W	⌥W	view.zoom.undo
+keys	logic	edit	Alt+Z	Alt+Z	⌥Z	view.zoom.full
+keys	logic	edit	Shift+E	Shift+E	⇧E	view.zoom.data --by 1
+keys	logic	edit	Shift+L	Shift+L	⇧L	view.zoom.loop
+keys	logic	edit	Shift+S	Shift+S	⇧S	view.zoom.selection
+keys	logic	edit	Shift+T	Shift+T	⇧T	track.delete
+keys	logic	edit	Shift+W	Shift+W	⇧W	view.zoom.data --by -1
+keys	logic	edit	Shift+Z	Shift+Z	⇧Z	view.zoom.store
+keys	logic	edit	Mod+Shift+A	Ctrl+Shift+A	⇧⌘A	select.on-tracks
+keys	logic	edit	Mod+Shift+G	Ctrl+Shift+G	⇧⌘G	view.snap
+keys	logic	edit	Mod+Shift+NumPad+	Ctrl+Shift+NumPad+	⇧⌘NumPad+	view.zoom.data --by 1
+keys	logic	edit	Mod+Shift+NumPad-	Ctrl+Shift+NumPad-	⇧⌘NumPad-	view.zoom.data --by -1
+keys	logic	edit	Mod+Shift+V	Ctrl+Shift+V	⇧⌘V	edit.paste --at original
+keys	logic	export	Mod+Enter	Ctrl+Enter	⌘↩	view.export-run
+keys	logic	global	#	#	#	transport.panic
+keys	logic	global	C	C	C	transport.loop
+keys	logic	global	CapsLock	CapsLock	CapsLock	view.pc-keyboard
+keys	logic	global	Down	↓	↓	select.step --dir down
+keys	logic	global	End	End	End	select.step --dir end
+keys	logic	global	Enter	Enter	↩	transport.seek --at 0
+keys	logic	global	F11	F11	F11	plugin.editor.open
+keys	logic	global	F2	F2	F2	clip.open
+keys	logic	global	F3	F3	F3	view.mixer
+keys	logic	global	F4	F4	F4	browser.tab --tab inspector
+keys	logic	global	F5	F5	F5	view.browser
+keys	logic	global	F6	F6	F6	browser.tab --tab instruments
+keys	logic	global	F7	F7	F7	browser.tab --tab effects
+keys	logic	global	F9	F9	F9	browser.tab --tab files
+keys	logic	global	Home	Home	Home	select.step --dir start
+keys	logic	global	I	I	I	record.punch
+keys	logic	global	K	K	K	transport.metronome
+keys	logic	global	L	L	L	transport.locate-selection
+keys	logic	global	Left	←	←	select.step --dir left
+keys	logic	global	MediaForward	MediaForward	MediaForward	transport.goto --to next-beat
+keys	logic	global	MediaPlayPause	MediaPlayPause	MediaPlayPause	transport.play
+keys	logic	global	MediaRecord	MediaRecord	MediaRecord	record.start
+keys	logic	global	MediaRewind	MediaRewind	MediaRewind	transport.goto --to prev-beat
+keys	logic	global	MediaStop	MediaStop	MediaStop	transport.stop
+keys	logic	global	NumPad*	NumPad*	NumPad*	record.start
+keys	logic	global	NumPad+	NumPad+	NumPad+	transport.goto --to next-beat
+keys	logic	global	NumPad-	NumPad-	NumPad-	transport.goto --to prev-beat
+keys	logic	global	NumPad0	NumPad0	NumPad0	transport.stop
+keys	logic	global	NumPad1	NumPad1	NumPad1	transport.goto --to loop-start
+keys	logic	global	NumPad2	NumPad2	NumPad2	transport.goto --to loop-end
+keys	logic	global	NumPad3	NumPad3	NumPad3	transport.goto --to marker-1
+keys	logic	global	NumPad4	NumPad4	NumPad4	transport.goto --to marker-2
+keys	logic	global	NumPad5	NumPad5	NumPad5	transport.goto --to marker-3
+keys	logic	global	NumPad6	NumPad6	NumPad6	transport.goto --to marker-4
+keys	logic	global	NumPad7	NumPad7	NumPad7	transport.goto --to marker-5
+keys	logic	global	NumPad8	NumPad8	NumPad8	transport.goto --to marker-6
+keys	logic	global	NumPad9	NumPad9	NumPad9	transport.goto --to marker-7
+keys	logic	global	O	O	O	record.preroll
+keys	logic	global	P	P	P	loop.selection
+keys	logic	global	Right	→	→	select.step --dir right
+keys	logic	global	Space	Space	Space	transport.play
+keys	logic	global	T	T	T	view.add-track
+keys	logic	global	Tab	Tab	⇥	view.focus --way next
+keys	logic	global	Up	↑	↑	select.step --dir up
+keys	logic	global	Mod+,	Ctrl+,	⌘,	view.settings
+keys	logic	global	Mod+.	Ctrl+.	⌘.	project.settings
+keys	logic	global	Mod+E	Ctrl+E	⌘E	export.open
+keys	logic	global	Mod+F	Ctrl+F	⌘F	browser.search
+keys	logic	global	Mod+F4	Ctrl+F4	⌘F4	project.close
+keys	logic	global	Mod+K	Ctrl+K	⌘K	view.palette
+keys	logic	global	Mod+N	Ctrl+N	⌘N	project.new
+keys	logic	global	Mod+NumPad.	Ctrl+NumPad.	⌘NumPad.	transport.goto
+keys	logic	global	Mod+O	Ctrl+O	⌘O	project.open
+keys	logic	global	Mod+Q	Ctrl+Q	⌘Q	app.quit
+keys	logic	global	Mod+S	Ctrl+S	⌘S	project.save
+keys	logic	global	Mod+Space	Ctrl+Space	⌘Space	transport.locate-mouse
+keys	logic	global	Mod+W	Ctrl+W	⌘W	project.close
+keys	logic	global	Mod+Z	Ctrl+Z	⌘Z	history.undo
+keys	logic	global	Alt+NumPad1	Alt+NumPad1	⌥NumPad1	loop.start.set
+keys	logic	global	Alt+NumPad2	Alt+NumPad2	⌥NumPad2	loop.end.set
+keys	logic	global	Alt+PageDown	Alt+PageDown	⌥PageDown	plugin.preset.next
+keys	logic	global	Alt+PageUp	Alt+PageUp	⌥PageUp	plugin.preset.prev
+keys	logic	global	Mod+Alt+1	Ctrl+Alt+1	⌥⌘1	quantize.program --program A
+keys	logic	global	Mod+Alt+2	Ctrl+Alt+2	⌥⌘2	quantize.program --program B
+keys	logic	global	Mod+Alt+3	Ctrl+Alt+3	⌥⌘3	quantize.program --program C
+keys	logic	global	Mod+Alt+4	Ctrl+Alt+4	⌥⌘4	quantize.program --program D
+keys	logic	global	Mod+Alt+5	Ctrl+Alt+5	⌥⌘5	quantize.program --program E
+keys	logic	global	Mod+Alt+6	Ctrl+Alt+6	⌥⌘6	quantize.program --program F
+keys	logic	global	Mod+Alt+7	Ctrl+Alt+7	⌥⌘7	quantize.program --program G
+keys	logic	global	Mod+Alt+C	Ctrl+Alt+C	⌥⌘C	track.reveal --in mixer
+keys	logic	global	Mod+Alt+R	Ctrl+Alt+R	⌥⌘R	edit.ripple
+keys	logic	global	Mod+Alt+S	Ctrl+Alt+S	⌥⌘S	track.solo.clear
+keys	logic	global	Mod+Alt+T	Ctrl+Alt+T	⌥⌘T	track.reveal
+keys	logic	global	Shift+B	Shift+B	⇧B	transport.goto --to prev-marker
+keys	logic	global	Shift+C	Shift+C	⇧C	record.count-in
+keys	logic	global	Shift+Down	Shift+↓	⇧↓	select.step --dir down --extend
+keys	logic	global	Shift+End	Shift+End	⇧End	select.step --dir end --extend
+keys	logic	global	Shift+F	Shift+F	⇧F	view.fullscreen
+keys	logic	global	Shift+F11	Shift+F11	⇧F11	view.instrument
+keys	logic	global	Shift+Home	Shift+Home	⇧Home	select.step --dir start --extend
+keys	logic	global	Shift+Left	Shift+←	⇧←	select.step --dir left --extend
+keys	logic	global	Shift+MediaForward	Shift+MediaForward	⇧MediaForward	transport.goto --to next-bar
+keys	logic	global	Shift+MediaRewind	Shift+MediaRewind	⇧MediaRewind	transport.goto --to prev-bar
+keys	logic	global	Shift+N	Shift+N	⇧N	transport.goto --to next-marker
+keys	logic	global	Shift+NumPad+	Shift+NumPad+	⇧NumPad+	transport.goto --to next-bar
+keys	logic	global	Shift+NumPad-	Shift+NumPad-	⇧NumPad-	transport.goto --to prev-bar
+keys	logic	global	Shift+P	Shift+P	⇧P	loop.selection --no-snap
+keys	logic	global	Shift+Right	Shift+→	⇧→	select.step --dir right --extend
+keys	logic	global	Shift+Tab	Shift+Tab	⇧⇥	view.focus --way prev
+keys	logic	global	Shift+Up	Shift+↑	⇧↑	select.step --dir up --extend
+keys	logic	global	Mod+Shift+Down	Ctrl+Shift+↓	⇧⌘↓	select.step --dir down --extend
+keys	logic	global	Mod+Shift+E	Ctrl+Shift+E	⇧⌘E	view.export-stems
+keys	logic	global	Mod+Shift+End	Ctrl+Shift+End	⇧⌘End	select.step --dir end --extend
+keys	logic	global	Mod+Shift+Home	Ctrl+Shift+Home	⇧⌘Home	select.step --dir start --extend
+keys	logic	global	Mod+Shift+L	Ctrl+Shift+L	⇧⌘L	view.tracklist.collapse
+keys	logic	global	Mod+Shift+Left	Ctrl+Shift+←	⇧⌘←	select.step --dir left --extend
+keys	logic	global	Mod+Shift+M	Ctrl+Shift+M	⇧⌘M	track.mute.clear
+keys	logic	global	Mod+Shift+O	Ctrl+Shift+O	⇧⌘O	clip.import
+keys	logic	global	Mod+Shift+Right	Ctrl+Shift+→	⇧⌘→	select.step --dir right --extend
+keys	logic	global	Mod+Shift+S	Ctrl+Shift+S	⇧⌘S	project.save-as
+keys	logic	global	Mod+Shift+Up	Ctrl+Shift+↑	⇧⌘↑	select.step --dir up --extend
+keys	logic	global	Mod+Shift+Z	Ctrl+Shift+Z	⇧⌘Z	history.redo
+keys	logic	global	Alt+Shift+B	Alt+Shift+B	⌥⇧B	transport.goto --to prev-event
+keys	logic	global	Alt+Shift+N	Alt+Shift+N	⌥⇧N	transport.goto --to next-event
+keys	logic	global	Alt+Shift+R	Alt+Shift+R	⌥⇧R	view.record-panel
+keys	logic	global	Mod+Alt+Shift+S	Ctrl+Alt+Shift+S	⌥⇧⌘S	version.save
+keys	logic	lane	Backspace	Backspace	⌫	note.delete
+keys	logic	lane	D	D	D	note.duplicate
+keys	logic	lane	Delete	Del	⌫	note.delete
+keys	logic	mixer	Backspace	Backspace	⌫	edit.delete
+keys	logic	mixer	Delete	Del	⌫	edit.delete
+keys	logic	mixer	Menu	Menu	Menu	view.context-menu
+keys	logic	mixer	[	[	[	mixer.channel.prev
+keys	logic	mixer	]	]	]	mixer.channel.next
+keys	logic	mixer	{	{	{	mixer.bank --way prev
+keys	logic	mixer	}	}	}	mixer.bank --way next
+keys	logic	mixer	Mod+C	Ctrl+C	⌘C	edit.copy
+keys	logic	mixer	Mod+V	Ctrl+V	⌘V	edit.paste
+keys	logic	mixer	Mod+X	Ctrl+X	⌘X	edit.cut
+keys	logic	mixer	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	logic	roll	Backspace	Backspace	⌫	note.delete
+keys	logic	roll	Delete	Del	⌫	note.delete
+keys	logic	roll	Down	↓	↓	note.transpose --by -1
+keys	logic	roll	G	G	G	note.join
+keys	logic	roll	Left	←	←	edit.nudge.left --grid 1/16
+keys	logic	roll	Menu	Menu	Menu	view.context-menu
+keys	logic	roll	Q	Q	Q	note.quantize
+keys	logic	roll	Right	→	→	edit.nudge.right --grid 1/16
+keys	logic	roll	Up	↑	↑	note.transpose --by 1
+keys	logic	roll	Mod+G	Ctrl+G	⌘G	note.split.grid
+keys	logic	roll	Mod+R	Ctrl+R	⌘R	note.duplicate
+keys	logic	roll	Alt+Down	Alt+↓	⌥↓	note.transpose --by -1
+keys	logic	roll	Alt+Left	Alt+←	⌥←	edit.nudge.left
+keys	logic	roll	Alt+Q	Alt+Q	⌥Q	note.quantize --strength 50
+keys	logic	roll	Alt+Right	Alt+→	⌥→	edit.nudge.right
+keys	logic	roll	Alt+Up	Alt+↑	⌥↑	note.transpose --by 1
+keys	logic	roll	Shift+Down	Shift+↓	⇧↓	note.transpose --by -12
+keys	logic	roll	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	logic	roll	Shift+M	Shift+M	⇧M	note.mute
+keys	logic	roll	Shift+Q	Shift+Q	⇧Q	note.quantize --restore
+keys	logic	roll	Shift+Up	Shift+↑	⇧↑	note.transpose --by 12
+keys	logic	roll	Alt+Shift+Down	Alt+Shift+↓	⌥⇧↓	note.transpose --by -12
+keys	logic	roll	Alt+Shift+Up	Alt+Shift+↑	⌥⇧↑	note.transpose --by 12
+keys	ableton	arrange	Backspace	Backspace	⌫	clip.delete
+keys	ableton	arrange	Delete	Del	⌫	clip.delete
+keys	ableton	arrange	G	G	G	clip.join
+keys	ableton	arrange	H	H	H	auto.lane.next
+keys	ableton	arrange	Insert	Insert	Insert	marker.add
+keys	ableton	arrange	J	J	J	auto.mode --mode read
+keys	ableton	arrange	K	K	K	auto.mode --mode touch
+keys	ableton	arrange	Menu	Menu	Menu	view.context-menu
+keys	ableton	arrange	Q	Q	Q	clip.quantize
+keys	ableton	arrange	R	R	R	clip.reverse
+keys	ableton	arrange	X	X	X	clip.fade.cross
+keys	ableton	arrange	Y	Y	Y	marker.add
+keys	ableton	arrange	Mod+B	Ctrl+B	⌘B	clip.bounce
+keys	ableton	arrange	Mod+D	Ctrl+D	⌘D	clip.duplicate
+keys	ableton	arrange	Mod+E	Ctrl+E	⌘E	clip.split
+keys	ableton	arrange	Mod+G	Ctrl+G	⌘G	clip.split.grid
+keys	ableton	arrange	Mod+M	Ctrl+M	⌘M	clip.ara.attach
+keys	ableton	arrange	Mod+P	Ctrl+P	⌘P	clip.add.midi
+keys	ableton	arrange	Alt+D	Alt+D	⌥D	section.duplicate
+keys	ableton	arrange	Alt+G	Alt+G	⌥G	take.prev
+keys	ableton	arrange	Alt+H	Alt+H	⌥H	take.next
+keys	ableton	arrange	Alt+Left	Alt+←	⌥←	clip.nudge --dir left
+keys	ableton	arrange	Alt+N	Alt+N	⌥N	clip.normalize
+keys	ableton	arrange	Alt+NumPad+	Alt+NumPad+	⌥NumPad+	clip.gain.set --by 1
+keys	ableton	arrange	Alt+NumPad-	Alt+NumPad-	⌥NumPad-	clip.gain.set --by -1
+keys	ableton	arrange	Alt+R	Alt+R	⌥R	range.from-clips
+keys	ableton	arrange	Alt+Right	Alt+→	⌥→	clip.nudge --dir right
+keys	ableton	arrange	Alt+T	Alt+T	⌥T	range.transform
+keys	ableton	arrange	Mod+Alt+B	Ctrl+Alt+B	⌥⌘B	clip.bounce --new-track
+keys	ableton	arrange	Mod+Alt+D	Ctrl+Alt+D	⌥⌘D	range.time.delete
+keys	ableton	arrange	Mod+Alt+I	Ctrl+Alt+I	⌥⌘I	range.time.insert
+keys	ableton	arrange	Mod+Alt+L	Ctrl+Alt+L	⌥⌘L	clip.loop.set --toggle
+keys	ableton	arrange	Mod+Alt+Left	Ctrl+Alt+←	⌥⌘←	clip.nudge --dir left --unit bar
+keys	ableton	arrange	Mod+Alt+M	Ctrl+Alt+M	⌥⌘M	clip.ara.detach
+keys	ableton	arrange	Mod+Alt+Right	Ctrl+Alt+→	⌥⌘→	clip.nudge --dir right --unit bar
+keys	ableton	arrange	Mod+Alt+X	Ctrl+Alt+X	⌥⌘X	clip.split.range
+keys	ableton	arrange	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	ableton	arrange	Shift+H	Shift+H	⇧H	auto.lane.next --back
+keys	ableton	arrange	Shift+Insert	Shift+Insert	⇧Insert	marker.add.named
+keys	ableton	arrange	Shift+M	Shift+M	⇧M	clip.mute
+keys	ableton	arrange	Shift+R	Shift+R	⇧R	range.from-clips
+keys	ableton	arrange	Shift+X	Shift+X	⇧X	clip.fade.set --auto
+keys	ableton	arrange	Shift+Y	Shift+Y	⇧Y	marker.add.named
+keys	ableton	arrange	Mod+Shift+D	Ctrl+Shift+D	⇧⌘D	select.off-tracks
+keys	ableton	arrange	Mod+Shift+X	Ctrl+Shift+X	⇧⌘X	clip.split.range --range loop
+keys	ableton	arrange	Alt+Shift+End	Alt+Shift+End	⌥⇧End	select.span --way end
+keys	ableton	arrange	Alt+Shift+Home	Alt+Shift+Home	⌥⇧Home	select.span --way start
+keys	ableton	arrange	Alt+Shift+NumPad+	Alt+Shift+NumPad+	⌥⇧NumPad+	clip.gain.set --by 0.1
+keys	ableton	arrange	Alt+Shift+NumPad-	Alt+Shift+NumPad-	⌥⇧NumPad-	clip.gain.set --by -0.1
+keys	ableton	automation	Backspace	Backspace	⌫	clip.delete
+keys	ableton	automation	D	D	D	clip.duplicate
+keys	ableton	automation	Delete	Del	⌫	clip.delete
+keys	ableton	automation	H	H	H	auto.lane.next
+keys	ableton	automation	J	J	J	auto.mode --mode read
+keys	ableton	automation	K	K	K	auto.mode --mode touch
+keys	ableton	automation	Alt+Left	Alt+←	⌥←	edit.nudge.left
+keys	ableton	automation	Alt+Right	Alt+→	⌥→	edit.nudge.right
+keys	ableton	automation	Shift+H	Shift+H	⇧H	auto.lane.next --back
+keys	ableton	edit	1	1	1	tool.select
+keys	ableton	edit	2	2	2	tool.range
+keys	ableton	edit	3	3	3	tool.cut
+keys	ableton	edit	4	4	4	tool.erase
+keys	ableton	edit	6	6	6	tool.mute
+keys	ableton	edit	8	8	8	tool.listen
+keys	ableton	edit	A	A	A	view.lanes
+keys	ableton	edit	B	B	B	tool.draw
+keys	ableton	edit	E	E	E	view.zoom.time --by 1
+keys	ableton	edit	F	F	F	view.autoscroll
+keys	ableton	edit	M	M	M	track.mute
+keys	ableton	edit	N	N	N	view.snap
+keys	ableton	edit	PageDown	PageDown	PageDown	view.page --way down
+keys	ableton	edit	PageUp	PageUp	PageUp	view.page --way up
+keys	ableton	edit	S	S	S	track.solo
+keys	ableton	edit	U	U	U	track.monitor
+keys	ableton	edit	W	W	W	view.zoom.time --by -1
+keys	ableton	edit	Z	Z	Z	view.zoom.toggle
+keys	ableton	edit	Mod++	Ctrl++	⌘+	view.zoom.time --by 1
+keys	ableton	edit	Mod+-	Ctrl+-	⌘-	view.zoom.time --by -1
+keys	ableton	edit	Mod+A	Ctrl+A	⌘A	select.all
+keys	ableton	edit	Mod+C	Ctrl+C	⌘C	edit.copy
+keys	ableton	edit	Mod+I	Ctrl+I	⌘I	select.invert
+keys	ableton	edit	Mod+NumPad+	Ctrl+NumPad+	⌘NumPad+	view.zoom.time --by 1
+keys	ableton	edit	Mod+NumPad-	Ctrl+NumPad-	⌘NumPad-	view.zoom.time --by -1
+keys	ableton	edit	Mod+V	Ctrl+V	⌘V	edit.paste
+keys	ableton	edit	Mod+X	Ctrl+X	⌘X	edit.cut
+keys	ableton	edit	Alt+Backspace	Alt+Backspace	⌥⌫	view.zoom.undo
+keys	ableton	edit	Alt+E	Alt+E	⌥E	view.zoom.redo
+keys	ableton	edit	Alt+L	Alt+L	⌥L	select.in-loop
+keys	ableton	edit	Alt+S	Alt+S	⌥S	view.zoom.selection --horizontal
+keys	ableton	edit	Alt+W	Alt+W	⌥W	view.zoom.undo
+keys	ableton	edit	Alt+Z	Alt+Z	⌥Z	view.zoom.full
+keys	ableton	edit	Shift+E	Shift+E	⇧E	view.zoom.data --by 1
+keys	ableton	edit	Shift+L	Shift+L	⇧L	view.zoom.loop
+keys	ableton	edit	Shift+S	Shift+S	⇧S	view.zoom.selection
+keys	ableton	edit	Shift+T	Shift+T	⇧T	track.delete
+keys	ableton	edit	Shift+W	Shift+W	⇧W	view.zoom.data --by -1
+keys	ableton	edit	Shift+Z	Shift+Z	⇧Z	view.zoom.store
+keys	ableton	edit	Mod+Shift+A	Ctrl+Shift+A	⇧⌘A	select.on-tracks
+keys	ableton	edit	Mod+Shift+G	Ctrl+Shift+G	⇧⌘G	view.snap
+keys	ableton	edit	Mod+Shift+NumPad+	Ctrl+Shift+NumPad+	⇧⌘NumPad+	view.zoom.data --by 1
+keys	ableton	edit	Mod+Shift+NumPad-	Ctrl+Shift+NumPad-	⇧⌘NumPad-	view.zoom.data --by -1
+keys	ableton	edit	Mod+Shift+V	Ctrl+Shift+V	⇧⌘V	edit.paste --at original
+keys	ableton	export	Mod+Enter	Ctrl+Enter	⌘↩	view.export-run
+keys	ableton	global	#	#	#	transport.panic
+keys	ableton	global	,	,	,	transport.seek --at 0
+keys	ableton	global	CapsLock	CapsLock	CapsLock	view.pc-keyboard
+keys	ableton	global	Down	↓	↓	select.step --dir down
+keys	ableton	global	End	End	End	select.step --dir end
+keys	ableton	global	Enter	Enter	↩	transport.start
+keys	ableton	global	F11	F11	F11	plugin.editor.open
+keys	ableton	global	F2	F2	F2	clip.open
+keys	ableton	global	F3	F3	F3	view.mixer
+keys	ableton	global	F4	F4	F4	browser.tab --tab inspector
+keys	ableton	global	F5	F5	F5	view.browser
+keys	ableton	global	F6	F6	F6	browser.tab --tab instruments
+keys	ableton	global	F7	F7	F7	browser.tab --tab effects
+keys	ableton	global	F9	F9	F9	record.start
+keys	ableton	global	Home	Home	Home	select.step --dir start
+keys	ableton	global	I	I	I	record.punch
+keys	ableton	global	L	L	L	transport.locate-selection
+keys	ableton	global	Left	←	←	select.step --dir left
+keys	ableton	global	MediaForward	MediaForward	MediaForward	transport.goto --to next-beat
+keys	ableton	global	MediaPlayPause	MediaPlayPause	MediaPlayPause	transport.play
+keys	ableton	global	MediaRewind	MediaRewind	MediaRewind	transport.goto --to prev-beat
+keys	ableton	global	MediaStop	MediaStop	MediaStop	transport.stop
+keys	ableton	global	NumPad+	NumPad+	NumPad+	transport.goto --to next-beat
+keys	ableton	global	NumPad-	NumPad-	NumPad-	transport.goto --to prev-beat
+keys	ableton	global	NumPad.	NumPad.	NumPad.	transport.seek --at 0
+keys	ableton	global	NumPad0	NumPad0	NumPad0	transport.stop
+keys	ableton	global	NumPad1	NumPad1	NumPad1	transport.goto --to loop-start
+keys	ableton	global	NumPad2	NumPad2	NumPad2	transport.goto --to loop-end
+keys	ableton	global	NumPad3	NumPad3	NumPad3	transport.goto --to marker-1
+keys	ableton	global	NumPad4	NumPad4	NumPad4	transport.goto --to marker-2
+keys	ableton	global	NumPad5	NumPad5	NumPad5	transport.goto --to marker-3
+keys	ableton	global	NumPad6	NumPad6	NumPad6	transport.goto --to marker-4
+keys	ableton	global	NumPad7	NumPad7	NumPad7	transport.goto --to marker-5
+keys	ableton	global	NumPad8	NumPad8	NumPad8	transport.goto --to marker-6
+keys	ableton	global	NumPad9	NumPad9	NumPad9	transport.goto --to marker-7
+keys	ableton	global	O	O	O	transport.metronome
+keys	ableton	global	P	P	P	loop.selection
+keys	ableton	global	Right	→	→	select.step --dir right
+keys	ableton	global	Space	Space	Space	transport.play
+keys	ableton	global	T	T	T	view.add-track
+keys	ableton	global	Tab	Tab	⇥	view.focus --way next
+keys	ableton	global	Up	↑	↑	select.step --dir up
+keys	ableton	global	Mod+,	Ctrl+,	⌘,	view.settings
+keys	ableton	global	Mod+.	Ctrl+.	⌘.	project.settings
+keys	ableton	global	Mod+F	Ctrl+F	⌘F	browser.search
+keys	ableton	global	Mod+F4	Ctrl+F4	⌘F4	project.close
+keys	ableton	global	Mod+K	Ctrl+K	⌘K	view.palette
+keys	ableton	global	Mod+L	Ctrl+L	⌘L	transport.loop
+keys	ableton	global	Mod+N	Ctrl+N	⌘N	project.new
+keys	ableton	global	Mod+NumPad.	Ctrl+NumPad.	⌘NumPad.	transport.goto
+keys	ableton	global	Mod+O	Ctrl+O	⌘O	project.open
+keys	ableton	global	Mod+Q	Ctrl+Q	⌘Q	app.quit
+keys	ableton	global	Mod+S	Ctrl+S	⌘S	project.save
+keys	ableton	global	Mod+Space	Ctrl+Space	⌘Space	transport.locate-mouse
+keys	ableton	global	Mod+T	Ctrl+T	⌘T	transport.locate
+keys	ableton	global	Mod+W	Ctrl+W	⌘W	project.close
+keys	ableton	global	Mod+Y	Ctrl+Y	⌘Y	history.redo
+keys	ableton	global	Mod+Z	Ctrl+Z	⌘Z	history.undo
+keys	ableton	global	Alt+NumPad1	Alt+NumPad1	⌥NumPad1	loop.start.set
+keys	ableton	global	Alt+NumPad2	Alt+NumPad2	⌥NumPad2	loop.end.set
+keys	ableton	global	Alt+PageDown	Alt+PageDown	⌥PageDown	plugin.preset.next
+keys	ableton	global	Alt+PageUp	Alt+PageUp	⌥PageUp	plugin.preset.prev
+keys	ableton	global	Mod+Alt+1	Ctrl+Alt+1	⌥⌘1	quantize.program --program A
+keys	ableton	global	Mod+Alt+2	Ctrl+Alt+2	⌥⌘2	quantize.program --program B
+keys	ableton	global	Mod+Alt+3	Ctrl+Alt+3	⌥⌘3	quantize.program --program C
+keys	ableton	global	Mod+Alt+4	Ctrl+Alt+4	⌥⌘4	quantize.program --program D
+keys	ableton	global	Mod+Alt+5	Ctrl+Alt+5	⌥⌘5	quantize.program --program E
+keys	ableton	global	Mod+Alt+6	Ctrl+Alt+6	⌥⌘6	quantize.program --program F
+keys	ableton	global	Mod+Alt+7	Ctrl+Alt+7	⌥⌘7	quantize.program --program G
+keys	ableton	global	Mod+Alt+C	Ctrl+Alt+C	⌥⌘C	track.reveal --in mixer
+keys	ableton	global	Mod+Alt+R	Ctrl+Alt+R	⌥⌘R	edit.ripple
+keys	ableton	global	Mod+Alt+S	Ctrl+Alt+S	⌥⌘S	track.solo.clear
+keys	ableton	global	Mod+Alt+T	Ctrl+Alt+T	⌥⌘T	track.reveal
+keys	ableton	global	Shift+B	Shift+B	⇧B	transport.goto --to prev-marker
+keys	ableton	global	Shift+C	Shift+C	⇧C	record.count-in
+keys	ableton	global	Shift+Down	Shift+↓	⇧↓	select.step --dir down --extend
+keys	ableton	global	Shift+End	Shift+End	⇧End	select.step --dir end --extend
+keys	ableton	global	Shift+F	Shift+F	⇧F	view.fullscreen
+keys	ableton	global	Shift+F11	Shift+F11	⇧F11	view.instrument
+keys	ableton	global	Shift+Home	Shift+Home	⇧Home	select.step --dir start --extend
+keys	ableton	global	Shift+Left	Shift+←	⇧←	select.step --dir left --extend
+keys	ableton	global	Shift+MediaForward	Shift+MediaForward	⇧MediaForward	transport.goto --to next-bar
+keys	ableton	global	Shift+MediaRewind	Shift+MediaRewind	⇧MediaRewind	transport.goto --to prev-bar
+keys	ableton	global	Shift+N	Shift+N	⇧N	transport.goto --to next-marker
+keys	ableton	global	Shift+NumPad+	Shift+NumPad+	⇧NumPad+	transport.goto --to next-bar
+keys	ableton	global	Shift+NumPad-	Shift+NumPad-	⇧NumPad-	transport.goto --to prev-bar
+keys	ableton	global	Shift+P	Shift+P	⇧P	loop.selection --no-snap
+keys	ableton	global	Shift+Right	Shift+→	⇧→	select.step --dir right --extend
+keys	ableton	global	Shift+Tab	Shift+Tab	⇧⇥	view.focus --way prev
+keys	ableton	global	Shift+Up	Shift+↑	⇧↑	select.step --dir up --extend
+keys	ableton	global	Mod+Shift+Down	Ctrl+Shift+↓	⇧⌘↓	select.step --dir down --extend
+keys	ableton	global	Mod+Shift+E	Ctrl+Shift+E	⇧⌘E	view.export-stems
+keys	ableton	global	Mod+Shift+End	Ctrl+Shift+End	⇧⌘End	select.step --dir end --extend
+keys	ableton	global	Mod+Shift+Home	Ctrl+Shift+Home	⇧⌘Home	select.step --dir start --extend
+keys	ableton	global	Mod+Shift+L	Ctrl+Shift+L	⇧⌘L	view.tracklist.collapse
+keys	ableton	global	Mod+Shift+Left	Ctrl+Shift+←	⇧⌘←	select.step --dir left --extend
+keys	ableton	global	Mod+Shift+M	Ctrl+Shift+M	⇧⌘M	track.mute.clear
+keys	ableton	global	Mod+Shift+O	Ctrl+Shift+O	⇧⌘O	clip.import
+keys	ableton	global	Mod+Shift+Right	Ctrl+Shift+→	⇧⌘→	select.step --dir right --extend
+keys	ableton	global	Mod+Shift+S	Ctrl+Shift+S	⇧⌘S	project.save-as
+keys	ableton	global	Mod+Shift+Up	Ctrl+Shift+↑	⇧⌘↑	select.step --dir up --extend
+keys	ableton	global	Alt+Shift+B	Alt+Shift+B	⌥⇧B	transport.goto --to prev-event
+keys	ableton	global	Alt+Shift+N	Alt+Shift+N	⌥⇧N	transport.goto --to next-event
+keys	ableton	global	Alt+Shift+R	Alt+Shift+R	⌥⇧R	view.record-panel
+keys	ableton	global	Mod+Alt+Shift+S	Ctrl+Alt+Shift+S	⌥⇧⌘S	version.save
+keys	ableton	lane	Backspace	Backspace	⌫	note.delete
+keys	ableton	lane	D	D	D	note.duplicate
+keys	ableton	lane	Delete	Del	⌫	note.delete
+keys	ableton	mixer	Backspace	Backspace	⌫	edit.delete
+keys	ableton	mixer	Delete	Del	⌫	edit.delete
+keys	ableton	mixer	Menu	Menu	Menu	view.context-menu
+keys	ableton	mixer	[	[	[	mixer.channel.prev
+keys	ableton	mixer	]	]	]	mixer.channel.next
+keys	ableton	mixer	{	{	{	mixer.bank --way prev
+keys	ableton	mixer	}	}	}	mixer.bank --way next
+keys	ableton	mixer	Mod+C	Ctrl+C	⌘C	edit.copy
+keys	ableton	mixer	Mod+V	Ctrl+V	⌘V	edit.paste
+keys	ableton	mixer	Mod+X	Ctrl+X	⌘X	edit.cut
+keys	ableton	mixer	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	ableton	roll	Backspace	Backspace	⌫	note.delete
+keys	ableton	roll	Delete	Del	⌫	note.delete
+keys	ableton	roll	Down	↓	↓	note.transpose --by -1
+keys	ableton	roll	G	G	G	note.join
+keys	ableton	roll	Left	←	←	edit.nudge.left --grid 1/16
+keys	ableton	roll	Menu	Menu	Menu	view.context-menu
+keys	ableton	roll	Right	→	→	edit.nudge.right --grid 1/16
+keys	ableton	roll	Up	↑	↑	note.transpose --by 1
+keys	ableton	roll	Mod+D	Ctrl+D	⌘D	note.duplicate
+keys	ableton	roll	Mod+G	Ctrl+G	⌘G	note.split.grid
+keys	ableton	roll	Mod+U	Ctrl+U	⌘U	note.quantize
+keys	ableton	roll	Alt+Down	Alt+↓	⌥↓	note.transpose --by -1
+keys	ableton	roll	Alt+Left	Alt+←	⌥←	edit.nudge.left
+keys	ableton	roll	Alt+Q	Alt+Q	⌥Q	note.quantize --strength 50
+keys	ableton	roll	Alt+Right	Alt+→	⌥→	edit.nudge.right
+keys	ableton	roll	Alt+Up	Alt+↑	⌥↑	note.transpose --by 1
+keys	ableton	roll	Shift+Down	Shift+↓	⇧↓	note.transpose --by -12
+keys	ableton	roll	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	ableton	roll	Shift+M	Shift+M	⇧M	note.mute
+keys	ableton	roll	Shift+Q	Shift+Q	⇧Q	note.quantize --restore
+keys	ableton	roll	Shift+Up	Shift+↑	⇧↑	note.transpose --by 12
+keys	ableton	roll	Alt+Shift+Down	Alt+Shift+↓	⌥⇧↓	note.transpose --by -12
+keys	ableton	roll	Alt+Shift+Up	Alt+Shift+↑	⌥⇧↑	note.transpose --by 12
+keys	reaper	arrange	Backspace	Backspace	⌫	clip.delete
+keys	reaper	arrange	D	D	D	clip.duplicate
+keys	reaper	arrange	Delete	Del	⌫	clip.delete
+keys	reaper	arrange	G	G	G	clip.join
+keys	reaper	arrange	H	H	H	auto.lane.next
+keys	reaper	arrange	Insert	Insert	Insert	marker.add
+keys	reaper	arrange	J	J	J	auto.mode --mode read
+keys	reaper	arrange	K	K	K	auto.mode --mode touch
+keys	reaper	arrange	Menu	Menu	Menu	view.context-menu
+keys	reaper	arrange	Q	Q	Q	clip.quantize
+keys	reaper	arrange	S	S	S	clip.split
+keys	reaper	arrange	X	X	X	clip.fade.cross
+keys	reaper	arrange	Y	Y	Y	marker.add
+keys	reaper	arrange	Mod+B	Ctrl+B	⌘B	clip.bounce
+keys	reaper	arrange	Mod+G	Ctrl+G	⌘G	clip.split.grid
+keys	reaper	arrange	Mod+L	Ctrl+L	⌘L	clip.move.cursor
+keys	reaper	arrange	Mod+M	Ctrl+M	⌘M	clip.ara.attach
+keys	reaper	arrange	Mod+P	Ctrl+P	⌘P	clip.add.midi
+keys	reaper	arrange	Alt+D	Alt+D	⌥D	section.duplicate
+keys	reaper	arrange	Alt+G	Alt+G	⌥G	take.prev
+keys	reaper	arrange	Alt+H	Alt+H	⌥H	take.next
+keys	reaper	arrange	Alt+Left	Alt+←	⌥←	clip.nudge --dir left
+keys	reaper	arrange	Alt+N	Alt+N	⌥N	clip.normalize
+keys	reaper	arrange	Alt+NumPad+	Alt+NumPad+	⌥NumPad+	clip.gain.set --by 1
+keys	reaper	arrange	Alt+NumPad-	Alt+NumPad-	⌥NumPad-	clip.gain.set --by -1
+keys	reaper	arrange	Alt+R	Alt+R	⌥R	range.from-clips
+keys	reaper	arrange	Alt+Right	Alt+→	⌥→	clip.nudge --dir right
+keys	reaper	arrange	Alt+T	Alt+T	⌥T	range.transform
+keys	reaper	arrange	Mod+Alt+B	Ctrl+Alt+B	⌥⌘B	clip.bounce --new-track
+keys	reaper	arrange	Mod+Alt+D	Ctrl+Alt+D	⌥⌘D	range.time.delete
+keys	reaper	arrange	Mod+Alt+I	Ctrl+Alt+I	⌥⌘I	range.time.insert
+keys	reaper	arrange	Mod+Alt+L	Ctrl+Alt+L	⌥⌘L	clip.loop.set --toggle
+keys	reaper	arrange	Mod+Alt+Left	Ctrl+Alt+←	⌥⌘←	clip.nudge --dir left --unit bar
+keys	reaper	arrange	Mod+Alt+M	Ctrl+Alt+M	⌥⌘M	clip.ara.detach
+keys	reaper	arrange	Mod+Alt+Right	Ctrl+Alt+→	⌥⌘→	clip.nudge --dir right --unit bar
+keys	reaper	arrange	Mod+Alt+X	Ctrl+Alt+X	⌥⌘X	clip.split.range
+keys	reaper	arrange	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	reaper	arrange	Shift+H	Shift+H	⇧H	auto.lane.next --back
+keys	reaper	arrange	Shift+Insert	Shift+Insert	⇧Insert	marker.add.named
+keys	reaper	arrange	Shift+M	Shift+M	⇧M	clip.mute
+keys	reaper	arrange	Shift+R	Shift+R	⇧R	range.from-clips
+keys	reaper	arrange	Shift+X	Shift+X	⇧X	clip.fade.set --auto
+keys	reaper	arrange	Shift+Y	Shift+Y	⇧Y	marker.add.named
+keys	reaper	arrange	Mod+Shift+D	Ctrl+Shift+D	⇧⌘D	select.off-tracks
+keys	reaper	arrange	Mod+Shift+X	Ctrl+Shift+X	⇧⌘X	clip.split.range --range loop
+keys	reaper	arrange	Alt+Shift+End	Alt+Shift+End	⌥⇧End	select.span --way end
+keys	reaper	arrange	Alt+Shift+Home	Alt+Shift+Home	⌥⇧Home	select.span --way start
+keys	reaper	arrange	Alt+Shift+NumPad+	Alt+Shift+NumPad+	⌥⇧NumPad+	clip.gain.set --by 0.1
+keys	reaper	arrange	Alt+Shift+NumPad-	Alt+Shift+NumPad-	⌥⇧NumPad-	clip.gain.set --by -0.1
+keys	reaper	automation	Backspace	Backspace	⌫	clip.delete
+keys	reaper	automation	D	D	D	clip.duplicate
+keys	reaper	automation	Delete	Del	⌫	clip.delete
+keys	reaper	automation	H	H	H	auto.lane.next
+keys	reaper	automation	J	J	J	auto.mode --mode read
+keys	reaper	automation	K	K	K	auto.mode --mode touch
+keys	reaper	automation	Alt+Left	Alt+←	⌥←	edit.nudge.left
+keys	reaper	automation	Alt+Right	Alt+→	⌥→	edit.nudge.right
+keys	reaper	automation	Shift+H	Shift+H	⇧H	auto.lane.next --back
+keys	reaper	edit	1	1	1	tool.select
+keys	reaper	edit	2	2	2	tool.range
+keys	reaper	edit	3	3	3	tool.cut
+keys	reaper	edit	4	4	4	tool.erase
+keys	reaper	edit	5	5	5	tool.draw
+keys	reaper	edit	6	6	6	tool.mute
+keys	reaper	edit	8	8	8	tool.listen
+keys	reaper	edit	A	A	A	view.lanes
+keys	reaper	edit	E	E	E	view.zoom.time --by 1
+keys	reaper	edit	F	F	F	view.autoscroll
+keys	reaper	edit	M	M	M	track.mute
+keys	reaper	edit	N	N	N	view.snap
+keys	reaper	edit	PageDown	PageDown	PageDown	view.page --way down
+keys	reaper	edit	PageUp	PageUp	PageUp	view.page --way up
+keys	reaper	edit	R	R	R	track.arm
+keys	reaper	edit	U	U	U	track.monitor
+keys	reaper	edit	W	W	W	view.zoom.time --by -1
+keys	reaper	edit	Z	Z	Z	view.zoom.toggle
+keys	reaper	edit	Mod++	Ctrl++	⌘+	view.zoom.time --by 1
+keys	reaper	edit	Mod+-	Ctrl+-	⌘-	view.zoom.time --by -1
+keys	reaper	edit	Mod+A	Ctrl+A	⌘A	select.all
+keys	reaper	edit	Mod+C	Ctrl+C	⌘C	edit.copy
+keys	reaper	edit	Mod+D	Ctrl+D	⌘D	select.clear
+keys	reaper	edit	Mod+I	Ctrl+I	⌘I	select.invert
+keys	reaper	edit	Mod+NumPad+	Ctrl+NumPad+	⌘NumPad+	view.zoom.time --by 1
+keys	reaper	edit	Mod+NumPad-	Ctrl+NumPad-	⌘NumPad-	view.zoom.time --by -1
+keys	reaper	edit	Mod+V	Ctrl+V	⌘V	edit.paste
+keys	reaper	edit	Mod+X	Ctrl+X	⌘X	edit.cut
+keys	reaper	edit	Alt+Backspace	Alt+Backspace	⌥⌫	view.zoom.undo
+keys	reaper	edit	Alt+E	Alt+E	⌥E	view.zoom.redo
+keys	reaper	edit	Alt+L	Alt+L	⌥L	select.in-loop
+keys	reaper	edit	Alt+S	Alt+S	⌥S	view.zoom.selection --horizontal
+keys	reaper	edit	Alt+W	Alt+W	⌥W	view.zoom.undo
+keys	reaper	edit	Alt+Z	Alt+Z	⌥Z	view.zoom.full
+keys	reaper	edit	Shift+E	Shift+E	⇧E	view.zoom.data --by 1
+keys	reaper	edit	Shift+L	Shift+L	⇧L	view.zoom.loop
+keys	reaper	edit	Shift+S	Shift+S	⇧S	view.zoom.selection
+keys	reaper	edit	Shift+T	Shift+T	⇧T	track.delete
+keys	reaper	edit	Shift+W	Shift+W	⇧W	view.zoom.data --by -1
+keys	reaper	edit	Shift+Z	Shift+Z	⇧Z	view.zoom.store
+keys	reaper	edit	Mod+Shift+A	Ctrl+Shift+A	⇧⌘A	select.on-tracks
+keys	reaper	edit	Mod+Shift+G	Ctrl+Shift+G	⇧⌘G	view.snap
+keys	reaper	edit	Mod+Shift+NumPad+	Ctrl+Shift+NumPad+	⇧⌘NumPad+	view.zoom.data --by 1
+keys	reaper	edit	Mod+Shift+NumPad-	Ctrl+Shift+NumPad-	⇧⌘NumPad-	view.zoom.data --by -1
+keys	reaper	edit	Mod+Shift+V	Ctrl+Shift+V	⇧⌘V	edit.paste --at original
+keys	reaper	export	Mod+Enter	Ctrl+Enter	⌘↩	view.export-run
+keys	reaper	global	#	#	#	transport.panic
+keys	reaper	global	,	,	,	transport.seek --at 0
+keys	reaper	global	/	/	/	transport.loop
+keys	reaper	global	CapsLock	CapsLock	CapsLock	view.pc-keyboard
+keys	reaper	global	Down	↓	↓	select.step --dir down
+keys	reaper	global	End	End	End	select.step --dir end
+keys	reaper	global	Enter	Enter	↩	transport.start
+keys	reaper	global	F11	F11	F11	plugin.editor.open
+keys	reaper	global	F2	F2	F2	clip.open
+keys	reaper	global	F3	F3	F3	view.mixer
+keys	reaper	global	F4	F4	F4	browser.tab --tab inspector
+keys	reaper	global	F5	F5	F5	view.browser
+keys	reaper	global	F6	F6	F6	browser.tab --tab instruments
+keys	reaper	global	F7	F7	F7	browser.tab --tab effects
+keys	reaper	global	F9	F9	F9	browser.tab --tab files
+keys	reaper	global	Home	Home	Home	select.step --dir start
+keys	reaper	global	I	I	I	record.punch
+keys	reaper	global	L	L	L	transport.locate-selection
+keys	reaper	global	Left	←	←	select.step --dir left
+keys	reaper	global	MediaForward	MediaForward	MediaForward	transport.goto --to next-beat
+keys	reaper	global	MediaPlayPause	MediaPlayPause	MediaPlayPause	transport.play
+keys	reaper	global	MediaRewind	MediaRewind	MediaRewind	transport.goto --to prev-beat
+keys	reaper	global	MediaStop	MediaStop	MediaStop	transport.stop
+keys	reaper	global	NumPad+	NumPad+	NumPad+	transport.goto --to next-beat
+keys	reaper	global	NumPad-	NumPad-	NumPad-	transport.goto --to prev-beat
+keys	reaper	global	NumPad.	NumPad.	NumPad.	transport.seek --at 0
+keys	reaper	global	NumPad/	NumPad/	NumPad/	transport.loop
+keys	reaper	global	NumPad0	NumPad0	NumPad0	transport.stop
+keys	reaper	global	NumPad1	NumPad1	NumPad1	transport.goto --to loop-start
+keys	reaper	global	NumPad2	NumPad2	NumPad2	transport.goto --to loop-end
+keys	reaper	global	NumPad3	NumPad3	NumPad3	transport.goto --to marker-1
+keys	reaper	global	NumPad4	NumPad4	NumPad4	transport.goto --to marker-2
+keys	reaper	global	NumPad5	NumPad5	NumPad5	transport.goto --to marker-3
+keys	reaper	global	NumPad6	NumPad6	NumPad6	transport.goto --to marker-4
+keys	reaper	global	NumPad7	NumPad7	NumPad7	transport.goto --to marker-5
+keys	reaper	global	NumPad8	NumPad8	NumPad8	transport.goto --to marker-6
+keys	reaper	global	NumPad9	NumPad9	NumPad9	transport.goto --to marker-7
+keys	reaper	global	O	O	O	record.preroll
+keys	reaper	global	P	P	P	loop.selection
+keys	reaper	global	Right	→	→	select.step --dir right
+keys	reaper	global	Space	Space	Space	transport.play
+keys	reaper	global	T	T	T	view.add-track
+keys	reaper	global	Tab	Tab	⇥	view.focus --way next
+keys	reaper	global	Up	↑	↑	select.step --dir up
+keys	reaper	global	Mod+,	Ctrl+,	⌘,	view.settings
+keys	reaper	global	Mod+.	Ctrl+.	⌘.	project.settings
+keys	reaper	global	Mod+E	Ctrl+E	⌘E	export.open
+keys	reaper	global	Mod+F	Ctrl+F	⌘F	browser.search
+keys	reaper	global	Mod+F4	Ctrl+F4	⌘F4	project.close
+keys	reaper	global	Mod+K	Ctrl+K	⌘K	view.palette
+keys	reaper	global	Mod+N	Ctrl+N	⌘N	project.new
+keys	reaper	global	Mod+NumPad.	Ctrl+NumPad.	⌘NumPad.	transport.goto
+keys	reaper	global	Mod+O	Ctrl+O	⌘O	project.open
+keys	reaper	global	Mod+Q	Ctrl+Q	⌘Q	app.quit
+keys	reaper	global	Mod+R	Ctrl+R	⌘R	record.start
+keys	reaper	global	Mod+S	Ctrl+S	⌘S	project.save
+keys	reaper	global	Mod+Space	Ctrl+Space	⌘Space	transport.locate-mouse
+keys	reaper	global	Mod+T	Ctrl+T	⌘T	transport.locate
+keys	reaper	global	Mod+W	Ctrl+W	⌘W	project.close
+keys	reaper	global	Mod+Y	Ctrl+Y	⌘Y	history.redo
+keys	reaper	global	Mod+Z	Ctrl+Z	⌘Z	history.undo
+keys	reaper	global	Alt+NumPad1	Alt+NumPad1	⌥NumPad1	loop.start.set
+keys	reaper	global	Alt+NumPad2	Alt+NumPad2	⌥NumPad2	loop.end.set
+keys	reaper	global	Alt+P	Alt+P	⌥P	edit.ripple
+keys	reaper	global	Alt+PageDown	Alt+PageDown	⌥PageDown	plugin.preset.next
+keys	reaper	global	Alt+PageUp	Alt+PageUp	⌥PageUp	plugin.preset.prev
+keys	reaper	global	Mod+Alt+1	Ctrl+Alt+1	⌥⌘1	quantize.program --program A
+keys	reaper	global	Mod+Alt+2	Ctrl+Alt+2	⌥⌘2	quantize.program --program B
+keys	reaper	global	Mod+Alt+3	Ctrl+Alt+3	⌥⌘3	quantize.program --program C
+keys	reaper	global	Mod+Alt+4	Ctrl+Alt+4	⌥⌘4	quantize.program --program D
+keys	reaper	global	Mod+Alt+5	Ctrl+Alt+5	⌥⌘5	quantize.program --program E
+keys	reaper	global	Mod+Alt+6	Ctrl+Alt+6	⌥⌘6	quantize.program --program F
+keys	reaper	global	Mod+Alt+7	Ctrl+Alt+7	⌥⌘7	quantize.program --program G
+keys	reaper	global	Mod+Alt+C	Ctrl+Alt+C	⌥⌘C	track.reveal --in mixer
+keys	reaper	global	Mod+Alt+S	Ctrl+Alt+S	⌥⌘S	track.solo.clear
+keys	reaper	global	Mod+Alt+T	Ctrl+Alt+T	⌥⌘T	track.reveal
+keys	reaper	global	Shift+B	Shift+B	⇧B	transport.goto --to prev-marker
+keys	reaper	global	Shift+C	Shift+C	⇧C	record.count-in
+keys	reaper	global	Shift+Down	Shift+↓	⇧↓	select.step --dir down --extend
+keys	reaper	global	Shift+End	Shift+End	⇧End	select.step --dir end --extend
+keys	reaper	global	Shift+F	Shift+F	⇧F	view.fullscreen
+keys	reaper	global	Shift+F11	Shift+F11	⇧F11	view.instrument
+keys	reaper	global	Shift+Home	Shift+Home	⇧Home	select.step --dir start --extend
+keys	reaper	global	Shift+Left	Shift+←	⇧←	select.step --dir left --extend
+keys	reaper	global	Shift+MediaForward	Shift+MediaForward	⇧MediaForward	transport.goto --to next-bar
+keys	reaper	global	Shift+MediaRewind	Shift+MediaRewind	⇧MediaRewind	transport.goto --to prev-bar
+keys	reaper	global	Shift+N	Shift+N	⇧N	transport.goto --to next-marker
+keys	reaper	global	Shift+NumPad+	Shift+NumPad+	⇧NumPad+	transport.goto --to next-bar
+keys	reaper	global	Shift+NumPad-	Shift+NumPad-	⇧NumPad-	transport.goto --to prev-bar
+keys	reaper	global	Shift+P	Shift+P	⇧P	loop.selection --no-snap
+keys	reaper	global	Shift+Right	Shift+→	⇧→	select.step --dir right --extend
+keys	reaper	global	Shift+Tab	Shift+Tab	⇧⇥	view.focus --way prev
+keys	reaper	global	Shift+Up	Shift+↑	⇧↑	select.step --dir up --extend
+keys	reaper	global	Mod+Shift+Down	Ctrl+Shift+↓	⇧⌘↓	select.step --dir down --extend
+keys	reaper	global	Mod+Shift+E	Ctrl+Shift+E	⇧⌘E	view.export-stems
+keys	reaper	global	Mod+Shift+End	Ctrl+Shift+End	⇧⌘End	select.step --dir end --extend
+keys	reaper	global	Mod+Shift+Home	Ctrl+Shift+Home	⇧⌘Home	select.step --dir start --extend
+keys	reaper	global	Mod+Shift+L	Ctrl+Shift+L	⇧⌘L	view.tracklist.collapse
+keys	reaper	global	Mod+Shift+Left	Ctrl+Shift+←	⇧⌘←	select.step --dir left --extend
+keys	reaper	global	Mod+Shift+M	Ctrl+Shift+M	⇧⌘M	track.mute.clear
+keys	reaper	global	Mod+Shift+O	Ctrl+Shift+O	⇧⌘O	clip.import
+keys	reaper	global	Mod+Shift+Right	Ctrl+Shift+→	⇧⌘→	select.step --dir right --extend
+keys	reaper	global	Mod+Shift+S	Ctrl+Shift+S	⇧⌘S	project.save-as
+keys	reaper	global	Mod+Shift+Up	Ctrl+Shift+↑	⇧⌘↑	select.step --dir up --extend
+keys	reaper	global	Mod+Shift+Z	Ctrl+Shift+Z	⇧⌘Z	history.redo
+keys	reaper	global	Alt+Shift+B	Alt+Shift+B	⌥⇧B	transport.goto --to prev-event
+keys	reaper	global	Alt+Shift+N	Alt+Shift+N	⌥⇧N	transport.goto --to next-event
+keys	reaper	global	Alt+Shift+R	Alt+Shift+R	⌥⇧R	view.record-panel
+keys	reaper	global	Mod+Alt+Shift+S	Ctrl+Alt+Shift+S	⌥⇧⌘S	version.save
+keys	reaper	lane	Backspace	Backspace	⌫	note.delete
+keys	reaper	lane	D	D	D	note.duplicate
+keys	reaper	lane	Delete	Del	⌫	note.delete
+keys	reaper	mixer	Backspace	Backspace	⌫	edit.delete
+keys	reaper	mixer	Delete	Del	⌫	edit.delete
+keys	reaper	mixer	Menu	Menu	Menu	view.context-menu
+keys	reaper	mixer	[	[	[	mixer.channel.prev
+keys	reaper	mixer	]	]	]	mixer.channel.next
+keys	reaper	mixer	{	{	{	mixer.bank --way prev
+keys	reaper	mixer	}	}	}	mixer.bank --way next
+keys	reaper	mixer	Mod+C	Ctrl+C	⌘C	edit.copy
+keys	reaper	mixer	Mod+V	Ctrl+V	⌘V	edit.paste
+keys	reaper	mixer	Mod+X	Ctrl+X	⌘X	edit.cut
+keys	reaper	mixer	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	reaper	roll	Backspace	Backspace	⌫	note.delete
+keys	reaper	roll	D	D	D	note.duplicate
+keys	reaper	roll	Delete	Del	⌫	note.delete
+keys	reaper	roll	Down	↓	↓	note.transpose --by -1
+keys	reaper	roll	G	G	G	note.join
+keys	reaper	roll	Left	←	←	edit.nudge.left --grid 1/16
+keys	reaper	roll	Menu	Menu	Menu	view.context-menu
+keys	reaper	roll	Q	Q	Q	note.quantize
+keys	reaper	roll	Right	→	→	edit.nudge.right --grid 1/16
+keys	reaper	roll	Up	↑	↑	note.transpose --by 1
+keys	reaper	roll	Mod+G	Ctrl+G	⌘G	note.split.grid
+keys	reaper	roll	Alt+Down	Alt+↓	⌥↓	note.transpose --by -1
+keys	reaper	roll	Alt+Left	Alt+←	⌥←	edit.nudge.left
+keys	reaper	roll	Alt+Q	Alt+Q	⌥Q	note.quantize --strength 50
+keys	reaper	roll	Alt+Right	Alt+→	⌥→	edit.nudge.right
+keys	reaper	roll	Alt+Up	Alt+↑	⌥↑	note.transpose --by 1
+keys	reaper	roll	Shift+Down	Shift+↓	⇧↓	note.transpose --by -12
+keys	reaper	roll	Shift+F10	Shift+F10	⇧F10	view.context-menu
+keys	reaper	roll	Shift+M	Shift+M	⇧M	note.mute
+keys	reaper	roll	Shift+Q	Shift+Q	⇧Q	note.quantize --restore
+keys	reaper	roll	Shift+Up	Shift+↑	⇧↑	note.transpose --by 12
+keys	reaper	roll	Alt+Shift+Down	Alt+Shift+↓	⌥⇧↓	note.transpose --by -12
+keys	reaper	roll	Alt+Shift+Up	Alt+Shift+↑	⌥⇧↑	note.transpose --by 12
+mouse	roll.select.note-body.click	Shift	select.toggle
+mouse	roll.select.note-body.click	none	select.set
+mouse	roll.select.note-body.drag	Alt	note.duplicate
+mouse	roll.select.note-body.drag	Mod+Alt	note.velocity.set
+mouse	roll.select.note-body.drag	during.Mod+Alt	note.strum
+mouse	roll.select.note-body.drag	during.Shift	snap.invert
+mouse	roll.select.note-body.drag	none	note.move
+mouse	roll.select.note-edge.click	Shift	select.toggle
+mouse	roll.select.note-edge.click	none	select.set
+mouse	roll.select.note-edge.drag	Alt	note.resize --adjacent
+mouse	roll.select.note-edge.drag	during.Alt	note.resize --stretch
+mouse	roll.select.note-edge.drag	during.Mod	note.resize --equal
+mouse	roll.select.note-edge.drag	during.Mod+Alt	note.resize --align
+mouse	roll.select.note-edge.drag	during.Shift	snap.invert
+mouse	roll.select.note-edge.drag	none	note.resize
+mouse	roll.select.note-upper.click	Alt	note.mute
+mouse	roll.select.note-upper.click	none	select.set
+mouse	roll.select.note-upper.drag	none	note.velocity.set
+mouse	roll.select.note-lower.click	Alt	note.split --deep
+mouse	roll.select.note-lower.click	none	note.split
+mouse	roll.select.note-lower.drag	none	note.move
+mouse	roll.select.empty.click	Alt	select.after
+mouse	roll.select.empty.click	none	select.none
+mouse	roll.select.empty.drag	Shift	select.rect --add
+mouse	roll.select.empty.drag	none	select.rect
+mouse	roll.select.hold	Mod	tool:draw
+mouse	roll.select.hold	Mod+Shift	tool:cut
+mouse	roll.cut.hold	Mod	tool:select
+mouse	roll.erase.hold	Mod	tool:select
+mouse	roll.draw.hold	Mod	tool:select
+mouse	arrange.select.clip-body.click	Alt	select.after
+mouse	arrange.select.clip-body.click	Shift	select.toggle
+mouse	arrange.select.clip-body.click	none	select.set
+mouse	arrange.select.clip-body.drag	Alt	clip.duplicate
+mouse	arrange.select.clip-body.drag	Mod+Alt	clip.slip
+mouse	arrange.select.clip-body.drag	during.Shift	snap.invert
+mouse	arrange.select.clip-body.drag	none	clip.move
+mouse	arrange.select.clip-edge.click	none	select.set
+mouse	arrange.select.clip-edge.drag	Alt	clip.stretch
+mouse	arrange.select.clip-edge.drag	during.Shift	snap.invert
+mouse	arrange.select.clip-edge.drag	none	clip.resize
+mouse	arrange.select.fade-handle.drag	during.Shift	snap.invert
+mouse	arrange.select.fade-handle.drag	none	clip.fade
+mouse	arrange.select.empty.click	Alt	select.after
+mouse	arrange.select.empty.click	none	select.none
+mouse	arrange.select.empty.drag	Shift	select.rect --add
+mouse	arrange.select.empty.drag	none	select.rect
+mouse	arrange.select.clip-corner.click	none	select.set
+mouse	arrange.select.clip-corner.drag	Alt	clip.loop.set --start
+mouse	arrange.select.clip-corner.drag	during.Shift	snap.invert
+mouse	arrange.select.clip-corner.drag	none	clip.loop.set
+mouse	arrange.select.hold	Mod	tool:range
+mouse	arrange.range.hold	Alt	tool:select
+mouse	arrange.cut.hold	Alt	tool:select
+mouse	arrange.erase.hold	Alt	tool:select
+mouse	arrange.mute.hold	Alt	tool:select
+mouse	lane.select.velocity-bar.click	Shift	select.toggle
+mouse	lane.select.velocity-bar.click	none	select.set
+mouse	lane.select.velocity-bar.drag	none	note.velocity.set
+mouse	lane.select.cc-point.click	Shift	select.toggle
+mouse	lane.select.cc-point.click	none	select.set
+mouse	lane.select.cc-point.drag	during.Mod	cc.point.move --lock
+mouse	lane.select.cc-point.drag	during.Shift	snap.invert
+mouse	lane.select.cc-point.drag	none	cc.point.move
+mouse	lane.select.empty.drag	Shift	select.rect --add
+mouse	lane.select.empty.drag	none	select.rect
+mouse	lane.draw.velocity-bar.drag	Alt	cc.draw --line
+mouse	lane.draw.velocity-bar.drag	Shift	cc.draw --line
+mouse	lane.draw.velocity-bar.drag	none	cc.draw
+mouse	lane.draw.cc-point.drag	Alt	cc.draw --line
+mouse	lane.draw.cc-point.drag	Shift	cc.draw --line
+mouse	lane.draw.cc-point.drag	none	cc.draw
+mouse	lane.draw.empty.drag	Alt	cc.draw --line
+mouse	lane.draw.empty.drag	Shift	cc.draw --line
+mouse	lane.draw.empty.drag	none	cc.draw
+mouse	automation.select.point.click	Alt	auto.point.delete
+mouse	automation.select.point.click	Shift	select.toggle
+mouse	automation.select.point.click	none	select.set
+mouse	automation.select.point.drag	during.Mod	auto.point.move --lock
+mouse	automation.select.point.drag	during.Shift	snap.invert
+mouse	automation.select.point.drag	none	auto.point.move
+mouse	automation.select.line.drag	none	auto.segment.shape
+mouse	automation.select.empty.click	none	select.none
+mouse	automation.select.empty.drag	Shift	select.rect --add
+mouse	automation.select.empty.drag	none	select.rect
+mouse	automation.erase.point.click	none	auto.point.delete
+mouse	ruler.any.empty.click	none	transport.locate
+mouse	ruler.any.empty.drag	none	view.zoom.time
+mouse	ruler.any.empty.wheel	none	view.zoom.time

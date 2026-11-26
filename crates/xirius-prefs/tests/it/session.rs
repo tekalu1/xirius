@@ -612,126 +612,31 @@ fn key_012_keep_none_starts_over_from_the_preset_and_keep_mine_is_the_default() 
     assert_eq!(again.lock().unwrap().keymap.preset, "ableton");
 }
 
-/// The keys every preset keeps (KEY-012, EDT-135): (context, key, command).
-const IN_EVERY_PRESET: &[(&str, &str, &str)] = &[
-    // Collapse the track list, insert time and delete time stay where they are.
-    ("arrange", "Mod+Shift+L", "view.tracklist.collapse"),
-    ("arrange", "Mod+Alt+I", "range.time.insert"),
-    ("arrange", "Mod+Alt+D", "range.time.delete"),
-    ("mixer", "]", "mixer.channel.next"),
-    ("mixer", "[", "mixer.channel.prev"),
-    ("global", "Alt+PageDown", "plugin.preset.next"),
-    ("global", "Alt+PageUp", "plugin.preset.prev"),
-    // The arrows stay the selection's.
-    ("arrange", "Right", "select.step --dir right"),
-    // The ripple switch.
-    ("arrange", "Ctrl+Alt+R", "edit.ripple"),
-];
-
-/// Where a preset's own list puts a key of the two lists elsewhere: (preset, context, key) of
-/// the list, then the (context, key, command) the preset has instead.
-const OWN: &[(&str, &str, &str, &str, &str, &str)] = &[
-    ("logic", "global", "Mod+T", "arrange", "Mod+T", "clip.split"),
-    ("ableton", "global", "F9", "global", "F9", "record.start"),
-    (
-        "reaper",
-        "arrange",
-        "Ctrl+Alt+R",
-        "arrange",
-        "Alt+P",
-        "edit.ripple",
-    ),
-];
-
-/// The keys KEY-012 adds for the rest of the Studio Pro table: (context, key, command).
-const REST: &[(&str, &str, &str)] = &[
-    ("global", "Mod+.", "project.settings"),
-    ("arrange", "Mod+Shift+G", "view.snap"),
-    ("global", "Mod+Alt+S", "track.solo.clear"),
-    ("global", "Mod+Shift+M", "track.mute.clear"),
-    ("arrange", "Mod+Shift+D", "select.off-tracks"),
-    ("arrange", "Alt+Shift+Home", "select.span --way start"),
-    ("arrange", "Alt+Shift+End", "select.span --way end"),
-    ("arrange", "Alt+H", "take.next"),
-    ("arrange", "Alt+G", "take.prev"),
-    ("arrange", "PageUp", "view.page --way up"),
-    ("roll", "PageDown", "view.page --way down"),
-    ("arrange", "Tab", "view.focus --way next"),
-    ("mixer", "Shift+Tab", "view.focus --way prev"),
-    ("global", "Shift+F", "view.fullscreen"),
-    ("global", "Mod+Q", "app.quit"),
-    ("global", "Mod+W", "project.close"),
-    ("global", "Mod+F4", "project.close"),
-    ("arrange", "Shift+Insert", "marker.add.named"),
-    ("arrange", "Shift+Y", "marker.add.named"),
-    ("arrange", "Alt+R", "range.from-clips"),
-    ("arrange", "Shift+R", "range.from-clips"),
-    ("global", "Mod+F", "browser.search"),
-    ("global", "F6", "browser.tab --tab instruments"),
-    ("global", "F7", "browser.tab --tab effects"),
-    ("global", "F9", "browser.tab --tab files"),
-    ("mixer", "}", "mixer.bank --way next"),
-    ("mixer", "{", "mixer.bank --way prev"),
-    ("global", "#", "transport.panic"),
-    ("global", "CapsLock", "view.pc-keyboard"),
-    ("global", "Mod+T", "transport.locate"),
-    ("global", "Mod+Alt+T", "track.reveal"),
-    ("global", "Mod+Alt+C", "track.reveal --in mixer"),
-    ("global", "F11", "plugin.editor.open"),
-    ("global", "Mod+NumPad.", "transport.goto"),
-    ("arrange", "Mod+P", "clip.add.midi"),
-];
-
+/// Every preset's keys are tests/default-keys.txt (tests/it/default_keys.rs); what is left here
+/// is that choosing one leaves no more clashes than Studio Pro has (KEY-012).
 #[test]
-fn every_preset_has_the_keys_of_both_lists_and_adds_no_conflict() {
+fn no_preset_leaves_more_clashes_than_studio_pro() {
     let shared = Settings::memory().shared();
     let mut s = session(&shared);
     let h = RunOptions::human();
-    let key = |c: &str| Chord::parse(c, Os::Win).unwrap();
     let base = shared.lock().unwrap().keymap.conflicts(Os::Win).len();
     let mut failures = Vec::new();
-    for name in ["studio-pro", "cubase", "logic", "ableton", "reaper"] {
-        s.run_value("keymap.preset", json!({"name": name, "keep": "none"}), &h)
-            .unwrap();
-        let g = shared.lock().unwrap();
-        for &(ctx, k, command) in IN_EVERY_PRESET.iter().chain(REST) {
-            let (ctx, k, want) = OWN
-                .iter()
-                .find(|o| (o.0, o.1, o.2) == (name, ctx, k))
-                .map_or((ctx, k, command), |o| (o.3, o.4, o.5));
-            let got = g.keymap.lookup(ctx, &key(k)).map(|b| b.1);
-            if got.as_deref() != Some(want) {
-                failures.push(format!("{name}: {ctx} {k} is {got:?}, want {want}"));
-            }
-        }
-        // The preset does not leave more clashes than Studio Pro has.
-        let clashes = g.keymap.conflicts(Os::Win);
+    for preset in xirius_prefs::catalog::PRESETS {
+        s.run_value(
+            "keymap.preset",
+            json!({"name": preset.name, "keep": "none"}),
+            &h,
+        )
+        .unwrap();
+        let clashes = shared.lock().unwrap().keymap.conflicts(Os::Win);
         if clashes.len() > base {
-            failures.push(format!("{name}: more clashes than Studio Pro: {clashes:?}"));
+            failures.push(format!("{}: {clashes:?}", preset.name));
         }
     }
-    assert!(failures.is_empty(), "keys of the presets: {failures:#?}");
-}
-
-#[test]
-fn ui_378_ctrl_shift_s_saves_as_and_the_solo_clear_moves_to_ctrl_alt_s() {
-    let shared = Settings::memory().shared();
-    let mut s = session(&shared);
-    let h = RunOptions::human();
-    let key = |c: &str| Chord::parse(c, Os::Win).unwrap();
-    let look = |k: &str| {
-        let g = shared.lock().unwrap();
-        g.keymap.lookup("global", &key(k)).map(|b| b.1)
-    };
-    assert_eq!(look("Mod+Shift+S").as_deref(), Some("project.save-as"));
-    assert_eq!(look("Mod+Alt+S").as_deref(), Some("track.solo.clear"));
-    s.run_value(
-        "keymap.preset",
-        json!({"name": "studio-pro", "keep": "none"}),
-        &h,
-    )
-    .unwrap();
-    assert_eq!(look("Mod+Shift+S").as_deref(), Some("project.save-as"));
+    assert!(
+        failures.is_empty(),
+        "more clashes than Studio Pro: {failures:#?}"
+    );
 }
 
 #[test]

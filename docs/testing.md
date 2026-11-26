@@ -134,6 +134,15 @@ new test, and a row left without them fails the run, naming the row.
   contrast` and read the change to `crates/xirius-design/tests/contrast.txt` (each row with its
   two colors and ratio). A changed color fails `contrast::the_contrast_table_matches_its_snapshot`
   with the first row that moved, as `tests/contrast.txt:<line>`.
+- **A default key, a preset or a mouse default** (`xirius_prefs::catalog`, `catalog::PRESETS`,
+  `mousemap::DEFAULTS`): run `XIRIUS_WRITE_KEYS=1 cargo nextest run -p xirius-prefs
+  default_keys` and read the change to `crates/xirius-prefs/tests/default-keys.txt` (every key
+  of every preset with its context, its Windows and Mac names and its command, then every
+  modifier of every mouse context with its action). A new preset is in it with no line to add.
+  A changed table fails `default_keys::every_presets_keys_and_the_mouses_defaults_match_their_snapshot`
+  with each line that went and came, as `tests/default-keys.txt:<line>: 消えた  keys ableton
+  global F9 …` and `表の <line> 行め: 増えた  …`. A test then needs no copy of a default key; it
+  checks what a key does, or a rule the table must keep (`session::no_preset_leaves_more_clashes_than_studio_pro`).
 
 ## Build artifacts
 
