@@ -70,13 +70,6 @@ mod tests {
     }
 
     #[test]
-    fn the_script_is_listed() {
-        let listed = crate::SCRIPTS.iter().find(|(name, _)| *name == "fill-ink");
-        let names = |shots: &[Shot]| shots.iter().map(|s| s.name).collect::<Vec<_>>();
-        assert_eq!(listed.map(|(_, s)| names(s)), Some(names(SHOTS)));
-    }
-
-    #[test]
     fn each_shot_shows_a_fill_face_with_the_ink_on_it() {
         play(|name, s| match name {
             "fi01-lit-switches" => {

@@ -72,8 +72,10 @@ pub const SHOTS: &[Shot] = &[
 ];
 
 fn dir() -> PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("../../target/export-v1-ui-{}", std::process::id()))
+    crate::shot::script_dir(|| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")
+    })
+    .join(format!("export-v1-ui-{}", std::process::id()))
 }
 
 fn trashed() -> usize {

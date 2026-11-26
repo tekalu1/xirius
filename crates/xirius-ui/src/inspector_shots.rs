@@ -66,6 +66,8 @@ fn keys(s: &Studio) -> TrackId {
 fn stage(s: &mut Studio, _g: &Geometry, n: u8) {
     match n {
         0 => {
+            // Keys is under the drawer until it is shut.
+            s.drawer_open = false;
             let t = keys(s);
             s.arrange_run(
                 "track.transpose",
@@ -87,13 +89,6 @@ fn stage(s: &mut Studio, _g: &Geometry, n: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_script_is_listed() {
-        let listed = crate::SCRIPTS.iter().find(|(name, _)| *name == "inspector");
-        let names = |shots: &[Shot]| shots.iter().map(|s| s.name).collect::<Vec<_>>();
-        assert_eq!(listed.map(|(_, s)| names(s)), Some(names(SHOTS)));
-    }
 
     /// The first shot's song has the values the head's mark and the inspector show.
     #[test]

@@ -44,12 +44,15 @@ pub const SHOTS: &[Shot] = &[
 ];
 
 fn top() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("target/rename-undo-fixture/素材")
+    crate::shot::script_dir(|| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("target")
+    })
+    .join("rename-undo-fixture/素材")
 }
 
 /// How many clips of the song name `file`.

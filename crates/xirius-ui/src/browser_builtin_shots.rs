@@ -1,5 +1,5 @@
 use crate::{
-    browser::{Browser, RailTab},
+    browser::{Browser, BrowserHit, RailTab},
     shot::{Act, Play, Shot, Target},
     studio::Studio,
 };
@@ -14,7 +14,8 @@ pub const SHOTS: &[Shot] = &[
     Shot {
         name: "builtin02-effects",
         acts: &[
-            Act::Press(Target::Rail(RailTab::Effects)),
+            // The panel's second tab: the rail has no button of its own for the effects.
+            Act::Press(Target::Browser(BrowserHit::Loc(1))),
             Act::Stage(Play::Studio(effects), 0),
         ],
     },

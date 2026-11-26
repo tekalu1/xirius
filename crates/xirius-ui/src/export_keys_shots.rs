@@ -41,8 +41,10 @@ const fn staged(n: u8) -> Act {
 fn stage(s: &mut Studio, n: u8) {
     match n {
         0 => {
-            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join(format!("../../target/export-keys-{}", std::process::id()));
+            let dir = crate::shot::script_dir(|| {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")
+            })
+            .join(format!("export-keys-{}", std::process::id()));
             s.command(|song| song.save_as(&dir));
             s.run_command("loop.set", json!({"start":0,"end":1920}));
         }

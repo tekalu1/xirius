@@ -30,8 +30,10 @@ pub const SHOTS: &[Shot] = &[
 ];
 
 fn dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("../../target/export-muted-{}", std::process::id()))
+    crate::shot::script_dir(|| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")
+    })
+    .join(format!("export-muted-{}", std::process::id()))
 }
 
 fn stage(s: &mut Studio, n: u8) {

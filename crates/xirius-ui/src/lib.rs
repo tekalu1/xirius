@@ -348,6 +348,8 @@ pub mod zoom_input;
 #[cfg(test)]
 mod edit3_finish_tests;
 #[cfg(test)]
+mod every_script_tests;
+#[cfg(test)]
 mod polish_tests;
 #[cfg(test)]
 mod rec_tests;

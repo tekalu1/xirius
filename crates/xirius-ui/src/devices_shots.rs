@@ -910,69 +910,58 @@ fn play_reverb(s: &mut Studio, _: &Geometry, n: u8) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    #[test]
-    fn the_eq_stages_play_without_a_window() {
-        let mut s = Studio::sample();
-        let g = s.geometry(1600.0, 1000.0);
-        for n in 0..4 {
-            assert!(Play::Laid(play_eq).without_window(&mut s, &g, n));
-        }
-        assert_eq!(s.instruments.open.len(), 1);
-        assert!(!s.context_rows().is_empty(), "the type menu is open");
+    /// What the shots leave (ARC-054 G7): `every_script_tests` plays the script and checks
+    /// each of these after its shot.
+    pub(crate) const ENDS: &[crate::every_script_tests::End] = &[
+        ("brw03-preset-drag", a_preset_of_the_reverb_is_held),
+        ("cmp02-narrow", the_compressor_has_its_history),
+        ("del03-beats-menu", the_delay_shows_the_beats_menu),
+        ("eq04-type-menu", the_eq_shows_its_type_menu),
+        (
+            "lim03-ceiling-menu",
+            the_limiter_is_at_6_db_with_its_menu_open,
+        ),
+        (
+            "pin01-pinned-and-next",
+            the_first_window_is_pinned_and_the_next_not,
+        ),
+        ("play01-sampler", the_sampler_plays_c3),
+        ("play02-drum-kit", the_drum_kit_plays_its_kick),
+        ("pre03-list-narrow", the_preset_is_marked_and_the_list_open),
+        ("rev03-decay-menu", the_reverb_shows_its_decays),
+        ("size01-eq-grown", the_eq_window_is_grown),
+    ];
+
+    fn a_preset_of_the_reverb_is_held(s: &Studio) {
+        assert!(s.browser.open_devices.contains("Reverb"));
+        assert!(
+            s.browser
+                .drag
+                .as_ref()
+                .is_some_and(|d| d.moved && d.preset.is_some()),
+            "a preset is held"
+        );
     }
 
-    #[test]
-    fn the_preset_stages_play_without_a_window() {
-        let mut s = Studio::sample();
-        let g = s.geometry(1600.0, 1000.0);
-        for n in [0, 2, 1] {
-            assert!(Play::Laid(play_presets).without_window(&mut s, &g, n));
-        }
-        let id = s.instruments.open[0].plugin;
-        let x = s
-            .project()
-            .tracks
-            .values()
-            .flat_map(|t| &t.inserts)
-            .find(|x| x.id == id)
-            .cloned()
-            .unwrap();
-        assert_eq!(s.instruments.tag_of(&x), ("いつもの".to_string(), true));
-        assert!(s.popup.is_some(), "the list is open");
-    }
-
-    #[test]
-    fn the_compressor_stages_play_without_a_window() {
-        let mut s = Studio::sample();
-        let g = s.geometry(1600.0, 1000.0);
-        for n in 0..2 {
-            assert!(Play::Laid(play_compressor).without_window(&mut s, &g, n));
-        }
+    fn the_compressor_has_its_history(s: &Studio) {
         let id = s.instruments.open[0].plugin;
         assert_eq!(s.instruments.dynamics[&id].history.len(), 160);
     }
 
-    #[test]
-    fn the_delay_stages_play_without_a_window() {
-        let mut s = Studio::sample();
-        let g = s.geometry(1600.0, 1000.0);
-        for n in 0..3 {
-            assert!(Play::Laid(play_delay).without_window(&mut s, &g, n));
-        }
+    fn the_delay_shows_the_beats_menu(s: &Studio) {
         assert_eq!(s.instruments.open.len(), 1);
         assert!(s.context_path("1/8 D").is_some(), "the Beats menu");
     }
 
-    #[test]
-    fn the_limiter_stages_play_without_a_window() {
-        let mut s = Studio::sample();
-        let g = s.geometry(1600.0, 1000.0);
-        for n in 0..3 {
-            assert!(Play::Laid(play_limiter).without_window(&mut s, &g, n));
-        }
+    fn the_eq_shows_its_type_menu(s: &Studio) {
+        assert_eq!(s.instruments.open.len(), 1);
+        assert!(!s.context_rows().is_empty(), "the type menu is open");
+    }
+
+    fn the_limiter_is_at_6_db_with_its_menu_open(s: &Studio) {
         let id = s.instruments.open[0].plugin;
         assert_eq!(s.instruments.dynamics[&id].history.len(), 200);
         let p = s.project();
@@ -988,55 +977,43 @@ mod tests {
         assert!(!s.context_rows().is_empty(), "the ceiling's menu is open");
     }
 
-    #[test]
-    fn the_pin_stages_play_without_a_window() {
-        let mut s = Studio::sample();
-        let g = s.geometry(1600.0, 1000.0);
-        for n in 0..2 {
-            assert!(Play::Laid(play_pin).without_window(&mut s, &g, n));
-        }
+    fn the_first_window_is_pinned_and_the_next_not(s: &Studio) {
         assert_eq!(s.instruments.open.len(), 2);
         assert!(s.instruments.open[0].pinned && !s.instruments.open[1].pinned);
     }
 
-    #[test]
-    fn the_size_stages_play_without_a_window() {
-        let mut s = Studio::sample();
-        let g = s.geometry(1600.0, 1000.0);
-        assert!(Play::Laid(play_size).without_window(&mut s, &g, 0));
+    fn the_sampler_plays_c3(s: &Studio) {
+        assert_eq!(s.instruments.note.map(|n| n.pitch), Some(60));
+    }
+
+    fn the_drum_kit_plays_its_kick(s: &Studio) {
+        assert_eq!(s.instruments.note.map(|n| n.pitch), Some(36));
+        assert_eq!(s.instruments.open.len(), 1);
+    }
+
+    fn the_preset_is_marked_and_the_list_open(s: &Studio) {
+        let id = s.instruments.open[0].plugin;
+        let x = s
+            .project()
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .find(|x| x.id == id)
+            .cloned()
+            .unwrap();
+        assert_eq!(s.instruments.tag_of(&x), ("いつもの".to_string(), true));
+        assert!(s.popup.is_some(), "the list is open");
+    }
+
+    fn the_reverb_shows_its_decays(s: &Studio) {
+        assert!(s.context_path("Decay を 4 s に").is_some(), "the decays");
+    }
+
+    fn the_eq_window_is_grown(s: &Studio) {
         let natural = layout::size(xirius_params::find("eq").unwrap(), eq::NATURAL_W);
         let body = s.instruments.open[0].body;
         assert_eq!(body, (natural.0 + 240.0, natural.1 + 160.0));
         assert!(s.instruments.sizing(), "the grip shows");
-    }
-
-    #[test]
-    fn the_browser_stages_play_without_a_window() {
-        let mut s = Studio::sample();
-        let g = s.geometry(1600.0, 1000.0);
-        for n in 0..3 {
-            assert!(Play::Laid(play_browser).without_window(&mut s, &g, n));
-        }
-        assert!(s.browser.open_devices.contains("Reverb"));
-        assert!(
-            s.browser
-                .drag
-                .as_ref()
-                .is_some_and(|d| d.moved && d.preset.is_some()),
-            "a preset is held"
-        );
-    }
-
-    #[test]
-    fn the_note_stages_play_without_a_window() {
-        let mut s = Studio::sample();
-        let g = s.geometry(1600.0, 1000.0);
-        assert!(Play::Laid(play_notes).without_window(&mut s, &g, 0));
-        assert_eq!(s.instruments.note.map(|n| n.pitch), Some(60));
-        let mut s = Studio::sample();
-        assert!(Play::Laid(play_notes).without_window(&mut s, &g, 1));
-        assert_eq!(s.instruments.note.map(|n| n.pitch), Some(36));
-        assert_eq!(s.instruments.open.len(), 1);
     }
 
     /// The fourth review's low 5: a samples' folder touched within [`STALE`] may be another
@@ -1140,15 +1117,5 @@ mod tests {
         let dir = samples_dir();
         assert!(dir.join("Tom_v2.wav").is_file());
         std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn the_reverb_stages_play_without_a_window() {
-        let mut s = Studio::sample();
-        let g = s.geometry(1600.0, 1000.0);
-        for n in 0..3 {
-            assert!(Play::Laid(play_reverb).without_window(&mut s, &g, n));
-        }
-        assert!(s.context_path("Decay を 4 s に").is_some(), "the decays");
     }
 }

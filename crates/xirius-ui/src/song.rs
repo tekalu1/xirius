@@ -1174,12 +1174,15 @@ impl Song {
 }
 
 /// Where `project.cleanup` moves files: the folder `XIRIUS_TRASH_DIR` names, else the recycle
-/// bin (`None`). A test refuses instead, so it never fills the recycle bin of the PC it runs on.
+/// bin (`None`). A test refuses instead, so it never fills the recycle bin of the PC it runs on,
+/// unless it names a folder of its own in `XIRIUS_TRASH_DIR` (the scripts, ARC-054 G7).
 fn default_trash() -> Option<Trash> {
     if cfg!(test) {
-        Some(Arc::new(|p: &Path| {
-            Err(format!("試験ではごみ箱に移動しません: {}", p.display()))
-        }))
+        cleanup::trash_from_env().or_else(|| {
+            Some(Arc::new(|p: &Path| {
+                Err(format!("試験ではごみ箱に移動しません: {}", p.display()))
+            }))
+        })
     } else {
         cleanup::trash_from_env()
     }

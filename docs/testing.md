@@ -105,6 +105,21 @@ new test, and a row left without them fails the run, naming the row.
   `NOT_OPENED`. A menu's own test then checks what its rows do, their keys and the selection;
   it needs no list of labels, no `enabled` of a row of the file and no "one step, one undo"
   that only compares the song.
+- **A script of pictures** (a row of `SCRIPTS` in `crates/xirius-ui/src/lib.rs`): nothing to
+  add for its steps. `every_script_tests` (`crates/xirius-ui/src/every_script_tests.rs`) plays
+  every script without a window at the window's size (1440×860), from the sample song, shot after
+  shot, with the frames the window draws between shots: each press, hover, drag and wheel turn
+  must find its target on the screen, and no step may panic or leave an error. A failure names
+  the script, the shot and the step, as `ripple / ripple-01-off / step 1 (Stage(Laid, 0)):
+  panicked: the clip is on screen`; a target the window would miss without a word fails as `…
+  (Press(Track("Keys"))): its target is off the screen`. A step only the window plays (a
+  `Play::Window` stage, the piano roll's ruler, a plugin's window) ends its shot there, until a
+  shot starts again from the sample song. A `pub const …: &[Shot]` list that is not in
+  `SCRIPTS` fails as `lists of shots not registered in SCRIPTS`; a script this test cannot play
+  goes in `NOT_PLAYED` with the reason. What a shot leaves is checked from the `ENDS` table beside
+  its script (`devices_shots::tests::ENDS`), one row per shot; a row whose shot no longer plays
+  to its end fails as `rows of ENDS whose shots were not played to their ends`. A script's own
+  test then checks what its pictures show, not that it is listed or that its targets exist.
 
 ## Build artifacts
 

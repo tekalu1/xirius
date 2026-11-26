@@ -56,8 +56,8 @@ pub const SHOTS: &[Shot] = &[
 ];
 
 fn dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("../../target/dawproject-ui-{}", std::process::id()))
+    crate::shot::script_dir(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"))
+        .join(format!("dawproject-ui-{}", std::process::id()))
 }
 
 /// The toast while the work goes, held at one place: the work itself ends sooner than a

@@ -1300,50 +1300,6 @@ mod tests {
     }
 
     #[test]
-    fn every_target_of_the_script_exists_in_the_sample_song() {
-        let studio = Studio::sample();
-        for shot in SCRIPT
-            .iter()
-            .chain(WIRE)
-            .chain(crate::palette::SHOTS)
-            .chain(crate::ai::shots::AI)
-        {
-            for act in shot.acts {
-                let target = match act {
-                    Hover(t) | Press(t) => *t,
-                    Wheel { at, .. } | Drag { at, .. } => *at,
-                    Key(_)
-                    | Act::Stage(..)
-                    | Act::RollRuler(_)
-                    | Act::Import(_)
-                    | Act::ClipEdit(_)
-                    | Act::Plugin(_)
-                    | Act::Settings(_)
-                    | Act::Reset => {
-                        continue;
-                    }
-                };
-                // Pop-overs, and inserts a stage puts in, come later.
-                if matches!(
-                    target,
-                    Target::PopupText(_)
-                        | Target::PopupIcon(_)
-                        | Target::PopupTip(_)
-                        | Target::Swatch(_)
-                        | Target::Strip(Part::Insert, _)
-                ) {
-                    continue;
-                }
-                assert!(
-                    resolve(&studio, target).is_some(),
-                    "{}: {target:?}",
-                    shot.name
-                );
-            }
-        }
-    }
-
-    #[test]
     fn the_script_names_are_unique_and_in_order() {
         for (script, shots) in crate::SCRIPTS {
             assert!(!shots.is_empty(), "{script}");

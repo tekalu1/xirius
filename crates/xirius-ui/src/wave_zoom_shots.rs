@@ -181,13 +181,6 @@ mod tests {
     use super::*;
     use crate::wave::{Detail, detail_for};
 
-    #[test]
-    fn the_script_is_listed() {
-        let listed = crate::SCRIPTS.iter().find(|(name, _)| *name == "wave-zoom");
-        let names = |shots: &[Shot]| shots.iter().map(|s| s.name).collect::<Vec<_>>();
-        assert_eq!(listed.map(|(_, s)| names(s)), Some(names(SHOTS)));
-    }
-
     /// What each zoom of the script draws, worked out without a window or a file.
     #[test]
     fn each_zoom_draws_what_its_shot_is_named_after() {

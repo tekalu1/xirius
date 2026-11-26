@@ -258,17 +258,15 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    #[test]
-    fn every_stage_plays_without_a_window() {
-        let mut s = Studio::sample();
-        let g = s.geometry(1440.0, 900.0);
-        for n in 0..=10 {
-            play(&mut s, &g, n);
-        }
-        // The stand-in is the only plugin the list shows.
-        assert_eq!(s.ara_name(vocal(&s).1).as_deref(), Some(NAME));
+    /// What the shots leave (ARC-054 G7), checked by `every_script_tests` after the shot.
+    pub(crate) const ENDS: &[crate::every_script_tests::End] =
+        &[("ara10-narrow", the_stand_in_is_named)];
+
+    /// The stand-in is the only plugin the list shows.
+    fn the_stand_in_is_named(s: &Studio) {
+        assert_eq!(s.ara_name(vocal(s).1).as_deref(), Some(NAME));
     }
 }

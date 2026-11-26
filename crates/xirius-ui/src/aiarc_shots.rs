@@ -17,11 +17,8 @@ const fn stage(n: u8) -> Act {
 pub const AIARC: &[Shot] = &[
     Shot {
         name: "00-rename-command",
-        acts: &[
-            Act::Press(Target::Track("Keys")),
-            Act::Press(Target::Top(BarButton::Palette)),
-            stage(0),
-        ],
+        // The sample song starts with Keys chosen (its row is under the drawer, out of reach).
+        acts: &[Act::Press(Target::Top(BarButton::Palette)), stage(0)],
     },
     Shot {
         name: "01-rename-form",
