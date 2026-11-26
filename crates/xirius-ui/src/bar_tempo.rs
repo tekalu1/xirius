@@ -491,9 +491,21 @@ mod tests {
     fn typed_text_sets_the_tempo_inside_the_range_or_not_at_all() {
         // (row, Backspace first, typed, the box shows, the tempo set by Enter)
         let rows: [(&str, bool, &str, &str, Option<f64>); 5] = [
-            ("a number past the top", false, "5000", "5000", Some(MAX_BPM)),
+            (
+                "a number past the top",
+                false,
+                "5000",
+                "5000",
+                Some(MAX_BPM),
+            ),
             ("a number under the bottom", false, "5", "5", Some(MIN_BPM)),
-            ("the IME's full-width digits", false, "８５", "85", Some(85.0)),
+            (
+                "the IME's full-width digits",
+                false,
+                "８５",
+                "85",
+                Some(85.0),
+            ),
             (
                 "one point at most and no letters",
                 false,
