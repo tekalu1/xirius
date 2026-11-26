@@ -130,35 +130,6 @@ fn replacing_samples_clears_the_old_pad_output() {
 }
 
 #[test]
-fn setting_main_and_a_new_bus_is_one_undo_step() {
-    let mut s = song();
-    let r = s.run_value(
-        "plugin.pad_output.set",
-        json!({"id":"plg_2", "pads":[{"pad":"A1"}, {"pad":"A2"}], "to":"new", "active":"A2"}),
-        &RunOptions::human(),
-    );
-    assert!(r.is_ok(), "{r:?}");
-    assert_eq!(s.project().root.len(), 2);
-    let bus = s.project().root[1];
-    let Node::Track(bus_id) = bus else {
-        panic!("expected bus")
-    };
-    assert_ne!(bus_id, TrackId(1));
-    assert_eq!(s.project().track(bus_id).unwrap().kind, TrackKind::Bus);
-    let outputs = &s.project().track(TrackId(1)).unwrap().inserts[0].pad_outputs;
-    assert_eq!(outputs.get(&0), Some(&bus_id));
-    assert_eq!(outputs.get(&1), Some(&bus_id));
-    s.run_value("history.undo", json!({}), &RunOptions::human())
-        .unwrap();
-    assert_eq!(s.project().root.len(), 1);
-    assert!(
-        s.project().track(TrackId(1)).unwrap().inserts[0]
-            .pad_outputs
-            .is_empty()
-    );
-}
-
-#[test]
 fn existing_bus_and_main_round_trip_through_undo_and_save() {
     let mut s = song_with_bus(true);
     let bus = TrackId(3);
@@ -297,6 +268,12 @@ fn new_bus_follows_the_kit_and_existing_buses_inside_a_folder() {
     s.run_value("history.undo", json!({}), &RunOptions::human())
         .unwrap();
     assert!(!s.project().tracks.contains_key(&bus));
+    // One undo takes the route away with the bus.
+    assert!(
+        s.project().track(TrackId(1)).unwrap().inserts[0]
+            .pad_outputs
+            .is_empty()
+    );
 }
 
 #[test]
@@ -346,6 +323,9 @@ fn new_bus_uses_the_active_pads_sound_name() {
         .unwrap();
     let bus: TrackId = result.data["output"].as_str().unwrap().parse().unwrap();
     assert_eq!(s.project().track(bus).unwrap().name, "Snare");
+    // Every pad asked for goes to the one new bus.
+    let outputs = &s.project().track(TrackId(1)).unwrap().inserts[0].pad_outputs;
+    assert_eq!((outputs.get(&0), outputs.get(&1)), (Some(&bus), Some(&bus)));
 }
 
 #[test]

@@ -166,6 +166,12 @@ fn build(s: &mut Session) -> (String, String, String, String) {
         json!({"id": comp, "from": kick, "output": true}),
     );
     let lt = id_of(&run(s, "track.add.instrument", json!({"name": "Layers"})));
+    // A second source, sent at its own level.
+    run(
+        s,
+        "plugin.sidechain.add",
+        json!({"id": comp, "from": lt, "level": -8.0}),
+    );
     run(
         s,
         "plugin.add",

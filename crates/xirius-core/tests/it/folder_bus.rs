@@ -326,6 +326,7 @@ fn a_folder_of_an_old_song_gets_no_bus_and_its_bus_menu_makes_one_named_as_it_un
     let p = s.project();
     assert_eq!(p.tracks[&bus].name, "Drums");
     assert_eq!(p.folders[&f].bus, Some(bus));
+    assert_eq!(p.row_bus(f), Some(bus), "the folder's row shows it");
     assert_eq!(
         p.root,
         [Node::Folder(f), Node::Track(t)],
@@ -340,6 +341,25 @@ fn a_folder_of_an_old_song_gets_no_bus_and_its_bus_menu_makes_one_named_as_it_un
     assert_eq!(s.project().root, [Node::Track(t), Node::Folder(f)]);
     run(&mut s, "folder.delete", json!({ "ids": [f.to_string()] }));
     assert!(!s.project().tracks.contains_key(&bus));
+    // Naming the folder itself as where the bus goes is the same as leaving it out.
+    let g = old_folder(&mut s, "Keys");
+    let r = run(
+        &mut s,
+        "folder.bus.add",
+        json!({ "id": g.to_string(), "name": "Keys bus", "into": g.to_string() }),
+    );
+    let keys: TrackId = id(&r, "id");
+    assert_eq!(s.project().tracks[&keys].name, "Keys bus");
+    assert_eq!(s.project().row_bus(g), Some(keys));
+    s.project().validate_deep().unwrap();
+    // A folder that is not there gets nothing.
+    let before = s.project().content_hash();
+    assert!(!try_run(
+        &mut s,
+        "folder.bus.add",
+        json!({ "id": "fld_999" })
+    ));
+    assert_eq!(s.project().content_hash(), before);
 }
 
 #[test]
@@ -388,20 +408,6 @@ fn songs_made_before_load_save_and_reload_unchanged_and_behave_as_they_did() {
         json!({ "id": linked.to_string() }),
     );
     assert!(s2.project().tracks.contains_key(&hand));
-}
-
-#[test]
-fn the_mark_survives_a_save_and_the_reopened_folder_still_takes_its_bus_with_it() {
-    let mut s = Session::new("mark");
-    let (f, bus) = folder(&mut s, "Drums");
-    let mut back = reopened(&s);
-    assert_eq!(back.project(), s.project());
-    run(
-        &mut back,
-        "folder.delete",
-        json!({ "ids": [f.to_string()] }),
-    );
-    assert!(!back.project().tracks.contains_key(&bus));
 }
 
 #[test]
