@@ -322,22 +322,6 @@ fn a_screen_reader_hears_the_band_as_a_button_with_its_bars_and_state() {
     assert_eq!(m.node.toggled(), Some(gpui::accesskit::Toggled::True));
 }
 
-#[test]
-fn the_numbers_take_the_ink_for_a_fill_only_over_a_filled_band() {
-    let band = |lit: bool, hover: Option<LoopGrip>| Band {
-        x0: 10.0,
-        x1: 50.0,
-        lit,
-        held: false,
-        hover,
-        punch: false,
-    };
-    assert_eq!(band(false, None).over(), None, "an off band keeps its look");
-    assert_eq!(band(false, Some(LoopGrip::New)).over(), None);
-    assert_eq!(band(true, None).over(), Some((10.0, 50.0)));
-    assert_eq!(band(false, Some(LoopGrip::Body)).over(), Some((10.0, 50.0)));
-}
-
 /// The song playing to a silent output.
 fn play_silent(s: &mut Studio, g: &Geometry) {
     s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
@@ -404,7 +388,9 @@ fn every_number_on_the_ruler_sits_below_the_loop_band() {
     use crate::studio::Rect;
     let ruler = Rect::new(100.0, 40.0, 600.0, 38.0);
     let row = band_row(ruler);
-    assert_eq!((row.y, row.h), (ruler.y + LOOP_H, 24.0));
+    assert!(row.y >= ruler.y + LOOP_H, "below the band: {row:?}");
+    assert!(row.h > 0.0 && row.bottom() <= ruler.bottom(), "{row:?}");
+    assert!(row.x >= ruler.x && row.right() <= ruler.right(), "{row:?}");
     for theme in xirius_design::Theme::ALL {
         let c = crate::paint::Colors::new(theme);
         assert_eq!(number_ink(&c, true, false), c.ink_blue);

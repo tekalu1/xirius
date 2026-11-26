@@ -575,6 +575,8 @@ mod tests {
         }
     }
 
+    /// The table is a copy of `pointer()`'s match, on purpose: going round every cursor is
+    /// what it is for, so a cursor added there is to be added here too.
     #[test]
     fn every_cursor_has_one_pointer_and_only_custom_shapes_have_a_picture() {
         use Cursor::*;

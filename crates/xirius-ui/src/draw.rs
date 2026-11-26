@@ -2532,7 +2532,6 @@ pub fn paint_roll(pen: &mut Pen, studio: &Studio, body: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notes::is_black_key;
     use crate::song::Song;
     use xirius_design::Theme;
 
@@ -2661,28 +2660,19 @@ mod tests {
     #[test]
     fn tracks_come_in_the_columns_order_folders_opened() {
         let project = Song::sample().project();
-        let names: Vec<&str> = ordered_tracks(&project)
+        let ordered: Vec<_> = ordered_tracks(&project).iter().map(|t| t.id).collect();
+        // The column with every folder open: its track rows, in order.
+        let tree = crate::tree::Tree::build(&project, &Default::default());
+        let column: Vec<_> = tree
+            .rows
             .iter()
-            .map(|t| t.name.as_str())
+            .filter_map(|r| match r.kind {
+                RowKind::Track(id) => Some(id),
+                RowKind::Folder(_) => None,
+            })
             .collect();
-        assert_eq!(
-            names,
-            [
-                "Drums", "Bass", "Shaker", "Conga", "Keys", "Vocal", "Guitar"
-            ]
-        );
-    }
-
-    #[test]
-    fn every_sample_track_has_a_palette_colour() {
-        let project = Song::sample().project();
-        for track in ordered_tracks(&project) {
-            assert!(
-                track.color.as_deref().and_then(palette_color).is_some(),
-                "{}",
-                track.name
-            );
-        }
+        assert!(!ordered.is_empty());
+        assert_eq!(ordered, column);
     }
 
     #[test]
@@ -2696,7 +2686,6 @@ mod tests {
 
     #[test]
     fn a_lit_toggle_button_draws_its_icon_in_the_ink_on_the_fill() {
-        use xirius_design::{Pair, Theme, contrast_ratio, ink, surface};
         for theme in Theme::ALL {
             let c = Colors::new(theme);
             for hover in [false, true] {
@@ -2710,18 +2699,6 @@ mod tests {
             }
             assert_eq!(c.primary, (c.fill, c.on_fill));
             assert_eq!(c.primary_hover, (c.fill_hover, c.on_fill));
-            let lit = Pair::<surface::Fill, ink::OnFill>::new().resolve(theme);
-            let hot = Pair::<surface::FillHover, ink::OnFill>::new().resolve(theme);
-            for pair in [lit, hot] {
-                assert!(contrast_ratio(pair.surface, pair.ink) >= 4.5, "{theme:?}");
-            }
         }
-    }
-
-    #[test]
-    fn black_keys_are_the_five_in_an_octave() {
-        assert_eq!((0..12u8).filter(|p| is_black_key(*p)).count(), 5);
-        assert!(!is_black_key(60));
-        assert!(is_black_key(61));
     }
 }

@@ -2446,34 +2446,20 @@ mod tests {
             .filter(|c| c.live())
             .map(|c| c.text.as_str())
             .collect();
-        assert_eq!(
-            live,
-            [
-                "オン",
-                "オフ",
-                "自動",
-                "小節",
-                "クオンタイズ",
-                "フレーム",
-                "1/1",
-                "1/2",
-                "1/4",
-                "1/8",
-                "1/16",
-                "1/32",
-                "1/64",
-                "3連",
-                "AQ",
-                "クオンタイズの設定…"
-            ]
-        );
+        // In order: on and off, every mode, every grid value, then 3連, AQ and the settings row.
+        let mut want = vec!["オン", "オフ"];
+        want.extend(SnapMode::ALL.map(|m| m.label()));
+        want.extend(GRID_VALUES);
+        want.extend(["3連", "AQ", "クオンタイズの設定…"]);
+        assert_eq!(live, want);
         let on: Vec<_> = l
             .cells
             .iter()
             .filter(|c| c.on)
             .map(|c| c.text.as_str())
             .collect();
-        assert_eq!(on, ["オン", "自動", "1/8", "3連", "AQ"]);
+        // 「1/8t」 lights its base value and 3連.
+        assert_eq!(on, ["オン", SnapMode::Auto.label(), "1/8", "3連", "AQ"]);
         // Each segmented row is one line inside the pop-over, like the mock.
         let ys: std::collections::BTreeSet<_> = l
             .cells
@@ -2554,7 +2540,7 @@ mod tests {
         assert_eq!(by("保存").hint, "Ctrl+S");
         assert_eq!(by("別名で保存…").hint, "Ctrl+Shift+S");
         assert_eq!(by("閉じる").hint, "Ctrl+W");
-        assert_eq!(by("夏の曲").hint, "3 分前");
+        assert_eq!(by("夏の曲").hint, ago(p.now_ms, p.recent[0].at_ms));
         p.can_export = true;
         assert!(
             p.layout((1440.0, 860.0))
@@ -2624,9 +2610,12 @@ mod tests {
 
     #[test]
     fn the_version_list_has_a_naming_button_and_a_timeline_with_big_and_small_dots() {
-        let l = versions_popup().layout((1440.0, 860.0));
+        let p = versions_popup();
+        let l = p.layout((1440.0, 860.0));
         assert_eq!(l.cells[0].text, "現在の状態に名前を付けて保存");
         assert_eq!(l.cells[0].action, Some(Action::NameVersion));
+        // A named version is a big dot, a draft a small one; each says how long ago, as
+        // `ago` does (its own test has the words).
         let dots: Vec<bool> = l
             .cells
             .iter()
@@ -2635,9 +2624,14 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(dots, [true, false, true]);
-        assert_eq!(l.cells[1].hint, "5 分前");
-        assert_eq!(l.cells[2].hint, "2 時間前");
+        let named: Vec<bool> = p.versions.iter().map(|v| v.named).collect();
+        assert_eq!(dots, named);
+        let hints: Vec<_> = l.cells[1..=p.versions.len()]
+            .iter()
+            .map(|c| c.hint.clone())
+            .collect();
+        let want: Vec<_> = p.versions.iter().map(|v| ago(p.now_ms, v.at_ms)).collect();
+        assert_eq!(hints, want);
         assert_eq!(l.cells[2].text, "下書き");
     }
 
@@ -2856,36 +2850,88 @@ mod row_name_tests {
         t.chars().count() as f32 * 10.0
     }
 
-    #[test]
-    fn a_short_name_is_left_as_it_is() {
-        assert_eq!(
-            row_name("曲", "（保存前）", 200.0, 0.0, wide),
-            "曲（保存前）"
-        );
-        assert_eq!(row_name("曲", "", 200.0, 0.0, wide), "曲");
+    /// What a row's name should be.
+    enum Want {
+        /// Left as it is, the mark after it.
+        Whole(&'static str),
+        /// Cut with 「…」 so it ends as given, within the width, and filling it when `fills`.
+        Cut {
+            ends: &'static str,
+            within: f32,
+            fills: bool,
+        },
+        /// Ends with the mark, whatever the room.
+        Ends(&'static str),
     }
 
     #[test]
-    fn a_long_name_is_cut_before_the_mark_and_the_mark_stays_whole() {
-        let body = "あ".repeat(40);
-        let name = row_name(&body, "（保存前）", 200.0, 0.0, wide);
-        assert!(name.ends_with("…（保存前）"), "{name}");
-        assert!(wide(&name) <= 200.0, "{name}");
-        // The most that fits: one more letter would pass the room.
-        assert!(wide(&name) + 10.0 > 200.0, "{name}");
-    }
-
-    #[test]
-    fn the_room_left_for_a_tag_is_kept() {
-        let body = "あ".repeat(40);
-        let name = row_name(&body, "", 200.0, 60.0, wide);
-        assert!(name.ends_with('…'), "{name}");
-        assert!(wide(&name) <= 140.0, "{name}");
-    }
-
-    #[test]
-    fn a_room_smaller_than_the_mark_leaves_the_mark_alone() {
-        let name = row_name("あいう", "（保存前）", 30.0, 0.0, wide);
-        assert!(name.ends_with("（保存前）"), "{name}");
+    fn a_name_is_cut_before_its_mark_and_the_tags_room_and_the_mark_stays_whole() {
+        let long = "あ".repeat(40);
+        // (row, name, mark, room, room kept for a tag, want)
+        let rows = [
+            (
+                "a short name with a mark",
+                "曲",
+                "（保存前）",
+                200.0,
+                0.0,
+                Want::Whole("曲（保存前）"),
+            ),
+            ("a short name", "曲", "", 200.0, 0.0, Want::Whole("曲")),
+            (
+                "a long name with a mark: the most that fits",
+                long.as_str(),
+                "（保存前）",
+                200.0,
+                0.0,
+                Want::Cut {
+                    ends: "…（保存前）",
+                    within: 200.0,
+                    fills: true,
+                },
+            ),
+            (
+                "a long name beside a tag",
+                long.as_str(),
+                "",
+                200.0,
+                60.0,
+                Want::Cut {
+                    ends: "…",
+                    within: 140.0,
+                    fills: false,
+                },
+            ),
+            (
+                "a room smaller than the mark",
+                "あいう",
+                "（保存前）",
+                30.0,
+                0.0,
+                Want::Ends("（保存前）"),
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (row, body, mark, room, after, want) in rows {
+            let name = row_name(body, mark, room, after, wide);
+            let ok = match want {
+                Want::Whole(whole) => name == whole,
+                Want::Cut {
+                    ends,
+                    within,
+                    fills,
+                } => {
+                    // Filling: one more letter would pass the room.
+                    name.ends_with(ends)
+                        && wide(&name) <= within
+                        && (!fills || wide(&name) + 10.0 > within)
+                }
+                Want::Ends(ends) => name.ends_with(ends),
+            };
+            if !ok {
+                failures.push(format!("{row}: {name}"));
+            }
+        }
+        assert!(failures.is_empty(), "row names:\n{failures:#?}");
     }
 }

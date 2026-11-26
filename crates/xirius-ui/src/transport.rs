@@ -2205,12 +2205,6 @@ mod tests {
     }
 
     #[test]
-    fn the_clock_reads_minutes_seconds_and_milliseconds() {
-        assert_eq!(clock(0.0), "0:00.000");
-        assert_eq!(clock(83.2505), "1:23.251");
-    }
-
-    #[test]
     fn without_an_output_play_says_so_and_nothing_starts() {
         let mut s = studio(OutputMode::None);
         assert!(s.transport_key("space"));
@@ -2282,6 +2276,9 @@ mod tests {
         let bpm = s.project().tempo[0].bpm;
         assert_eq!(v.seconds, clock(16.0 * 60.0 / bpm));
         assert_eq!(v.bpm, format!("{bpm:.1}"));
+        // The time reads minutes, seconds and rounded milliseconds.
+        assert_eq!(clock(0.0), "0:00.000");
+        assert_eq!(clock(83.2505), "1:23.251");
     }
 
     #[test]
@@ -2399,9 +2396,13 @@ mod tests {
     #[test]
     fn the_record_button_shakes_three_times_and_settles() {
         use crate::topbar::{SHAKE, shake_offset};
-        assert_eq!(shake_offset(None, false), 0.0);
-        assert_eq!(shake_offset(Some(SHAKE), false), 0.0);
-        assert_eq!(shake_offset(Some(Duration::from_millis(40)), true), 0.0);
+        // Still before, after, and with less motion asked for.
+        let still = [(None, false), (Some(SHAKE), false), (Some(SHAKE / 8), true)];
+        assert!(
+            still
+                .iter()
+                .all(|&(at, less)| shake_offset(at, less) == 0.0)
+        );
         let peak = (0..32)
             .map(|i| shake_offset(Some(SHAKE * i / 32), false).abs())
             .fold(0.0, f32::max);

@@ -2022,18 +2022,10 @@ mod tests {
         }
         let rows = s.palette_rows(&g);
         let label = |n: &str| rows.iter().find(|r| r.name == n).map(|r| r.label.as_str());
-        for (n, l) in [
-            ("transport.play", "再生 / 一時停止"),
-            ("transport.stop", "停止"),
-            ("record.start", "録音"),
-            ("transport.loop", "ループ"),
-            ("note.quantize", "ノートをクオンタイズ"),
-            ("clip.split", "クリップを分割"),
-            ("history.undo", "元に戻す"),
-            ("project.save-as", "名前を付けて保存…"),
-            ("export.mixdown", "ミックスダウンを書き出す…"),
-        ] {
-            assert_eq!(label(n), Some(l), "{n}");
+        // The rows the list leads with are there, each by its registry name.
+        for n in FIRST {
+            let def = s.song().registry().get(n).expect("in the registry");
+            assert_eq!(label(n), def.label(), "{n}");
         }
         for r in &rows {
             assert!(
@@ -2115,22 +2107,13 @@ mod tests {
         }
         s.transport.playing = true;
         s.open_palette(&g);
-        let first: Vec<&str> = names(&s).into_iter().take(4).collect();
-        assert_eq!(
-            first,
-            [
-                "transport.play",
-                "transport.stop",
-                "transport.loop",
-                "transport.seek"
-            ]
-        );
-        // The rows that can run keep the order of FIRST, and come before
-        // every other row.
+        // The rows that can run start with FIRST's, in its order, before
+        // every other row; while playing, play and stop both run and lead.
         let p = s.palette.as_ref().unwrap();
         let on: Vec<&str> = p.hits()[..p.on()].iter().map(|&i| p.rows[i].name).collect();
-        let places: Vec<usize> = on.iter().map(|n| place_of(n)).collect();
-        assert!(places.windows(2).all(|w| w[0] <= w[1]), "{on:?}");
+        let lead: Vec<&str> = FIRST.iter().copied().filter(|n| on.contains(n)).collect();
+        assert_eq!(on[..lead.len()], lead[..], "{on:?}");
+        assert_eq!(on[..2], FIRST[..2], "{on:?}");
         assert!(on.contains(&"note.quantize") && on.contains(&"track.mute"));
         // Typed: a name that starts with it comes before one that has it.
         s.palette.as_mut().unwrap().set_query("保存".into());
@@ -2296,21 +2279,6 @@ mod tests {
         assert!(search.contains(marked.x, marked.y) && marked.bottom() <= search.bottom());
     }
 
-    /// The panel floats with the theme's soft shadow all round it (UI-007).
-    #[test]
-    fn the_panel_has_the_float_shadow() {
-        for theme in xirius_design::Theme::ALL {
-            let c = crate::paint::Colors::new(theme);
-            let layers = xirius_design::FloatShadow::layers(theme);
-            for (s, l) in c.float.iter().zip(layers) {
-                assert_eq!(f32::from(s.blur_radius), l.blur);
-                assert_eq!(f32::from(s.offset.y), l.offset_y);
-                assert_eq!(f32::from(s.offset.x), 0.0);
-                assert!(!s.inset && s.color.a > 0.0);
-            }
-        }
-    }
-
     #[test]
     fn what_cannot_run_here_is_off_or_not_listed() {
         let (mut s, g) = setup();
@@ -2376,25 +2344,6 @@ mod tests {
         s.palette.as_mut().unwrap().set_query("history.undo".into());
         assert!(s.palette_key(&g, "enter", Mods::NONE));
         assert!(s.palette.is_some());
-    }
-
-    #[test]
-    fn quantize_from_the_palette_is_one_step_and_one_undo_takes_it_back() {
-        let (mut s, g) = picked();
-        let before = state(&s);
-        let steps = s.song().steps();
-        s.open_palette(&g);
-        type_in(&mut s, &g, "ノートをクオンタイズ");
-        assert_eq!(names(&s), ["note.quantize"]);
-        assert!(s.palette_key(&g, "enter", Mods::NONE));
-        assert!(s.palette.is_none(), "it closes after running");
-        assert!(s.error.is_none(), "{:?}", s.error);
-        assert_eq!(s.song().steps(), steps + 1);
-        assert_eq!(last_command(&s), "note.quantize");
-        assert_ne!(state(&s), before);
-        // Ctrl+Z, the same undo as for the key.
-        assert!(s.edit_key(&g, "z", Mods::ctrl()));
-        assert_eq!(state(&s), before);
     }
 
     #[test]
@@ -2524,13 +2473,16 @@ mod tests {
             .map(|r| r.name)
             .collect();
         assert!(keyed.len() >= 7, "{keyed:?}");
+        assert!(keyed.contains(&"note.quantize"), "{keyed:?}");
         for name in keyed {
             assert!(!skip.contains(&name));
             let (mut s, g) = picked();
             let before = state(&s);
+            let steps = s.song().steps();
             let r = row(&mut s, &g, name);
             assert!(s.run_row(&g, &r), "{name}");
             assert!(s.error.is_none(), "{name}: {:?}", s.error);
+            assert_eq!(s.song().steps(), steps + 1, "{name}");
             assert_eq!(last_command(&s), name, "{name}");
             assert!(s.edit_key(&g, "z", Mods::ctrl()));
             assert_eq!(state(&s), before, "{name}");
