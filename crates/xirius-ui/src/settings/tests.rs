@@ -176,57 +176,134 @@ fn empty_space_inside_settings_stays_open_and_only_the_outside_closes_it() {
     assert!(s.settings.is_none());
 }
 
+/// A setting changed on the settings screen reaches the studio at once, is no step of the song,
+/// and is what the next launch starts with. A switch shows the way back there, and that is kept.
 #[test]
-fn a_switch_is_there_the_next_launch() {
-    let dir_tmp = temp("switch");
-    let dir = dir_tmp.path().to_path_buf();
-    let follows = "edit.automation.follows-clips";
-    let locks = "edit.automation.locks-clips";
-    let (mut s, g) = launch(&dir);
-    let (f0, l0) = (pref_bool(&s, follows), pref_bool(&s, locks));
-    s.open_settings(Section::Edit);
-    press(&mut s, &g, &switch(follows, f0));
-    press(&mut s, &g, &switch(locks, l0));
-    assert_eq!(pref_bool(&s, follows), !f0);
-    assert_eq!(pref_bool(&s, locks), !l0);
-    // Not a step of the song: the history has nothing to undo.
-    assert!(!s.song.can_undo());
-    assert!(dir.join("prefs.toml").exists());
-    drop(s);
+fn a_setting_changed_on_screen_is_there_the_next_launch() {
+    use crate::follow::Mode;
+    use xirius_design::Theme;
+    use xirius_session::update::BETA_PREF;
 
-    let (mut s, g) = launch(&dir);
-    assert_eq!(pref_bool(&s, follows), !f0);
-    assert_eq!(pref_bool(&s, locks), !l0);
-    s.open_settings(Section::Edit);
-    // The switches show it: each now turns back.
-    let scene = s.settings_scene(&g);
-    assert!(scene.find(&switch(follows, !f0)).is_some());
-    assert!(scene.find(&switch(locks, !l0)).is_some());
-    let _ = std::fs::remove_dir_all(&dir);
-}
+    /// A switch is a pick of "true" or "false" (`switch` above): each row goes from the
+    /// default to `to` and back.
+    struct Row {
+        name: &'static str,
+        section: Section,
+        key: &'static str,
+        to: &'static str,
+        back: &'static str,
+        /// Whether the studio works by `to` (false at the default).
+        live: fn(&Studio) -> bool,
+        says: &'static [&'static str],
+    }
+    let rows = [
+        Row {
+            name: "automation stops following the clips",
+            section: Section::Edit,
+            key: "edit.automation.follows-clips",
+            to: "false",
+            back: "true",
+            live: |s| !s.arrange.follows_clips,
+            says: &[],
+        },
+        Row {
+            name: "automation is no longer locked to the clips",
+            section: Section::Edit,
+            key: "edit.automation.locks-clips",
+            to: "false",
+            back: "true",
+            live: |s| !s.arrange.locks_clips,
+            says: &[],
+        },
+        Row {
+            name: "the light theme",
+            section: Section::General,
+            key: "ui.theme",
+            to: "light",
+            back: "dark",
+            live: |s| s.wanted_theme(Theme::Dark) == Theme::Light,
+            says: &[],
+        },
+        Row {
+            name: "autoscroll in the centre",
+            section: Section::Edit,
+            key: "edit.autoscroll",
+            to: "center",
+            back: "turn-over",
+            live: |s| s.follow.mode == Mode::ContinuousCenter,
+            says: &[],
+        },
+        Row {
+            name: "autoscroll at the left",
+            section: Section::Edit,
+            key: "edit.autoscroll",
+            to: "left",
+            back: "turn-over",
+            live: |s| s.follow.mode == Mode::ContinuousLeft,
+            says: &[],
+        },
+        Row {
+            name: "the crosshair",
+            section: Section::Edit,
+            key: "edit.cursor.crosshair",
+            to: "true",
+            back: "false",
+            live: |s| s.crosshair,
+            says: &[],
+        },
+        Row {
+            name: "the beta channel",
+            section: Section::General,
+            key: BETA_PREF,
+            to: "true",
+            back: "false",
+            live: |s| pref_bool(s, BETA_PREF),
+            says: &["更新を確認", "ベータ版も受け取る"],
+        },
+    ];
+    let mut failures = Vec::new();
+    for (i, row) in rows.into_iter().enumerate() {
+        let dir_tmp = temp(&format!("persist-{i}"));
+        let dir = dir_tmp.path().to_path_buf();
+        let mut check = |ok: bool, what: &str| {
+            if !ok {
+                failures.push(format!("{}: {what}", row.name));
+            }
+        };
+        let pick = |value: &str| Do::Pref(row.key.into(), value.into());
+        let (mut s, g) = launch(&dir);
+        check(!(row.live)(&s), "not so at the default");
+        s.open_settings(row.section);
+        let scene = s.settings_scene(&g);
+        check(scene.find(&pick(row.to)).is_some(), "offered on the screen");
+        for text in row.says {
+            check(scene.has_text(text), &format!("the page says {text}"));
+        }
+        press(&mut s, &g, &pick(row.to));
+        // The idle poll carries a changed preference to the studio.
+        s.settings_reload();
+        check((row.live)(&s), "the studio follows the change");
+        check(!s.song.can_undo(), "not a step of the song");
+        check(dir.join("prefs.toml").exists(), "written to prefs.toml");
+        drop(s);
 
-#[test]
-fn the_theme_is_switched_on_the_screen_and_is_there_the_next_launch() {
-    let dir_tmp = temp("theme");
-    let dir = dir_tmp.path().to_path_buf();
-    let (mut s, g) = launch(&dir);
-    s.open_settings(Section::General);
-    let dark = xirius_design::Theme::Dark;
-    assert_eq!(s.wanted_theme(dark), dark);
-    press(&mut s, &g, &Do::Pref("ui.theme".into(), "light".into()));
-    assert_eq!(s.wanted_theme(dark), xirius_design::Theme::Light);
-    // The screen itself is drawn in the colours the preference asks for.
-    assert!(
-        s.settings_scene(&g)
-            .find(&Do::Pref("ui.theme".into(), "dark".into()))
-            .is_some()
-    );
-    assert!(!s.song.can_undo());
-    drop(s);
-
-    let (s, _) = launch(&dir);
-    assert_eq!(s.wanted_theme(dark), xirius_design::Theme::Light);
-    let _ = std::fs::remove_dir_all(&dir);
+        let (mut s, g) = launch(&dir);
+        s.apply_edit_prefs();
+        check((row.live)(&s), "there the next launch");
+        s.open_settings(row.section);
+        check(
+            s.settings_scene(&g).find(&pick(row.back)).is_some(),
+            "the screen offers the way back",
+        );
+        press(&mut s, &g, &pick(row.back));
+        s.settings_reload();
+        check(!(row.live)(&s), "going back reaches the studio");
+        drop(s);
+        let (mut s, _) = launch(&dir);
+        s.apply_edit_prefs();
+        check(!(row.live)(&s), "going back is kept too");
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 #[test]
@@ -608,42 +685,6 @@ fn key_017_a_cell_offers_only_what_its_area_has() {
         ["", "view.zoom.time", "view.zoom.data", "view.scroll"]
     );
     assert_eq!(names("ruler.any.empty.click"), ["", "transport.locate"]);
-}
-
-#[test]
-fn edt_070_the_autoscroll_mode_is_chosen_in_the_settings_and_kept() {
-    use crate::follow::Mode;
-    let dir_tmp = temp("autoscroll");
-    let dir = dir_tmp.path().to_path_buf();
-    let (mut s, g) = launch(&dir);
-    assert_eq!(s.follow.mode, Mode::TurnOver);
-    s.open_settings(Section::Edit);
-    for (value, mode) in [
-        ("center", Mode::ContinuousCenter),
-        ("left", Mode::ContinuousLeft),
-        ("turn-over", Mode::TurnOver),
-    ] {
-        let act = Do::Pref("edit.autoscroll".into(), value.into());
-        assert!(
-            s.settings_scene(&g).find(&act).is_some(),
-            "{value} is not offered"
-        );
-        press(&mut s, &g, &act);
-        // The idle poll carries a changed preference to the follow mode.
-        s.settings_reload();
-        assert_eq!(s.follow.mode, mode, "{value}");
-    }
-    press(
-        &mut s,
-        &g,
-        &Do::Pref("edit.autoscroll".into(), "center".into()),
-    );
-    assert!(!s.song.can_undo());
-    drop(s);
-    let (mut s, _) = launch(&dir);
-    s.apply_edit_prefs();
-    assert_eq!(s.follow.mode, Mode::ContinuousCenter);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -1158,27 +1199,6 @@ fn the_plugin_page_marks_the_bundle_tried_again_and_only_that_one() {
 }
 
 #[test]
-fn the_crosshair_switch_reaches_the_pointer_and_the_next_launch() {
-    let dir_tmp = temp("crosshair");
-    let dir = dir_tmp.path().to_path_buf();
-    let key = "edit.cursor.crosshair";
-    let (mut s, g) = launch(&dir);
-    assert!(!pref_bool(&s, key), "the tool's own picture by default");
-    assert!(!s.crosshair);
-    s.open_settings(Section::Edit);
-    press(&mut s, &g, &switch(key, false));
-    assert!(s.crosshair, "the switch reaches the studio");
-    drop(s);
-
-    let (mut s, g) = launch(&dir);
-    s.apply_edit_prefs();
-    assert!(s.crosshair, "and is there the next launch");
-    s.open_settings(Section::Edit);
-    press(&mut s, &g, &switch(key, true));
-    assert!(!s.crosshair);
-}
-
-#[test]
 fn key_019_the_mouse_table_has_ctrl_shift_and_holds_are_edited_on_screen() {
     let dir_tmp = temp("key019");
     let dir = dir_tmp.path().to_path_buf();
@@ -1544,33 +1564,6 @@ fn a_macro_does_not_close_a_wheels_open_undo_group_with_its_own() {
         s.wheel_group.is_none(),
         "the wheel's group is closed before the macro's begins"
     );
-}
-
-/// UI-282: 「ベータ版も受け取る」 is off at first, and is kept once turned on.
-#[test]
-fn the_beta_channel_is_off_by_default_and_kept_when_turned_on() {
-    use xirius_session::update::BETA_PREF;
-
-    let dir_tmp = temp("update-beta");
-    let dir = dir_tmp.path().to_path_buf();
-    let (mut s, g) = launch(&dir);
-    assert!(!pref_bool(&s, BETA_PREF), "off by default");
-    s.open_settings(Section::General);
-    let scene = s.settings_scene(&g);
-    assert!(scene.has_text("更新を確認"));
-    assert!(scene.has_text("ベータ版も受け取る"));
-    press(&mut s, &g, &switch(BETA_PREF, false));
-    assert!(pref_bool(&s, BETA_PREF));
-    drop(s);
-
-    let (mut s, g) = launch(&dir);
-    assert!(pref_bool(&s, BETA_PREF), "kept");
-    s.open_settings(Section::General);
-    press(&mut s, &g, &switch(BETA_PREF, true));
-    assert!(!pref_bool(&s, BETA_PREF));
-    drop(s);
-    let (s, _) = launch(&dir);
-    assert!(!pref_bool(&s, BETA_PREF), "turning it off is kept too");
 }
 
 #[test]
