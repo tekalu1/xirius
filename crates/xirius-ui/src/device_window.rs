@@ -1369,10 +1369,27 @@ impl Render for DeviceWindow {
         } else {
             self.with(window, |s, g| crate::channel::marks(s, g))
         };
+        // The pointer's shape from the part under it, through the main window's table (UI-384).
+        // The window redraws on every move, so the shape follows the pointer.
+        let pointer = {
+            let at = window.mouse_position();
+            let (x, y) = (f32::from(at.x), f32::from(at.y));
+            let (want, held) = self.with(window, |s, g| s.float_want(g, x, y));
+            crate::pointer::show(want, false, held)
+        };
+        // The hands are pictures of ours: GPUI shows the arrow for them on Windows.
+        #[cfg(windows)]
+        {
+            let hwnd = hwnd_of(window);
+            if hwnd != 0 && crate::pointer_os::install(hwnd) {
+                crate::pointer_os::show(hwnd, pointer.shape);
+            }
+        }
         div()
             .size_full()
             .bg(background)
             .track_focus(&self.focus)
+            .cursor(pointer.style)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, e: &gpui::MouseDownEvent, window, cx| {

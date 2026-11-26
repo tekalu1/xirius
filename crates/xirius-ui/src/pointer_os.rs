@@ -7,11 +7,14 @@
 //! its own to give, so the window is subclassed: while a tool's picture is asked for, the
 //! subclass answers `WM_SETCURSOR` itself, and passes everything else (and every other time) on
 //! to GPUI's window procedure. Nothing of GPUI is changed (`PATCHED.md` stays empty).
+//!
+//! Each window keeps the cursor it answers with (an `HCURSOR`, 0 while the system's shape is
+//! asked for) as its subclass's own data, so the main window and the windows of their own
+//! (UI-384) each show theirs.
 
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::ptr::null_mut;
-use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -34,8 +37,6 @@ use crate::pointer::{Shape, picture};
 const GPUI_CURSOR_CHANGED: u32 = WM_USER + 1;
 const SUBCLASS_ID: usize = 0x5849_5249; // "XIRI"
 
-/// The cursor the window answers with now (an `HCURSOR`); 0 while the system's shape is asked for.
-static ACTIVE: AtomicIsize = AtomicIsize::new(0);
 static CURSORS: LazyLock<Mutex<HashMap<(Shape, usize), isize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -197,7 +198,15 @@ pub fn install(hwnd: isize) -> bool {
 pub fn show(hwnd: isize, shape: Option<Shape>) {
     let window = hwnd as HWND;
     let next = shape.map_or(0, |s| cursor(s, size_for(hwnd)));
-    if ACTIVE.swap(next, Ordering::Relaxed) != next && over_client(window) {
+    let Some(now) = active(window) else {
+        return;
+    };
+    if now == next {
+        return;
+    }
+    // SAFETY: our own window, already subclassed; only the data the subclass reads changes.
+    unsafe { SetWindowSubclass(window, Some(subclass), SUBCLASS_ID, next as usize) };
+    if over_client(window) {
         // SAFETY: a message to our own window, as the system sends it on every pointer move.
         unsafe {
             SendMessageW(
@@ -224,8 +233,16 @@ pub fn handed(hwnd: isize) -> Option<isize> {
             (HTCLIENT as isize) | ((WM_MOUSEMOVE as isize) << 16),
         );
         let now = windows_sys::Win32::UI::WindowsAndMessaging::GetCursor();
-        (now as isize == ACTIVE.load(Ordering::Relaxed) && !now.is_null()).then_some(now as isize)
+        (Some(now as isize) == active(window) && !now.is_null()).then_some(now as isize)
     }
+}
+
+/// The cursor `hwnd` answers with now, or `None` before [`install`].
+fn active(hwnd: HWND) -> Option<isize> {
+    let mut data = 0usize;
+    // SAFETY: reads the data of our subclass on our own window.
+    let installed = unsafe { GetWindowSubclass(hwnd, Some(subclass), SUBCLASS_ID, &mut data) };
+    (installed != 0).then_some(data as isize)
 }
 
 /// Whether the pointer is over the window's client area (and not over another window).
@@ -256,9 +273,9 @@ unsafe extern "system" fn subclass(
     wparam: WPARAM,
     lparam: LPARAM,
     _id: usize,
-    _data: usize,
+    data: usize,
 ) -> LRESULT {
-    let ours = ACTIVE.load(Ordering::Relaxed);
+    let ours = data as isize;
     if msg == WM_SETCURSOR && ours != 0 && (lparam & 0xffff) as u32 == HTCLIENT {
         // SAFETY: `ours` is a cursor made and kept by `cursor`.
         unsafe { SetCursor(ours as _) };
@@ -354,6 +371,28 @@ mod tests {
         assert_eq!(handed(hwnd), None);
         // SAFETY: our own window.
         unsafe { DestroyWindow(hwnd as HWND) };
+    }
+
+    #[test]
+    fn each_window_keeps_its_own_cursor() {
+        let (main, own) = (window(), window());
+        // Not taken yet: nothing is asked of it.
+        show(own, Some(Shape::Pencil));
+        assert_eq!(handed(own), None);
+        assert!(install(main) && install(own));
+        show(main, Some(Shape::Pencil));
+        show(own, Some(Shape::Eraser));
+        assert_eq!(handed(main), Some(cursor(Shape::Pencil, size_for(main))));
+        assert_eq!(handed(own), Some(cursor(Shape::Eraser, size_for(own))));
+        // A window of its own back to the system's shape leaves the main window's tool.
+        show(own, None);
+        assert_eq!(handed(own), None);
+        assert_eq!(handed(main), Some(cursor(Shape::Pencil, size_for(main))));
+        // SAFETY: our own windows.
+        unsafe {
+            DestroyWindow(main as HWND);
+            DestroyWindow(own as HWND);
+        }
     }
 
     #[test]
