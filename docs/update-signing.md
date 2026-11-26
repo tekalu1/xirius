@@ -136,11 +136,13 @@ UTF-8 で読めない本文・U+FFFD のある本文・文字が `?` に化け�
 
 1. `Cargo.toml` の `[workspace.package] version` を上げ、`docs/release-notes/<版>.md` を書き、
    `UPDATE_KEY` が本物の公開鍵になっていることを確かめて、main に commit して push します。
-2. その commit（main の push で `rust.yml` が走る commit）にタグを付けて push します。Release は
-   タグの push だけで作ります（手で流す道はありません）。
+2. その commit（main の push で `rust.yml` が走る commit）を checkout し、窓の大きさが決まった PC で
+   Release に要る窓の試験を流してタグを作り、push します。Release はタグの push だけで作ります
+   （手で流す道はありません）。タグは、試験が通った commit と結果を本文に持つ注釈つきのタグで、
+   記録の無いタグは `release.yml` が止めます（`docs/release-ci-gate.md` の「窓の試験の記録」）。
 
    ```powershell
-   git tag v1.0.0
+   python scripts/ci_tests.py --windows --tag v1.0.0
    git push origin v1.0.0
    ```
 
@@ -148,12 +150,12 @@ UTF-8 で読めない本文・U+FFFD のある本文・文字が `?` に化け�
    - `build`: タグが版と同じか（違えば落ちる）、本文のファイルがあるかを確かめ、setup.exe・
      マニフェスト・SUMS を作ります（鍵はありません）。
    - `ci-gate`（`build` と並んで走る）: 同じ commit の main の `rust.yml` の run が揃って成功するのを
-     待ちます（40 分まで）。赤・見つからない・取り消されたなら、ここで止まり、署名も公開も
-     しません（`docs/release-ci-gate.md`）。
+     待ちます（90 分まで）。赤・見つからない・取り消されたなら、ここで止まり、署名も公開も
+     しません（`docs/release-ci-gate.md`）。その前に、タグの本文の窓の試験の記録を確かめます。
    - `sign`: secret をファイルに書き、タグの checkout の `scripts/update_sign.py` でマニフェストに
      署名し、すぐに鍵のファイルを消し、同じ .py でアプリの `UPDATE_KEY` により `.sig` と setup.exe
      を確かめます。仮の鍵のままならここで落ちます。
-   - `publish`: SUMS を確かめ、下書きに載せてから公開します。
+   - `publish`: SUMS を確かめ、窓の試験の記録を本文の最後に書き足し、下書きに載せてから公開します。
      - 正式版（`v1.0.1`）は **latest** にします。安定版のアプリは `/releases/latest` を読みます。
      - プレリリースの版（`v1.0.1-beta.1`。`-` の後ろに何かが付いた版）は **Pre-release** として
        出し、latest にしません。ベータ版を読むのは、設定「ベータ版も受け取る」を入れたアプリ

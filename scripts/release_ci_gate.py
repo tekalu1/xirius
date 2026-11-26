@@ -2,6 +2,7 @@
 """Does main's CI say yes to the commit of a release tag? (LIC-039)
 
     python scripts/release_ci_gate.py --repo tekalu1/xirius --sha <commit> --tag v1.0.1
+    python scripts/release_ci_gate.py --sha <commit> --tag v1.0.1 --window-record <tag message>
 
 The release workflow runs this before it signs and publishes (docs/release-ci-gate.md). It
 reads, with GET requests only, the runs of `.github/workflows/rust.yml` that a push to `main`
@@ -19,6 +20,11 @@ started on the same commit, and:
 The token is the job's GITHUB_TOKEN (`actions: read`, `contents: read`); nothing is written to
 GitHub. With GITHUB_OUTPUT set, `sha=<commit>` is written there on success.
 
+With --window-record it asks nothing of GitHub: it reads the release tag's message and exits 0
+only when it holds a passing record of every window test in WINDOW_TESTS on the same commit
+(written by `python scripts/ci_tests.py --windows --tag v<version>`, ARC-051), and writes
+`window=<the record>` to GITHUB_OUTPUT.
+
 Standard library only.
 """
 from __future__ import annotations
@@ -31,6 +37,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 WORKFLOW = ".github/workflows/rust.yml"
 BRANCH = "main"
@@ -111,6 +118,42 @@ def decide(runs: list[dict], jobs_of) -> tuple[str, str]:
     return "unusable", "; ".join(why for _, why in verdicts)
 
 
+# ------------------------------------------------------------------ the window tests' record
+
+# The tests that open real windows, which a release needs a record of (ARC-051). They cannot run
+# on CI (scripts/ci_tests.py): `python scripts/ci_tests.py --windows --tag v<version>` runs them on a
+# PC and writes the record into the message of the annotated tag it makes. Package and target.
+WINDOW_TESTS = [("xirius-ui", "e2e_window")]
+WINDOW_RECORD = "window-tests:"
+
+
+def window_record(sha: str, when: str, tests=None) -> str:
+    """The record of the window tests passing on `sha`: one line, no `- ` (not a note)."""
+    names = ",".join(f"{p}/{t}" for p, t in (WINDOW_TESTS if tests is None else tests))
+    return f"{WINDOW_RECORD} commit={sha} result=pass tests={names} at={when}"
+
+
+def window_verdict(message: str, sha: str) -> tuple[bool, str]:
+    """Does a tag's message hold a passing record of every window test on `sha`?"""
+    lines = [line.strip() for line in message.splitlines() if line.strip().startswith(WINDOW_RECORD)]
+    if not lines:
+        return False, "the tag has no record of the window tests"
+    why = ""
+    for line in lines:
+        fields = dict(f.split("=", 1) for f in line[len(WINDOW_RECORD):].split() if "=" in f)
+        ran = set(fields.get("tests", "").split(","))
+        missing = [f"{p}/{t}" for p, t in WINDOW_TESTS if f"{p}/{t}" not in ran]
+        if fields.get("commit") != sha:
+            why = f"the record is of the commit {fields.get('commit')!r}, not {sha}"
+        elif fields.get("result") != "pass":
+            why = f"the record says {fields.get('result')!r}, not pass"
+        elif missing:
+            why = f"the record lacks {', '.join(missing)}"
+        else:
+            return True, line
+    return False, why
+
+
 # ------------------------------------------------------------------ GitHub
 
 def make_get(token: str | None, timeout: float):
@@ -189,7 +232,7 @@ def gate(look_once, wait_s: float, grace_s: float, interval_s: float, api_tries:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--repo", required=True, help="owner/name")
+    p.add_argument("--repo", help="owner/name (needed unless --window-record)")
     p.add_argument("--sha", required=True, help="the commit the tag points to")
     p.add_argument("--tag", default="", help="only for the messages")
     p.add_argument("--wait-minutes", type=float, default=90)
@@ -197,9 +240,26 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--interval-seconds", type=float, default=30)
     p.add_argument("--request-timeout-seconds", type=float, default=20)
     p.add_argument("--api-tries", type=int, default=5)
+    p.add_argument("--window-record", type=Path,
+                   help="the tag's message: check its record of the window tests instead")
     args = p.parse_args(argv)
     if len(args.sha) != 40 or any(c not in "0123456789abcdef" for c in args.sha):
         p.error(f"--sha is not a full commit id: {args.sha!r}")
+    label = f"{args.tag} ({args.sha[:12]})" if args.tag else args.sha[:12]
+    out = os.environ.get("GITHUB_OUTPUT")
+    if args.window_record:
+        ok, why = window_verdict(args.window_record.read_text(encoding="utf-8"), args.sha)
+        if not ok:
+            print(f"::error::窓の試験の記録が {label} にありません: {why}（docs/release-ci-gate.md）",
+                  file=sys.stderr)
+            return 1
+        print(f"release-ci-gate: {label}: {why}")
+        if out:
+            with open(out, "a", encoding="utf-8") as f:
+                f.write(f"window={why}\n")
+        return 0
+    if not args.repo:
+        p.error("--repo is needed")
 
     get = make_get(os.environ.get("GITHUB_TOKEN"), args.request_timeout_seconds)
     try:
@@ -212,7 +272,6 @@ def main(argv: list[str] | None = None) -> int:
         args.wait_minutes * 60, args.missing_grace_minutes * 60,
         args.interval_seconds, args.api_tries,
     )
-    label = f"{args.tag} ({args.sha[:12]})" if args.tag else args.sha[:12]
     if not ok:
         print(f"::error::main の CI が {label} を通していません: {why}（docs/release-ci-gate.md）",
               file=sys.stderr)

@@ -8,10 +8,18 @@ fail there for reasons that are not the app's. Everything else runs here.
     python scripts/ci_tests.py            # run
     python scripts/ci_tests.py --list     # print the cargo commands only
     python scripts/ci_tests.py --plugins  # the tests with a real ARA plugin, before a release
+    python scripts/ci_tests.py --windows --tag v1.0.1
+                                          # the window tests a release needs, and its tag
 
 The tests with a real ARA plugin are `#[ignore]`d, so a run without one never passes them by
 skipping: each needs its variable set to the plugin's file (`docs/ara-verification.md`), and
 fails when it is not.
+
+`--windows` runs the window tests a release needs a record of (`release_ci_gate.WINDOW_TESTS`)
+on the checkout's commit, which must have no changes. On a pass it prints the record and writes
+it to `target/window-tests/<commit>.txt`; with `--tag v<version>` it also makes the annotated
+tag whose message holds it (not pushed). The release workflow stops a tag without a passing
+record of its own commit (`docs/release-ci-gate.md`).
 
 The tests run with a temporary folder of the run's own and with the person's folders pointed at
 an empty folder of the run's own (as on a PC where Xirius never ran); a test that writes to the
@@ -29,10 +37,12 @@ import sys
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from pathlib import Path
 
 import context_catalog
 import leftovers
+import release_ci_gate
 
 # The integration tests that open windows, by package.
 WINDOW_TESTS = {
@@ -220,10 +230,65 @@ def check_shards(directory, count):
         return context_catalog.check(merged, Path(__file__).resolve().parent.parent)
 
 
+# ------------------------------------------------------------------ the release's window tests
+
+WINDOW_RECORDS = Path("target/window-tests")
+
+
+def window_commands():
+    """The window tests a release needs a record of (release_ci_gate.WINDOW_TESTS)."""
+    return [["cargo", "nextest", "run", "--locked", "--no-fail-fast", "-p", package, "--test", target]
+            for package, target in release_ci_gate.WINDOW_TESTS]
+
+
+def git(*args):
+    return subprocess.run(["git", *args], check=True, capture_output=True, encoding="utf-8").stdout.strip()
+
+
+def clean_head():
+    """The commit the record names: the tests must be of it, with nothing changed beside it."""
+    if git("status", "--porcelain", "--untracked-files=no"):
+        raise RuntimeError("commit or stash the changes first: the record names the commit")
+    return git("rev-parse", "HEAD")
+
+
+def windows(args):
+    """Runs the window tests a release needs; on a pass, prints their record and, with --tag,
+    makes the annotated tag that holds it (ARC-051, docs/release-ci-gate.md)."""
+    if args.tag:
+        run([sys.executable, str(Path(__file__).resolve().parent / "release.py"), "--tag", args.tag,
+             "--check-tag"])
+        if git("tag", "--list", args.tag):
+            raise RuntimeError(f"the tag {args.tag} is already here")
+    sha = clean_head()
+    nextest_version()
+    environment = os.environ.copy()
+    environment["CARGO_BUILD_JOBS"] = "6"
+    with leftovers.Watch(Path(__file__).resolve().parent.parent, environment) as watch:
+        for command in window_commands():
+            run(command, watch.environment)
+        failures = watch.finish()
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    if clean_head() != sha:
+        raise RuntimeError("HEAD moved while the window tests ran")
+    record = release_ci_gate.window_record(sha, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    WINDOW_RECORDS.mkdir(parents=True, exist_ok=True)
+    (WINDOW_RECORDS / f"{sha}.txt").write_text(record + "\n", encoding="utf-8")
+    print(record)
+    if args.tag:
+        git("tag", "-a", args.tag, sha, "-m", f"Xirius {args.tag[1:]}\n\n{record}")
+        print(f"made the tag {args.tag} on {sha[:12]}: git push origin {args.tag}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--plugins", action="store_true")
+    parser.add_argument("--windows", action="store_true", help="the window tests a release needs a record of")
+    parser.add_argument("--tag", help="with --windows: make this annotated release tag holding the record")
     parser.add_argument("--prepare", action="store_true", help="build required executables and fixtures")
     parser.add_argument("--archive", type=Path, help="build an archive for test shards")
     parser.add_argument("--run-archive", type=Path, help="run an archive without compiling")
@@ -237,6 +302,14 @@ def main():
     parser.add_argument("--default-features", action="store_true")
     parser.add_argument("--legacy", action="store_true", help="run the original Cargo test groups")
     args = parser.parse_args()
+    if args.tag and not args.windows:
+        parser.error("--tag needs --windows")
+    if args.windows:
+        if args.list:
+            for command in window_commands():
+                print(" ".join(command))
+            return 0
+        return windows(args)
     if args.check_mp3_junit:
         require_mp3_cases(sorted(args.check_mp3_junit.rglob("junit.xml")))
         return 0

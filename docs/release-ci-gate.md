@@ -3,7 +3,9 @@
 タグ `v*` を push すると、`.github/workflows/release.yml` が作る・署名する・公開するまで人の手を
 待たずに進みます。公開してよいかを決めるのは、人の承認ではなく、**同じ commit を main に push した
 ときの `rust.yml` の run** です。`release.yml` の `ci-gate` の job が、`scripts/release_ci_gate.py`
-でそれを確かめます。通らなければ `sign`（鍵を読む job）と `publish` は走りません。
+でそれを確かめます。CI で流せない窓の試験は、PC で流した記録をタグの本文に持たせ、`ci-gate` が
+同じ commit の記録を確かめます（下の「窓の試験の記録」）。通らなければ `sign`（鍵を読む job）と
+`publish` は走りません。
 
 ## 規則
 
@@ -31,7 +33,37 @@
   `scripts/test_release_ci_gate.py` が `rust.yml` を読んで突き合わせ、`release.yml` が `sign` と
   `publish` の前に `ci-gate` を置いていることも確かめます。
 
+## 窓の試験の記録（ARC-051）
+
+本物の窓を開く試験は CI の runner では流せません（`scripts/ci_tests.py` の一覧）。その代わりに、
+Release に要る窓の試験（`scripts/release_ci_gate.py` の `WINDOW_TESTS`。いまは保存・開くを通す
+`xirius-ui` の `e2e_window` の 1 本）を、窓の大きさが決まった PC で流した記録をタグに持たせます。
+
+```powershell
+python scripts/ci_tests.py --windows --tag v1.0.1
+git push origin v1.0.1
+```
+
+- `--windows` は、変更の無い checkout の commit で試験を流します（変更があれば流さずに止める）。
+  通れば、`window-tests: commit=<commit> result=pass tests=xirius-ui/e2e_window at=<時刻>` の
+  1 行を出し、`target/window-tests/<commit>.txt` に書きます。`--tag` を付けると、版と本文を
+  `scripts/release.py --check-tag` で先に確かめ、その行を本文に持つ注釈つきのタグを作ります
+  （push はしない）。落ちた・試験が一時フォルダーなどに物を残したときは、記録もタグも作りません。
+- `ci-gate` は、API の確かめの前に、タグが注釈つきで、その本文にタグの commit と同じ commit の
+  `result=pass` の記録があり、`WINDOW_TESTS` をすべて含むことを確かめます。無ければ止め、
+  `sign` と `publish` は走りません。
+- `publish` は、その記録の行を Release の本文の最後に書き足します。`- ` の箇条ではないので、
+  アプリの更新の知らせ（`- ` と `* ` の行だけを読む）には出ません。
+- `WINDOW_TESTS` を増やすときは、`scripts/ci_tests.py` が CI から外す窓の試験の名前にします
+  （`scripts/test_release_ci_gate.py` が確かめる）。
+
 ## 理由
+
+- 窓の試験を Release の関門にするのは、CI で流せない試験が、流されないまま配られないためです。
+  記録をタグの本文に置くのは、commit を足さずに、配る commit とその結果を 1 か所で結べるためです
+  （タグを付け替えれば記録も付け替わり、別の commit の記録は使えません）。記録は手で書けますが、
+  タグを作れるのは持ち主だけ（`docs/update-signing.md` の Rulesets）なので、それは持ち主が流さずに
+  出すと決めたことになります。
 
 - macOS の check も必須です。Windows の配布でも、Mac のビルド・試験を壊した commit は公開しません。
 
@@ -63,6 +95,7 @@
 | run が無い | タグが main の push の commit に付いているか確かめる。まとめて push した途中の commit には run が無いので、タグを main の先頭（run のある commit）に付け直す |
 | `cancelled`・job の欠け | `rust.yml` の run を再実行してから **Re-run failed jobs** |
 | API の失敗が続いた | 時間を置いて **Re-run failed jobs** |
+| 注釈の無いタグ・窓の試験の記録が無い・別の commit の記録 | 窓の大きさが決まった PC で、タグの commit を checkout して `python scripts/ci_tests.py --windows --tag v<版>` を流し、通ったら `git push --force origin v<版>` でタグを付け替える（タグの push で release が新しく走る）。試験が落ちたら直してから版を出す |
 
 - 再実行は失敗した job だけで足ります（`build` が通っていれば作り直しません）。
 - `publish` の途中で落ちて下書きが残ったときは、再実行が下書きを消して作り直します。公開済みの
