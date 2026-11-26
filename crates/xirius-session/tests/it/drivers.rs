@@ -149,109 +149,307 @@ fn exclusive_is_the_default_driver() {
     );
 }
 
-#[test]
-fn an_output_that_opens_exclusively_is_used_with_nothing_to_say() {
-    let calls = Arc::new(Calls::default());
-    let (_host, audio) = engine();
-    let opened = Output::open(
-        OutputMode::Device,
-        audio,
-        &prefs("wasapi-exclusive"),
-        &drivers(&calls, true, true),
-    )
-    .unwrap();
-    assert!(opened.output.is_some());
-    assert_eq!(opened.notice, None);
-    assert_eq!(calls.exclusive.load(Ordering::SeqCst), 1);
-    assert_eq!(calls.shared.load(Ordering::SeqCst), 0);
-    assert_eq!(
-        calls.asked.lock().unwrap().as_slice(),
-        [("Interface".to_string(), Some(64))],
-        "the device and the buffer of the settings"
-    );
+/// What a row opens: the output on the device or silent, or the input of the named device.
+#[derive(Clone, Copy)]
+enum Open {
+    Device,
+    Silent,
+    Input(&'static str),
 }
 
-#[test]
-fn an_output_that_will_not_open_exclusively_falls_back_to_shared_in_one_line() {
-    let calls = Arc::new(Calls::default());
-    let (mut host, audio) = engine();
-    let opened = Output::open(
-        OutputMode::Device,
-        audio,
-        &prefs("wasapi-exclusive"),
-        &drivers(&calls, false, true),
-    )
-    .unwrap();
-    let out = opened.output.expect("shared mode opened");
-    assert_eq!(calls.exclusive.load(Ordering::SeqCst), 1);
-    assert_eq!(calls.shared.load(Ordering::SeqCst), 1);
-    let notice = opened.notice.expect("the fall back is said");
-    assert!(!notice.contains('\n'), "{notice:?}");
-    assert!(
-        notice.contains("排他") && notice.contains("共有"),
-        "{notice}"
-    );
-    assert!(notice.contains("0x88890008"), "the reason: {notice}");
-    assert!(!notice.contains("詳しい説明"), "one line only: {notice}");
-    // The engine that came back plays: the song runs on the shared output.
-    assert!(host.play());
-    let mut moved = false;
+struct OpenRow {
+    name: &'static str,
+    open: Open,
+    driver: &'static str,
+    /// Whether the stand-in's exclusive mode opens, and whether its refusal gives the engine
+    /// back.
+    opens: bool,
+    keeps: bool,
+    change: fn(&mut Drivers),
+    /// The words of the one-line notice, or None for no notice.
+    notice: Option<&'static [&'static str]>,
+    /// The words of the error, for a row that does not open.
+    error: Option<&'static str>,
+    /// Whether the input opened exclusively (input rows only).
+    exclusive_input: Option<bool>,
+    exclusive: usize,
+    shared: usize,
+    /// The device and buffer each driver was asked for; None is not looked at.
+    asked: Option<&'static [(&'static str, Option<u32>)]>,
+}
+
+fn as_they_are(_: &mut Drivers) {}
+
+fn no_exclusive_mode(d: &mut Drivers) {
+    d.exclusive_out = None;
+    d.exclusive_in = None;
+}
+
+/// "Interface" is gone: there are a speaker without inputs and a headset with one.
+fn unplugged(d: &mut Drivers) {
+    let device = |name: &str, inputs: usize| xirius_engine::devices::Device {
+        name: name.into(),
+        inputs: (1..=inputs).map(|i| format!("In {i}")).collect(),
+        outputs: vec!["Out 1".into(), "Out 2".into()],
+    };
+    let now = vec![device("Speakers", 0), device("Headset", 1)];
+    d.devices = Arc::new(move || now.clone());
+}
+
+/// Whether the song runs once the host plays.
+fn plays(host: &mut SessionHost) -> bool {
+    if !host.play() {
+        return false;
+    }
     for _ in 0..200 {
         std::thread::sleep(std::time::Duration::from_millis(10));
         if host.poll().frame > 0 {
-            moved = true;
-            break;
+            return true;
         }
     }
-    assert!(moved, "the engine runs on the output it fell back to");
-    drop(out);
+    false
 }
 
 #[test]
-fn an_output_that_loses_the_engine_is_an_error_not_a_fall_back() {
-    let calls = Arc::new(Calls::default());
-    let (_host, audio) = engine();
-    let r = Output::open(
-        OutputMode::Device,
-        audio,
-        &prefs("wasapi-exclusive"),
-        &drivers(&calls, false, false),
-    );
-    let Err(e) = r else {
-        panic!("nothing to fall back with")
-    };
-    assert!(e.contains("0x88890008"), "{e}");
-    assert_eq!(calls.shared.load(Ordering::SeqCst), 0);
-}
-
-#[test]
-fn the_shared_driver_never_tries_exclusive() {
-    let calls = Arc::new(Calls::default());
-    let (_host, audio) = engine();
-    let opened = Output::open(
-        OutputMode::Device,
-        audio,
-        &prefs("wasapi-shared"),
-        &drivers(&calls, true, true),
-    )
-    .unwrap();
-    assert!(opened.output.is_some() && opened.notice.is_none());
-    assert_eq!(calls.exclusive.load(Ordering::SeqCst), 0);
-    assert_eq!(calls.shared.load(Ordering::SeqCst), 1);
-    // The Windows audio engine sets the buffer in shared mode: none is asked for.
-    assert_eq!(
-        calls.asked.lock().unwrap().as_slice(),
-        [("Interface".to_string(), None)]
-    );
-    let (_input, _) = open_input(48_000, &prefs("wasapi-shared"), "Interface".into(), &{
-        let mut d = drivers(&calls, true, true);
-        d.shared_in = Arc::new(|_, _, buffer| {
-            assert_eq!(buffer, None, "the shared input asks for no buffer");
-            Ok(mock_input(false))
-        });
-        d
-    })
-    .unwrap();
+fn every_device_opens_with_the_driver_asked_for_or_falls_back_to_shared_in_one_line() {
+    let rows = [
+        OpenRow {
+            name: "an output that opens exclusively is used with nothing to say",
+            open: Open::Device,
+            driver: "wasapi-exclusive",
+            opens: true,
+            keeps: true,
+            change: as_they_are,
+            notice: None,
+            error: None,
+            exclusive_input: None,
+            exclusive: 1,
+            shared: 0,
+            // The device and the buffer of the settings.
+            asked: Some(&[("Interface", Some(64))]),
+        },
+        OpenRow {
+            // The engine that came back plays: the song runs on the shared output.
+            name: "an output that will not open exclusively falls back to shared in one line",
+            open: Open::Device,
+            driver: "wasapi-exclusive",
+            opens: false,
+            keeps: true,
+            change: as_they_are,
+            notice: Some(&["排他", "共有", "0x88890008"]),
+            error: None,
+            exclusive_input: None,
+            exclusive: 1,
+            shared: 1,
+            asked: None,
+        },
+        OpenRow {
+            name: "an output that loses the engine is an error, not a fall back",
+            open: Open::Device,
+            driver: "wasapi-exclusive",
+            opens: false,
+            keeps: false,
+            change: as_they_are,
+            notice: None,
+            error: Some("0x88890008"),
+            exclusive_input: None,
+            exclusive: 1,
+            shared: 0,
+            asked: None,
+        },
+        OpenRow {
+            // The Windows audio engine sets the buffer in shared mode: none is asked for.
+            name: "the shared driver never tries exclusive for the output",
+            open: Open::Device,
+            driver: "wasapi-shared",
+            opens: true,
+            keeps: true,
+            change: as_they_are,
+            notice: None,
+            error: None,
+            exclusive_input: None,
+            exclusive: 0,
+            shared: 1,
+            asked: Some(&[("Interface", None)]),
+        },
+        OpenRow {
+            name: "where there is no exclusive mode the output is shared without a word",
+            open: Open::Device,
+            driver: "wasapi-exclusive",
+            opens: true,
+            keeps: true,
+            change: no_exclusive_mode,
+            notice: None,
+            error: None,
+            exclusive_input: None,
+            exclusive: 0,
+            shared: 1,
+            asked: None,
+        },
+        OpenRow {
+            name: "a silent output ignores the driver",
+            open: Open::Silent,
+            driver: "wasapi-exclusive",
+            opens: true,
+            keeps: true,
+            change: as_they_are,
+            notice: None,
+            error: None,
+            exclusive_input: None,
+            exclusive: 0,
+            shared: 0,
+            asked: None,
+        },
+        OpenRow {
+            name: "an unplugged device is chosen again: the one with inputs and outputs",
+            open: Open::Device,
+            driver: "wasapi-exclusive",
+            opens: true,
+            keeps: true,
+            change: unplugged,
+            notice: None,
+            error: None,
+            exclusive_input: None,
+            exclusive: 1,
+            shared: 0,
+            asked: Some(&[("Headset", Some(64))]),
+        },
+        OpenRow {
+            name: "an input that opens exclusively is used with nothing to say",
+            open: Open::Input("Interface"),
+            driver: "wasapi-exclusive",
+            opens: true,
+            keeps: true,
+            change: as_they_are,
+            notice: None,
+            error: None,
+            exclusive_input: Some(true),
+            exclusive: 1,
+            shared: 0,
+            asked: Some(&[("Interface", Some(64))]),
+        },
+        OpenRow {
+            name: "an input that will not open exclusively falls back to shared in one line",
+            open: Open::Input("Interface"),
+            driver: "wasapi-exclusive",
+            opens: false,
+            keeps: true,
+            change: as_they_are,
+            notice: Some(&["入力", "共有"]),
+            error: None,
+            exclusive_input: Some(false),
+            exclusive: 1,
+            shared: 1,
+            asked: None,
+        },
+        OpenRow {
+            name: "the shared driver never tries exclusive for the input and asks for no buffer",
+            open: Open::Input("Interface"),
+            driver: "wasapi-shared",
+            opens: true,
+            keeps: true,
+            change: as_they_are,
+            notice: None,
+            error: None,
+            exclusive_input: Some(false),
+            exclusive: 0,
+            shared: 1,
+            asked: Some(&[("Interface", None)]),
+        },
+        OpenRow {
+            name: "where there is no exclusive mode the input is shared without a word",
+            open: Open::Input(""),
+            driver: "wasapi-exclusive",
+            opens: true,
+            keeps: true,
+            change: no_exclusive_mode,
+            notice: None,
+            error: None,
+            exclusive_input: Some(false),
+            exclusive: 0,
+            shared: 1,
+            asked: None,
+        },
+    ];
+    let mut failures = Vec::new();
+    for r in &rows {
+        let mut fail = |what: String| failures.push(format!("{}: {what}", r.name));
+        let calls = Arc::new(Calls::default());
+        let mut d = drivers(&calls, r.opens, r.keeps);
+        (r.change)(&mut d);
+        let p = prefs(r.driver);
+        let (notice, error) = match r.open {
+            Open::Input(device) => match open_input(48_000, &p, device.into(), &d) {
+                Ok((input, notice)) => {
+                    if Some(input.exclusive) != r.exclusive_input {
+                        fail(format!("the input opened exclusive = {}", input.exclusive));
+                    }
+                    (notice, None)
+                }
+                Err(e) => (None, Some(e)),
+            },
+            Open::Device | Open::Silent => {
+                let (mut host, audio) = engine();
+                let silent = matches!(r.open, Open::Silent);
+                let mode = if silent {
+                    OutputMode::Silent { paced: false }
+                } else {
+                    OutputMode::Device
+                };
+                match Output::open(mode, audio, &p, &d) {
+                    Ok(opened) => {
+                        match &opened.output {
+                            None => fail("no output".into()),
+                            Some(out) if silent && !matches!(out, Output::Silent(_)) => {
+                                fail("not the silent output".into())
+                            }
+                            // The engine runs on the output it opened.
+                            Some(_) if !plays(&mut host) => {
+                                fail("the song does not run on the output".into())
+                            }
+                            Some(_) => {}
+                        }
+                        (opened.notice, None)
+                    }
+                    Err(e) => (None, Some(e)),
+                }
+            }
+        };
+        match (r.notice, &notice) {
+            (None, None) => {}
+            (Some(words), Some(n))
+                if !n.contains('\n')
+                    && !n.contains("詳しい説明")
+                    && words.iter().all(|w| n.contains(w)) => {}
+            _ => fail(format!(
+                "notice {notice:?}, want one line with {:?}",
+                r.notice
+            )),
+        }
+        match (r.error, &error) {
+            (None, None) => {}
+            (Some(w), Some(e)) if e.contains(w) => {}
+            _ => fail(format!("error {error:?}, want {:?}", r.error)),
+        }
+        let counts = (
+            calls.exclusive.load(Ordering::SeqCst),
+            calls.shared.load(Ordering::SeqCst),
+        );
+        if counts != (r.exclusive, r.shared) {
+            fail(format!(
+                "exclusive and shared tried {counts:?}, want {:?}",
+                (r.exclusive, r.shared)
+            ));
+        }
+        if let Some(want) = r.asked {
+            let asked = calls.asked.lock().unwrap().clone();
+            let want: Vec<_> = want.iter().map(|(d, b)| (d.to_string(), *b)).collect();
+            if asked != want {
+                fail(format!("asked {asked:?}, want {want:?}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "opening the devices: {failures:#?}");
 }
 
 #[test]
@@ -282,70 +480,6 @@ fn an_output_says_when_its_device_stopped_by_itself() {
     lost.set("the device was unplugged".into());
     lost.set("a later error".into());
     assert_eq!(out.lost().as_deref(), Some("the device was unplugged"));
-}
-
-#[test]
-fn where_there_is_no_exclusive_mode_shared_is_used_without_a_word() {
-    let calls = Arc::new(Calls::default());
-    let (_host, audio) = engine();
-    let mut d = drivers(&calls, true, true);
-    d.exclusive_out = None;
-    d.exclusive_in = None;
-    let opened = Output::open(OutputMode::Device, audio, &prefs("wasapi-exclusive"), &d).unwrap();
-    assert!(opened.output.is_some());
-    assert_eq!(opened.notice, None);
-    let (input, notice) =
-        open_input(48_000, &prefs("wasapi-exclusive"), String::new(), &d).unwrap();
-    assert!(!input.exclusive);
-    assert_eq!(notice, None);
-}
-
-#[test]
-fn a_silent_output_ignores_the_driver() {
-    let calls = Arc::new(Calls::default());
-    let (_host, audio) = engine();
-    let opened = Output::open(
-        OutputMode::Silent { paced: false },
-        audio,
-        &prefs("wasapi-exclusive"),
-        &drivers(&calls, true, true),
-    )
-    .unwrap();
-    assert!(matches!(opened.output, Some(Output::Silent(_))));
-    assert_eq!(calls.exclusive.load(Ordering::SeqCst), 0);
-}
-
-#[test]
-fn the_input_follows_the_driver_and_falls_back_with_a_line() {
-    // Opens exclusively.
-    let calls = Arc::new(Calls::default());
-    let d = drivers(&calls, true, true);
-    let (input, notice) =
-        open_input(48_000, &prefs("wasapi-exclusive"), "Interface".into(), &d).unwrap();
-    assert!(input.exclusive && notice.is_none());
-    assert_eq!(calls.shared.load(Ordering::SeqCst), 0);
-
-    // Will not: shared, and the line.
-    let calls = Arc::new(Calls::default());
-    let d = drivers(&calls, false, true);
-    let (input, notice) =
-        open_input(48_000, &prefs("wasapi-exclusive"), "Interface".into(), &d).unwrap();
-    assert!(!input.exclusive);
-    let notice = notice.expect("said");
-    assert!(
-        notice.contains("入力") && notice.contains("共有"),
-        "{notice}"
-    );
-    assert!(!notice.contains('\n'));
-    assert_eq!(calls.shared.load(Ordering::SeqCst), 1);
-
-    // Shared asked for: exclusive is not tried.
-    let calls = Arc::new(Calls::default());
-    let d = drivers(&calls, true, true);
-    let (input, notice) =
-        open_input(48_000, &prefs("wasapi-shared"), "Interface".into(), &d).unwrap();
-    assert!(!input.exclusive && notice.is_none());
-    assert_eq!(calls.exclusive.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -392,27 +526,6 @@ fn a_watched_input_opened_exclusively_measures_levels_like_any_other() {
     assert!(
         levels[0] > 0.3,
         "the sine of the stand-in is measured: {levels:?}"
-    );
-}
-
-#[test]
-fn an_unplugged_device_is_chosen_again_for_the_output() {
-    let calls = Arc::new(Calls::default());
-    let (_host, audio) = engine();
-    let mut d = drivers(&calls, true, true);
-    let device = |name: &str, inputs: usize| xirius_engine::devices::Device {
-        name: name.into(),
-        inputs: (1..=inputs).map(|i| format!("In {i}")).collect(),
-        outputs: vec!["Out 1".into(), "Out 2".into()],
-    };
-    let now = vec![device("Speakers", 0), device("Headset", 1)];
-    d.devices = Arc::new(move || now.clone());
-    let opened = Output::open(OutputMode::Device, audio, &prefs("wasapi-exclusive"), &d).unwrap();
-    assert!(opened.output.is_some());
-    assert_eq!(
-        calls.asked.lock().unwrap().as_slice(),
-        [("Headset".to_string(), Some(64))],
-        "\"Interface\" is gone: the one with inputs and outputs"
     );
 }
 

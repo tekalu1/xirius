@@ -612,98 +612,36 @@ fn key_012_keep_none_starts_over_from_the_preset_and_keep_mine_is_the_default() 
     assert_eq!(again.lock().unwrap().keymap.preset, "ableton");
 }
 
-#[test]
-fn key_012_no_preset_takes_the_main_keys_of_the_arrange_and_adds_no_conflict() {
-    let shared = Settings::memory().shared();
-    let mut s = session(&shared);
-    let h = RunOptions::human();
-    let key = |c: &str| Chord::parse(c, Os::Win).unwrap();
-    let base = {
-        let g = shared.lock().unwrap();
-        g.keymap.conflicts(Os::Win).len()
-    };
-    for name in ["studio-pro", "cubase", "logic", "ableton", "reaper"] {
-        s.run_value("keymap.preset", json!({"name": name, "keep": "none"}), &h)
-            .unwrap();
-        let g = shared.lock().unwrap();
-        // Collapse the track list, insert time and delete time stay where they are.
-        assert_eq!(
-            g.keymap.lookup("arrange", &key("Mod+Shift+L")).unwrap().1,
-            "view.tracklist.collapse",
-            "{name}"
-        );
-        assert_eq!(
-            g.keymap.lookup("arrange", &key("Mod+Alt+I")).unwrap().1,
-            "range.time.insert",
-            "{name}"
-        );
-        assert_eq!(
-            g.keymap.lookup("arrange", &key("Mod+Alt+D")).unwrap().1,
-            "range.time.delete",
-            "{name}"
-        );
-        // And the preset does not leave more clashes than Studio Pro has.
-        assert!(
-            g.keymap.conflicts(Os::Win).len() <= base,
-            "{name}: {:?}",
-            g.keymap.conflicts(Os::Win)
-        );
-    }
-}
+/// The keys every preset keeps (KEY-012, EDT-135): (context, key, command).
+const IN_EVERY_PRESET: &[(&str, &str, &str)] = &[
+    // Collapse the track list, insert time and delete time stay where they are.
+    ("arrange", "Mod+Shift+L", "view.tracklist.collapse"),
+    ("arrange", "Mod+Alt+I", "range.time.insert"),
+    ("arrange", "Mod+Alt+D", "range.time.delete"),
+    ("mixer", "]", "mixer.channel.next"),
+    ("mixer", "[", "mixer.channel.prev"),
+    ("global", "Alt+PageDown", "plugin.preset.next"),
+    ("global", "Alt+PageUp", "plugin.preset.prev"),
+    // The arrows stay the selection's.
+    ("arrange", "Right", "select.step --dir right"),
+    // The ripple switch.
+    ("arrange", "Ctrl+Alt+R", "edit.ripple"),
+];
 
-#[test]
-fn key_012_next_and_previous_channel_and_preset_have_keys_in_every_preset() {
-    let shared = Settings::memory().shared();
-    let mut s = session(&shared);
-    let h = RunOptions::human();
-    let key = |c: &str| Chord::parse(c, Os::Win).unwrap();
-    for name in ["studio-pro", "cubase", "logic", "ableton", "reaper"] {
-        s.run_value("keymap.preset", json!({"name": name, "keep": "none"}), &h)
-            .unwrap();
-        let g = shared.lock().unwrap();
-        let at = |ctx: &str, k: &str| g.keymap.lookup(ctx, &key(k)).map(|b| b.1);
-        assert_eq!(
-            at("mixer", "]").as_deref(),
-            Some("mixer.channel.next"),
-            "{name}"
-        );
-        assert_eq!(
-            at("mixer", "[").as_deref(),
-            Some("mixer.channel.prev"),
-            "{name}"
-        );
-        assert_eq!(
-            at("global", "Alt+PageDown").as_deref(),
-            Some("plugin.preset.next"),
-            "{name}"
-        );
-        assert_eq!(
-            at("global", "Alt+PageUp").as_deref(),
-            Some("plugin.preset.prev"),
-            "{name}"
-        );
-        // The arrows stay the selection's.
-        assert_eq!(
-            at("arrange", "Right").as_deref(),
-            Some("select.step --dir right"),
-            "{name}"
-        );
-    }
-    // A Studio Pro key scheme brings its own keys for the four.
-    for (category, row, ctx, command) in [
-        ("Console", "Next Channel", "mixer", "mixer.channel.next"),
-        ("Console", "Previous Channel", "mixer", "mixer.channel.prev"),
-        ("Presets", "Next", "global", "plugin.preset.next"),
-        ("Presets", "Previous", "global", "plugin.preset.prev"),
-    ] {
-        assert_eq!(
-            xirius_prefs::import::targets(category, row),
-            vec![(ctx.to_string(), command.to_string())]
-        );
-    }
-    // Toggle Size stays without a command.
-    assert!(xirius_prefs::import::targets("Console", "Toggle Size").is_empty());
-}
+/// Where a preset's own list puts a key of the two lists elsewhere: (preset, context, key) of
+/// the list, then the (context, key, command) the preset has instead.
+const OWN: &[(&str, &str, &str, &str, &str, &str)] = &[
+    ("logic", "global", "Mod+T", "arrange", "Mod+T", "clip.split"),
+    ("ableton", "global", "F9", "global", "F9", "record.start"),
+    (
+        "reaper",
+        "arrange",
+        "Ctrl+Alt+R",
+        "arrange",
+        "Alt+P",
+        "edit.ripple",
+    ),
+];
 
 /// The keys KEY-012 adds for the rest of the Studio Pro table: (context, key, command).
 const REST: &[(&str, &str, &str)] = &[
@@ -745,30 +683,34 @@ const REST: &[(&str, &str, &str)] = &[
 ];
 
 #[test]
-fn key_012_the_rest_of_the_studio_pro_table_has_its_keys_in_every_preset() {
+fn every_preset_has_the_keys_of_both_lists_and_adds_no_conflict() {
     let shared = Settings::memory().shared();
     let mut s = session(&shared);
     let h = RunOptions::human();
     let key = |c: &str| Chord::parse(c, Os::Win).unwrap();
+    let base = shared.lock().unwrap().keymap.conflicts(Os::Win).len();
+    let mut failures = Vec::new();
     for name in ["studio-pro", "cubase", "logic", "ableton", "reaper"] {
         s.run_value("keymap.preset", json!({"name": name, "keep": "none"}), &h)
             .unwrap();
         let g = shared.lock().unwrap();
-        for (ctx, k, command) in REST {
-            // Where the preset's own list gives the key to something else.
-            let want = match (name, *k) {
-                ("logic", "Mod+T") => "clip.split",
-                ("ableton", "F9") => "record.start",
-                _ => command,
-            };
-            let ctx = if want == "clip.split" { "arrange" } else { ctx };
-            assert_eq!(
-                g.keymap.lookup(ctx, &key(k)).map(|b| b.1).as_deref(),
-                Some(want),
-                "{name} {ctx} {k}"
-            );
+        for &(ctx, k, command) in IN_EVERY_PRESET.iter().chain(REST) {
+            let (ctx, k, want) = OWN
+                .iter()
+                .find(|o| (o.0, o.1, o.2) == (name, ctx, k))
+                .map_or((ctx, k, command), |o| (o.3, o.4, o.5));
+            let got = g.keymap.lookup(ctx, &key(k)).map(|b| b.1);
+            if got.as_deref() != Some(want) {
+                failures.push(format!("{name}: {ctx} {k} is {got:?}, want {want}"));
+            }
+        }
+        // The preset does not leave more clashes than Studio Pro has.
+        let clashes = g.keymap.conflicts(Os::Win);
+        if clashes.len() > base {
+            failures.push(format!("{name}: more clashes than Studio Pro: {clashes:?}"));
         }
     }
+    assert!(failures.is_empty(), "keys of the presets: {failures:#?}");
 }
 
 #[test]
@@ -811,6 +753,20 @@ fn key_012_every_studio_pro_row_has_a_command_of_this_app() {
         xirius_prefs::import::targets("Transport", "Start"),
         [("global".to_string(), "transport.start".to_string())]
     );
+    // A Studio Pro key scheme brings its own keys for the next and previous channel and preset.
+    for (category, row, ctx, command) in [
+        ("Console", "Next Channel", "mixer", "mixer.channel.next"),
+        ("Console", "Previous Channel", "mixer", "mixer.channel.prev"),
+        ("Presets", "Next", "global", "plugin.preset.next"),
+        ("Presets", "Previous", "global", "plugin.preset.prev"),
+    ] {
+        assert_eq!(
+            xirius_prefs::import::targets(category, row),
+            vec![(ctx.to_string(), command.to_string())]
+        );
+    }
+    // Toggle Size stays without a command.
+    assert!(xirius_prefs::import::targets("Console", "Toggle Size").is_empty());
 }
 
 /// Two clips back to back with a gap of 480 on one track; gives the session, the track and
@@ -1110,28 +1066,4 @@ fn edt_139_recording_is_outside_the_overlap_settings_and_ripple_goes_with_them()
     assert_eq!(s.steps().len(), steps + 1);
     s.undo(1).unwrap();
     assert_eq!(spans(&s), [(0, 3840), (0, 3840), (0, 3840), (3840, 960)]);
-}
-
-#[test]
-fn edt_135_the_ripple_switch_has_its_key_in_every_preset() {
-    let shared = Settings::memory().shared();
-    let mut s = session(&shared);
-    let h = RunOptions::human();
-    let key = |c: &str| Chord::parse(c, Os::Win).unwrap();
-    for (name, k) in [
-        ("studio-pro", "Ctrl+Alt+R"),
-        ("cubase", "Ctrl+Alt+R"),
-        ("logic", "Ctrl+Alt+R"),
-        ("ableton", "Ctrl+Alt+R"),
-        ("reaper", "Alt+P"),
-    ] {
-        s.run_value("keymap.preset", json!({"name": name, "keep": "none"}), &h)
-            .unwrap();
-        let g = shared.lock().unwrap();
-        assert_eq!(
-            g.keymap.lookup("arrange", &key(k)).map(|b| b.1).as_deref(),
-            Some("edit.ripple"),
-            "{name} {k}"
-        );
-    }
 }
