@@ -479,49 +479,183 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn four_four_at_sixteen_px_a_beat_shows_bars_beats_and_eighths() {
-        // The arrangement's default: 16 px a beat, the auto step 1/8 beat (2 px) ... 1/2 (8 px).
-        let m = plain(16.0);
-        let l = lines(&Snap::default(), &m, 0, 3840 * 2);
-        assert_eq!(tier(&l, GridTier::Bar), [0, 3840, 7680]);
-        assert_eq!(
-            tier(&l, GridTier::Beat),
-            [960, 1920, 2880, 4800, 5760, 6720]
-        );
-        // The auto step is 1/2 beat (8 px): it is the split, so no finer line.
-        assert_eq!(tier(&l, GridTier::Sub).len(), 8);
-        assert!(tier(&l, GridTier::Fine).is_empty());
-        let sub = l.iter().find(|l| l.tier == GridTier::Sub).unwrap();
-        assert!((sub.fade - 0.4).abs() < 1e-6, "{}", sub.fade);
+    /// What one tier of a row holds: these ticks, or this many lines.
+    enum Want {
+        Ticks(&'static [Tick]),
+        Count(usize),
     }
 
+    /// Each meter, zoom and grid puts its lines on the right tiers; the view bounds them.
     #[test]
-    fn beats_show_from_six_px_and_are_never_thinned() {
-        let m = plain(5.9);
-        let l = lines(&quantize(240), &m, 0, 3840 * 4);
-        assert!(tier(&l, GridTier::Beat).is_empty());
-        assert_eq!(tier(&l, GridTier::Bar).len(), 5);
-        let l = lines(&quantize(240), &plain(6.0), 0, 3840);
-        assert_eq!(tier(&l, GridTier::Beat), [960, 1920, 2880]);
-        // Even a bar's grid shows the beats, and nothing finer.
-        let bar = Snap {
+    fn each_meter_and_grid_puts_its_lines_on_the_right_tiers() {
+        use GridTier::{Bar, Beat, Fine, Sub};
+        use Want::{Count, Ticks};
+        let bar_grid = Snap {
             mode: SnapMode::Bar,
             ..Snap::default()
         };
-        let l = lines(&bar, &plain(200.0), 0, 3840);
-        assert_eq!(tier(&l, GridTier::Beat), [960, 1920, 2880]);
-        assert!(tier(&l, GridTier::Sub).is_empty() && tier(&l, GridTier::Fine).is_empty());
-    }
-
-    #[test]
-    fn lines_finer_than_the_snap_never_show() {
-        // 1/4 at 400 px a beat: the halves would be 200 px apart, but the snap is the beat.
-        let l = lines(&quantize(960), &plain(400.0), 0, 3840);
-        assert!(tier(&l, GridTier::Sub).is_empty() && tier(&l, GridTier::Fine).is_empty());
-        let l = lines(&quantize(480), &plain(400.0), 0, 3840);
-        assert_eq!(tier(&l, GridTier::Sub).len(), 4);
-        assert!(tier(&l, GridTier::Fine).is_empty());
+        let auto_triplet = Snap {
+            triplet: true,
+            ..Snap::default()
+        };
+        let four_then_six_eight = Meter {
+            time: TimeMap::new(
+                PPQ,
+                &[(1, Sig { num: 4, den: 4 }), (2, Sig { num: 6, den: 8 })],
+            )
+            .into(),
+            ..plain(48.0)
+        };
+        let rows: Vec<(&str, Snap, Meter, (Tick, Tick), Vec<(GridTier, Want)>)> = vec![
+            (
+                // The auto step is 1/2 beat (8 px): it is the split, so no finer line.
+                "4/4 at 16 px a beat shows bars, beats and eighths",
+                Snap::default(),
+                plain(16.0),
+                (0, 3840 * 2),
+                vec![
+                    (Bar, Ticks(&[0, 3840, 7680])),
+                    (Beat, Ticks(&[960, 1920, 2880, 4800, 5760, 6720])),
+                    (Sub, Count(8)),
+                    (Fine, Ticks(&[])),
+                ],
+            ),
+            (
+                "beats under 6 px do not show",
+                quantize(240),
+                plain(5.9),
+                (0, 3840 * 4),
+                vec![(Beat, Ticks(&[])), (Bar, Count(5))],
+            ),
+            (
+                "beats show from 6 px",
+                quantize(240),
+                plain(6.0),
+                (0, 3840),
+                vec![(Beat, Ticks(&[960, 1920, 2880]))],
+            ),
+            (
+                "a bar's grid shows the beats and nothing finer",
+                bar_grid,
+                plain(200.0),
+                (0, 3840),
+                vec![
+                    (Beat, Ticks(&[960, 1920, 2880])),
+                    (Sub, Ticks(&[])),
+                    (Fine, Ticks(&[])),
+                ],
+            ),
+            (
+                // The halves would be 200 px apart, but the snap is the beat.
+                "nothing finer than a 1/4 grid at 400 px a beat",
+                quantize(960),
+                plain(400.0),
+                (0, 3840),
+                vec![(Sub, Ticks(&[])), (Fine, Ticks(&[]))],
+            ),
+            (
+                "a 1/8 grid at 400 px a beat shows its splits and nothing finer",
+                quantize(480),
+                plain(400.0),
+                (0, 3840),
+                vec![(Sub, Count(4)), (Fine, Ticks(&[]))],
+            ),
+            (
+                "3/4 has quarter beats and eighth splits",
+                quantize(240),
+                at(&sig(3, 4), 48.0),
+                (0, 2880),
+                vec![
+                    (Bar, Ticks(&[0, 2880])),
+                    (Beat, Ticks(&[960, 1920])),
+                    (Sub, Ticks(&[480, 1440, 2400])),
+                    (Fine, Count(6)),
+                ],
+            ),
+            (
+                // 1/16 is finer than the eighth: it is the fine tier.
+                "6/8 beats on the dotted quarter and splits in three eighths",
+                quantize(240),
+                at(&sig(6, 8), 48.0),
+                (0, 2880),
+                vec![
+                    (Bar, Ticks(&[0, 2880])),
+                    (Beat, Ticks(&[1440])),
+                    (Sub, Ticks(&[480, 960, 1920, 2400])),
+                    (Fine, Count(6)),
+                ],
+            ),
+            (
+                "6/8 with a 1/4 grid draws the quarters itself",
+                quantize(960),
+                at(&sig(6, 8), 48.0),
+                (0, 2880),
+                vec![(Fine, Ticks(&[960, 1920])), (Beat, Ticks(&[1440]))],
+            ),
+            (
+                "6/8 with a 1/2 grid draws the half itself",
+                quantize(1920),
+                at(&sig(6, 8), 48.0),
+                (0, 2880),
+                vec![(Fine, Ticks(&[1920]))],
+            ),
+            (
+                "a triplet grid splits the beat in three",
+                quantize_t(160),
+                plain(96.0),
+                (0, 960),
+                vec![(Sub, Ticks(&[320, 640])), (Fine, Ticks(&[160, 480, 800]))],
+            ),
+            (
+                "the same value in the auto mode is not a triplet",
+                auto_triplet,
+                plain(96.0),
+                (0, 960),
+                vec![(Sub, Ticks(&[480]))],
+            ),
+            (
+                "a meter change restarts the beats at its bar",
+                quantize(480),
+                four_then_six_eight,
+                (3840, 3840 + 2880),
+                vec![(Bar, Ticks(&[3840, 6720])), (Beat, Ticks(&[3840 + 1440]))],
+            ),
+            (
+                "the view bounds the lines",
+                quantize(240),
+                plain(48.0),
+                (1000, 2000),
+                vec![
+                    (Bar, Ticks(&[])),
+                    (Beat, Ticks(&[1920])),
+                    (Sub, Ticks(&[1440])),
+                    (Fine, Ticks(&[1200, 1680])),
+                ],
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (name, snap, m, (from, to), want) in rows {
+            let l = lines(&snap, &m, from, to);
+            for (t, want) in want {
+                let got = tier(&l, t);
+                let ok = match want {
+                    Ticks(ticks) => got == ticks,
+                    Count(n) => got.len() == n,
+                };
+                if !ok {
+                    failures.push(format!("{name}: {t:?} has {got:?}"));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+        // A split fades in where it first shows.
+        let l = lines(&Snap::default(), &plain(16.0), 0, 3840);
+        let sub = l.iter().find(|l| l.tier == GridTier::Sub).unwrap();
+        assert!((sub.fade - 0.4).abs() < 1e-6, "{}", sub.fade);
+        // 3/8 keeps an eighth beat; 12/8 is compound and 6/4 is not.
+        assert!(!compound(Sig { num: 3, den: 8 }));
+        assert!(compound(Sig { num: 12, den: 8 }));
+        assert!(!compound(Sig { num: 6, den: 4 }));
     }
 
     #[test]
@@ -568,31 +702,6 @@ mod tests {
     }
 
     #[test]
-    fn three_four_has_quarter_beats_and_eighth_splits() {
-        let m = at(&sig(3, 4), 48.0);
-        let l = lines(&quantize(240), &m, 0, 2880);
-        assert_eq!(tier(&l, GridTier::Bar), [0, 2880]);
-        assert_eq!(tier(&l, GridTier::Beat), [960, 1920]);
-        assert_eq!(tier(&l, GridTier::Sub), [480, 1440, 2400]);
-        assert_eq!(tier(&l, GridTier::Fine).len(), 6);
-    }
-
-    #[test]
-    fn six_eight_beats_on_the_dotted_quarter_and_splits_in_three_eighths() {
-        let m = at(&sig(6, 8), 48.0);
-        let l = lines(&quantize(240), &m, 0, 2880);
-        assert_eq!(tier(&l, GridTier::Bar), [0, 2880]);
-        assert_eq!(tier(&l, GridTier::Beat), [1440]);
-        assert_eq!(tier(&l, GridTier::Sub), [480, 960, 1920, 2400]);
-        // 1/16 is finer than the eighth: it is the fine tier.
-        assert_eq!(tier(&l, GridTier::Fine).len(), 6);
-        // 3/8 keeps an eighth beat.
-        assert!(!compound(Sig { num: 3, den: 8 }));
-        assert!(compound(Sig { num: 12, den: 8 }));
-        assert!(!compound(Sig { num: 6, den: 4 }));
-    }
-
-    #[test]
     fn seven_eight_beats_on_eighths_and_a_triplet_grid_starts_each_bar_again() {
         // 7/8: a bar of 3360 ticks, eighth beats, 16th splits.
         let m = at(&sig(7, 8), 96.0);
@@ -619,26 +728,6 @@ mod tests {
         let l = lines(&t, &m, 3360, 3360 * 2);
         let sub = tier(&l, GridTier::Sub);
         assert_eq!(&sub[..4], [3360 + 160, 3360 + 320, 3360 + 640, 3360 + 800]);
-    }
-
-    #[test]
-    fn a_triplet_grid_splits_the_beat_in_three() {
-        let t = Snap {
-            triplet: true,
-            ..quantize(160)
-        };
-        let l = lines(&t, &plain(96.0), 0, 960);
-        assert_eq!(tier(&l, GridTier::Sub), [320, 640]);
-        assert_eq!(tier(&l, GridTier::Fine), [160, 480, 800]);
-        // The same value chosen in the auto mode is not a triplet.
-        let auto = Snap {
-            triplet: true,
-            ..Snap::default()
-        };
-        assert_eq!(
-            tier(&lines(&auto, &plain(96.0), 0, 960), GridTier::Sub),
-            [480]
-        );
     }
 
     #[test]
@@ -673,21 +762,6 @@ mod tests {
     }
 
     #[test]
-    fn a_meter_change_restarts_the_beats_at_its_bar() {
-        let m = Meter {
-            time: TimeMap::new(
-                PPQ,
-                &[(1, Sig { num: 4, den: 4 }), (2, Sig { num: 6, den: 8 })],
-            )
-            .into(),
-            ..plain(48.0)
-        };
-        let l = lines(&quantize(480), &m, 3840, 3840 + 2880);
-        assert_eq!(tier(&l, GridTier::Bar), [3840, 3840 + 2880]);
-        assert_eq!(tier(&l, GridTier::Beat), [3840 + 1440]);
-    }
-
-    #[test]
     fn the_button_adds_what_the_lines_show_only_when_it_is_coarser_than_the_snap() {
         let t = |grid| Snap {
             triplet: true,
@@ -703,6 +777,11 @@ mod tests {
         // The snap's own value shows: nothing is added.
         assert_eq!(visible(&quantize(240), &plain(48.0), 0), None);
         assert_eq!(visible(&quantize(60), &plain(128.0), 0), None);
+        // 6/8's quarter and half grids draw their own lines.
+        let six_eight = at(&sig(6, 8), 48.0);
+        assert_eq!(visible(&quantize(960), &six_eight, 0), None);
+        assert_eq!(visible(&quantize(960), &at(&six_eight, 24.0), 0), None);
+        assert_eq!(visible(&quantize(1920), &six_eight, 0), None);
         // A bar's grid and frames add nothing.
         assert_eq!(visible(&quantize(960), &plain(2.0), 0), Some(3840.0));
         let mode = |mode| Snap {
@@ -780,19 +859,6 @@ mod tests {
         assert_eq!(tier(&l, GridTier::Fine), [1280, 2560]);
         assert_eq!(visible(&quantize_t(1280), &m, 0), None);
         assert_eq!(visible(&quantize_t(2560), &m, 0), None);
-    }
-
-    #[test]
-    fn six_eight_quarter_and_half_grids_draw_their_own_lines() {
-        let m = at(&sig(6, 8), 48.0);
-        let l = lines(&quantize(960), &m, 0, 2880);
-        assert_eq!(tier(&l, GridTier::Fine), [960, 1920]);
-        assert_eq!(tier(&l, GridTier::Beat), [1440]);
-        assert_eq!(visible(&quantize(960), &m, 0), None);
-        assert_eq!(visible(&quantize(960), &at(&m, 24.0), 0), None);
-        let l = lines(&quantize(1920), &m, 0, 2880);
-        assert_eq!(tier(&l, GridTier::Fine), [1920]);
-        assert_eq!(visible(&quantize(1920), &m, 0), None);
     }
 
     #[test]
@@ -923,12 +989,5 @@ mod tests {
         let under = under_times(&l);
         assert!(under.iter().all(|l| l.tier != GridTier::Fine));
         assert_eq!(under.len(), l.len());
-    }
-
-    #[test]
-    fn the_view_bounds_the_lines() {
-        let l = lines(&quantize(240), &plain(48.0), 1000, 2000);
-        assert!(l.iter().all(|l| (1000..=2000).contains(&l.tick)));
-        assert_eq!(l.first().map(|l| l.tick), Some(1200));
     }
 }

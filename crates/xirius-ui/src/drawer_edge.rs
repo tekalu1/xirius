@@ -291,43 +291,17 @@ mod tests {
         assert!(s.edge_up());
     }
 
-    #[test]
-    fn dragging_the_edge_up_makes_the_drawer_taller_and_the_rows_shorter() {
-        let mut s = studio();
-        let before = s.geometry(W, H);
-        assert_eq!(before.drawer.h, Layout::DRAWER_H);
-        drag(&mut s, -100.0);
-        let after = s.geometry(W, H);
-        assert_eq!(after.drawer.h, Layout::DRAWER_H + 100.0);
-        assert_eq!(after.lanes.h, before.lanes.h - 100.0);
-        assert_eq!(after.drawer_body.h, before.drawer_body.h + 100.0);
-        // The roll gets the room.
-        let roll = |g: &Geometry| s.roll.frame(g.drawer_body).grid.h;
-        assert!(roll(&after) > roll(&before));
-        // Down again.
-        drag(&mut s, 60.0);
-        assert_eq!(s.geometry(W, H).drawer.h, Layout::DRAWER_H + 40.0);
-    }
-
-    #[test]
-    fn the_drawer_stops_at_its_least_and_the_arrangement_keeps_two_rows() {
-        let mut s = studio();
-        drag(&mut s, 2000.0);
-        let g = s.geometry(W, H);
-        assert_eq!(g.drawer.h, ROLL_MIN_H);
-        drag(&mut s, -2000.0);
-        let g = s.geometry(W, H);
-        assert_eq!(g.lanes.h, ARRANGE_MIN_H);
-        assert_eq!(g.drawer.h, limits(H, g.panels).1);
-        // The header and the regions still sit in order inside the window.
-        assert!(g.ruler.bottom() < g.lanes.y);
-        assert!(g.lanes.bottom() < g.drawer.y);
-        assert!(g.drawer.bottom() <= H);
-    }
+    // Drags, double-clicks and limits of this edge are in `side_edge`'s tables with the
+    // other two edges.
 
     #[test]
     fn the_least_holds_the_roll_and_the_mixer() {
         let mut s = studio();
+        let before = s.geometry(W, H);
+        let roll = |s: &Studio, g: &Geometry| s.roll.frame(g.drawer_body).grid.h;
+        drag(&mut s, -100.0);
+        // The roll gets the room a taller drawer gives.
+        assert!(roll(&s, &s.geometry(W, H)) > roll(&s, &before));
         drag(&mut s, 2000.0);
         let g = s.geometry(W, H);
         let frame = s.roll.frame(g.drawer_body);
@@ -383,18 +357,6 @@ mod tests {
     }
 
     #[test]
-    fn a_double_click_gives_the_height_the_drawer_opens_with() {
-        let mut s = studio();
-        drag(&mut s, -120.0);
-        let g = s.geometry(W, H);
-        let y = edge_y(&s, &g);
-        assert!(s.edge_down(&g, 300.0, y, 2));
-        assert_eq!(s.drawer_size.roll, None);
-        assert_eq!(s.geometry(W, H).drawer.h, Layout::DRAWER_H);
-        assert!(!s.edge_up());
-    }
-
-    #[test]
     fn the_edge_is_the_gap_and_needs_an_open_drawer_and_nothing_over_it() {
         let mut s = studio();
         let g = s.geometry(W, H);
@@ -418,17 +380,6 @@ mod tests {
             Rect::new(600.0, 10.0, 10.0, 10.0),
         );
         assert!(!s.on_drawer_edge(&g, 600.0, y));
-    }
-
-    #[test]
-    fn a_press_without_a_move_keeps_the_height_it_opens_with() {
-        let mut s = studio();
-        let g = s.geometry(W, H);
-        let y = edge_y(&s, &g);
-        assert!(s.edge_down(&g, 600.0, y, 1));
-        assert!(s.edge_move(&g, y));
-        assert!(s.edge_up());
-        assert_eq!(s.drawer_size.roll, None);
     }
 
     #[test]

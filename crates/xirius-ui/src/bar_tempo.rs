@@ -369,43 +369,37 @@ mod tests {
         assert_eq!(s.tempo_readout().1, TempoMode::Focus);
     }
 
+    /// Each drag of the readout sets the tempo it ends on, in one step, or none.
     #[test]
-    fn shift_makes_the_drag_fine_and_down_lowers() {
-        let (mut s, g) = studio();
-        let was = bpm(&s);
-        let (x, y) = at(&s, &g, BarButton::Tempo);
-        s.bar_down(&g, x, y, 1);
-        s.bar_move(y - 20.0, true);
-        s.bar_up();
-        assert!((bpm(&s) - (was + 1.0)).abs() < 1e-9);
-        s.bar_down(&g, x, y, 1);
-        s.bar_move(y + 20.0, false);
-        s.bar_up();
-        assert!((bpm(&s) - (was - 9.0)).abs() < 1e-9);
-    }
-
-    #[test]
-    fn a_press_without_a_move_changes_nothing() {
-        let (mut s, g) = studio();
-        let before = s.song.history().len();
-        let (x, y) = at(&s, &g, BarButton::Tempo);
-        s.bar_down(&g, x, y, 1);
-        s.bar_up();
-        assert_eq!(s.song.history().len(), before);
-    }
-
-    #[test]
-    fn a_drag_stops_at_the_ends_of_the_range() {
-        let (mut s, g) = studio();
-        let (x, y) = at(&s, &g, BarButton::Tempo);
-        s.bar_down(&g, x, y, 1);
-        s.bar_move(y - 5000.0, false);
-        s.bar_up();
-        assert_eq!(bpm(&s), MAX_BPM);
-        s.bar_down(&g, x, y, 1);
-        s.bar_move(y + 5000.0, false);
-        s.bar_up();
-        assert_eq!(bpm(&s), MIN_BPM);
+    fn a_drag_sets_the_tempo_by_its_distance_inside_the_range() {
+        // (row, pixels moved down, Shift, the tempo after from the one before)
+        let rows: [(&str, f32, bool, fn(f64) -> f64); 5] = [
+            ("Shift makes it fine", -20.0, true, |was| was + 1.0),
+            ("down lowers", 20.0, false, |was| was - 10.0),
+            ("a press without a move", 0.0, false, |was| was),
+            ("it stops at the top", -5000.0, false, |_| MAX_BPM),
+            ("it stops at the bottom", 5000.0, false, |_| MIN_BPM),
+        ];
+        let mut failures = Vec::new();
+        for (name, dy, shift, want) in rows {
+            let (mut s, g) = studio();
+            let (was, before) = (bpm(&s), s.song.history().len());
+            let (x, y) = at(&s, &g, BarButton::Tempo);
+            s.bar_down(&g, x, y, 1);
+            if dy != 0.0 {
+                s.bar_move(y + dy, shift);
+            }
+            s.bar_up();
+            let (got, want) = (bpm(&s), want(was));
+            if (got - want).abs() > 1e-9 {
+                failures.push(format!("{name}: {got} bpm, want {want}"));
+            }
+            let steps = s.song.history().len() - before;
+            if steps != usize::from(want != was) {
+                failures.push(format!("{name}: {steps} steps of the history"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     #[test]
@@ -492,39 +486,47 @@ mod tests {
         assert_eq!(s.song.history().len(), before + 1);
     }
 
+    /// What is typed in the readout's box and set by Enter: clamped, or nothing.
     #[test]
-    fn typing_is_clamped_and_text_with_no_number_changes_nothing() {
-        let (mut s, g) = studio();
-        let (x, y) = at(&s, &g, BarButton::Tempo);
-        s.bar_down(&g, x, y, 2);
-        type_in(&mut s, "5000");
-        key(&mut s, "enter", false);
-        assert_eq!(bpm(&s), MAX_BPM);
-        s.bar_down(&g, x, y, 2);
-        type_in(&mut s, "5");
-        key(&mut s, "enter", false);
-        assert_eq!(bpm(&s), MIN_BPM);
-        // Backspace takes the selected value away, and Enter on nothing sets nothing.
-        let before = s.song.history().len();
-        s.bar_down(&g, x, y, 2);
-        key(&mut s, "backspace", false);
-        key(&mut s, "enter", false);
-        assert_eq!(s.song.history().len(), before);
-        // One point at most, and no letters.
-        s.bar_down(&g, x, y, 2);
-        type_in(&mut s, "1.2.x3");
-        assert_eq!(s.tempo_readout().0, "1.23");
-    }
-
-    #[test]
-    fn the_ime_full_width_digits_are_taken() {
-        let (mut s, g) = studio();
-        let (x, y) = at(&s, &g, BarButton::Tempo);
-        s.bar_down(&g, x, y, 2);
-        type_in(&mut s, "８５");
-        assert_eq!(s.tempo_readout().0, "85");
-        assert!(key(&mut s, "enter", false));
-        assert_eq!(bpm(&s), 85.0);
+    fn typed_text_sets_the_tempo_inside_the_range_or_not_at_all() {
+        // (row, Backspace first, typed, the box shows, the tempo set by Enter)
+        let rows: [(&str, bool, &str, &str, Option<f64>); 5] = [
+            ("a number past the top", false, "5000", "5000", Some(MAX_BPM)),
+            ("a number under the bottom", false, "5", "5", Some(MIN_BPM)),
+            ("the IME's full-width digits", false, "８５", "85", Some(85.0)),
+            (
+                "one point at most and no letters",
+                false,
+                "1.2.x3",
+                "1.23",
+                Some(MIN_BPM),
+            ),
+            // Backspace takes the selected value away.
+            ("Enter on nothing", true, "", "", None),
+        ];
+        let mut failures = Vec::new();
+        for (name, erase, typed, shows, want) in rows {
+            let (mut s, g) = studio();
+            let (x, y) = at(&s, &g, BarButton::Tempo);
+            let (was, before) = (bpm(&s), s.song.history().len());
+            s.bar_down(&g, x, y, 2);
+            if erase {
+                key(&mut s, "backspace", false);
+            }
+            type_in(&mut s, typed);
+            let box_text = s.tempo_readout().0;
+            if box_text != shows {
+                failures.push(format!("{name}: the box shows {box_text:?}"));
+            }
+            if !key(&mut s, "enter", false) {
+                failures.push(format!("{name}: Enter is not the box's"));
+            }
+            let (got, steps) = (bpm(&s), s.song.history().len() - before);
+            if got != want.unwrap_or(was) || steps != usize::from(want.is_some()) {
+                failures.push(format!("{name}: {got} bpm in {steps} steps"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     #[test]

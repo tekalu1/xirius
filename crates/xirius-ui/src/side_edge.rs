@@ -402,62 +402,221 @@ mod tests {
         assert!(s.side_up());
     }
 
-    #[test]
-    fn dragging_the_browsers_edge_sets_its_width_and_the_arrangement_gives_way() {
-        let mut s = studio();
-        let before = s.geometry(W, H);
-        assert_eq!(before.panel.w, Layout::BROWSER_W);
-        drag(&mut s, Side::Browser, 80.0);
-        let after = s.geometry(W, H);
-        assert_eq!(after.panel.w, Layout::BROWSER_W + 80.0);
-        assert_eq!(after.column.x, before.column.x + 80.0);
-        assert_eq!(after.lanes.w, before.lanes.w - 80.0);
-        drag(&mut s, Side::Browser, -30.0);
-        assert_eq!(s.geometry(W, H).panel.w, Layout::BROWSER_W + 50.0);
+    /// The three edges that set a panel's size: the drawer's top and the browser's and the
+    /// track head's right.
+    #[derive(Clone, Copy, Debug)]
+    enum Grip {
+        Drawer,
+        Browser,
+        Head,
     }
 
-    #[test]
-    fn dragging_the_heads_edge_sets_its_width() {
-        let mut s = studio();
-        let before = s.geometry(W, H);
-        drag(&mut s, Side::Head, 60.0);
-        let after = s.geometry(W, H);
-        assert_eq!(after.column.w, before.column.w + 60.0);
-        assert_eq!(after.head.w, after.column.w);
-        assert_eq!(after.lanes.x, before.lanes.x + 60.0);
-        // Not narrower than its rows ask.
-        drag(&mut s, Side::Head, -1000.0);
-        assert_eq!(s.geometry(W, H).column.w, before.column.w);
+    impl Grip {
+        const ALL: [Grip; 3] = [Grip::Drawer, Grip::Browser, Grip::Head];
+
+        fn edge(self, s: &Studio, g: &Geometry) -> Option<Rect> {
+            match self {
+                Grip::Drawer => s.drawer_edge(g),
+                Grip::Browser => s.side_edge(g, Side::Browser),
+                Grip::Head => s.side_edge(g, Side::Head),
+            }
+        }
+
+        /// The panel's size along the drag.
+        fn size(self, g: &Geometry) -> f32 {
+            match self {
+                Grip::Drawer => g.drawer.h,
+                Grip::Browser => g.panel.w,
+                Grip::Head => g.column.w,
+            }
+        }
+
+        /// The arrangement's room along the drag: it gives what the panel takes.
+        fn room(self, g: &Geometry) -> f32 {
+            match self {
+                Grip::Drawer => g.lanes.h,
+                Grip::Browser | Grip::Head => g.lanes.w,
+            }
+        }
+
+        /// What moves on with the panel's far side.
+        fn follower(self, g: &Geometry) -> f32 {
+            match self {
+                Grip::Drawer => g.drawer_body.h,
+                Grip::Browser => g.column.x,
+                Grip::Head => g.lanes.x,
+            }
+        }
+
+        /// The size kept for the next window: None is the size the panel opens with.
+        fn kept(self, s: &Studio) -> Option<f32> {
+            match self {
+                Grip::Drawer => s.drawer_size.roll,
+                Grip::Browser => s.side_size.browser,
+                Grip::Head => s.side_size.head,
+            }
+        }
+
+        fn down(self, s: &mut Studio, g: &Geometry, clicks: u32) -> bool {
+            let (x, y) = mid(self.edge(s, g).expect("a shown panel"));
+            match self {
+                Grip::Drawer => s.edge_down(g, x, y, clicks),
+                _ => s.side_down(g, x, y, clicks),
+            }
+        }
+
+        fn up(self, s: &mut Studio) -> bool {
+            match self {
+                Grip::Drawer => s.edge_up(),
+                _ => s.side_up(),
+            }
+        }
+
+        /// Presses the edge, moves it `by` in steps (more is a bigger panel) and lets go.
+        fn pull(self, s: &mut Studio, by: f32) {
+            let g = s.geometry(W, H);
+            let (x, y) = mid(self.edge(s, &g).expect("a shown panel"));
+            assert!(self.down(s, &g, 1), "{self:?}");
+            for i in 1..=4 {
+                let g = s.geometry(W, H);
+                let d = by * i as f32 / 4.0;
+                assert!(match self {
+                    Grip::Drawer => s.edge_move(&g, y - d),
+                    _ => s.side_move(&g, x + d),
+                });
+            }
+            assert!(self.up(s), "{self:?}");
+        }
     }
 
+    /// A drag of each edge sets its panel's size; the arrangement gives the room and the
+    /// far side moves on with it.
     #[test]
-    fn each_panel_stops_at_its_limits_and_the_arrangement_keeps_its_room() {
+    fn each_edge_sets_its_panel_and_the_arrangement_gives_way() {
+        let rows = [
+            (Grip::Drawer, 100.0, -60.0),
+            (Grip::Browser, 80.0, -30.0),
+            (Grip::Head, 60.0, -20.0),
+        ];
+        let mut failures = Vec::new();
+        for (grip, out, back) in rows {
+            let mut s = studio();
+            let before = s.geometry(W, H);
+            grip.pull(&mut s, out);
+            let after = s.geometry(W, H);
+            for (what, from, to) in [
+                ("size", grip.size(&before) + out, grip.size(&after)),
+                (
+                    "the arrangement's room",
+                    grip.room(&before) - out,
+                    grip.room(&after),
+                ),
+                (
+                    "the far side",
+                    grip.follower(&before) + out,
+                    grip.follower(&after),
+                ),
+            ] {
+                if from != to {
+                    failures.push(format!("{grip:?}: {what} {to}, want {from}"));
+                }
+            }
+            grip.pull(&mut s, back);
+            let size = grip.size(&s.geometry(W, H));
+            if size != grip.size(&before) + out + back {
+                failures.push(format!("{grip:?}: back to {size}"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+        // The head's rows are as wide as its column.
         let mut s = studio();
-        drag(&mut s, Side::Browser, -1000.0);
-        assert_eq!(s.geometry(W, H).panel.w, BROWSER_MIN_W);
-        drag(&mut s, Side::Browser, 2000.0);
-        assert_eq!(s.geometry(W, H).panel.w, BROWSER_MAX_W);
-        drag(&mut s, Side::Head, 2000.0);
+        Grip::Head.pull(&mut s, 60.0);
         let g = s.geometry(W, H);
-        assert!(g.lanes.w >= ARRANGE_MIN_W, "{g:?}");
-        assert!(g.column.w <= HEAD_MAX_W);
-        // The smallest window: both panels and the arrangement still sit in it.
+        assert_eq!(g.head.w, g.column.w);
+    }
+
+    /// A press without a move keeps the size the panel opens with, and a double-click
+    /// gives it back after a drag.
+    #[test]
+    fn a_still_press_or_a_double_click_leaves_each_panel_its_opening_size() {
+        let mut failures = Vec::new();
+        for grip in Grip::ALL {
+            let mut check = |ok: bool, what: &str| {
+                if !ok {
+                    failures.push(format!("{grip:?}: {what}"));
+                }
+            };
+            let mut s = studio();
+            let opening = grip.size(&s.geometry(W, H));
+            grip.pull(&mut s, 0.0);
+            check(grip.kept(&s).is_none(), "a still press keeps a size");
+            grip.pull(&mut s, 70.0);
+            check(grip.kept(&s).is_some(), "a drag keeps its size");
+            let g = s.geometry(W, H);
+            check(grip.down(&mut s, &g, 2), "the double-click is the edge's");
+            check(grip.kept(&s).is_none(), "the double-click forgets the size");
+            check(
+                grip.size(&s.geometry(W, H)) == opening,
+                "the opening size is back",
+            );
+            check(!grip.up(&mut s), "a double-click starts no drag");
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    /// Each panel stops at its limits, and the arrangement keeps its room.
+    #[test]
+    fn each_edge_stops_at_its_panels_limits() {
+        type Holds = fn(&Geometry, &Geometry) -> bool;
+        let rows: [(&str, Grip, f32, Holds); 6] = [
+            ("the drawer down to the roll's least", Grip::Drawer, -2000.0, |_, g| {
+                g.drawer.h == drawer_edge::ROLL_MIN_H
+            }),
+            (
+                "the drawer up to two rows of the arrangement, in order in the window",
+                Grip::Drawer,
+                2000.0,
+                |_, g| {
+                    g.lanes.h == drawer_edge::ARRANGE_MIN_H
+                        && g.drawer.h == drawer_edge::limits(H, g.panels).1
+                        && g.ruler.bottom() < g.lanes.y
+                        && g.lanes.bottom() < g.drawer.y
+                        && g.drawer.bottom() <= H
+                },
+            ),
+            ("the browser down to its least", Grip::Browser, -1000.0, |_, g| {
+                g.panel.w == BROWSER_MIN_W
+            }),
+            ("the browser up to its most", Grip::Browser, 2000.0, |_, g| {
+                g.panel.w == BROWSER_MAX_W
+            }),
+            ("the head no narrower than its rows", Grip::Head, -1000.0, |was, g| {
+                g.column.w == was.column.w
+            }),
+            ("the head up to its most", Grip::Head, 2000.0, |_, g| {
+                g.lanes.w >= ARRANGE_MIN_W && g.column.w <= HEAD_MAX_W
+            }),
+        ];
+        let mut failures = Vec::new();
+        for (name, grip, by, holds) in rows {
+            let mut s = studio();
+            let was = s.geometry(W, H);
+            grip.pull(&mut s, by);
+            let g = s.geometry(W, H);
+            if !holds(&was, &g) {
+                failures.push(format!("{name}: {g:?}"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+        // The smallest window with both side panels at their widest: they and the
+        // arrangement still sit in it.
+        let mut s = studio();
+        Grip::Browser.pull(&mut s, 2000.0);
+        Grip::Head.pull(&mut s, 2000.0);
         let small = s.geometry(960.0, 600.0 - Layout::TOP_BAR_H - Layout::BOTTOM_BAR_H);
         assert!(small.lanes.w >= ARRANGE_MIN_W, "{small:?}");
         assert!(small.lanes.right() <= 960.0);
         assert!(small.panel.right() <= small.column.x);
-    }
-
-    #[test]
-    fn a_double_click_gives_the_width_the_panel_opens_with() {
-        let mut s = studio();
-        drag(&mut s, Side::Browser, 70.0);
-        let g = s.geometry(W, H);
-        let (x, y) = mid(s.side_edge(&g, Side::Browser).unwrap());
-        assert!(s.side_down(&g, x, y, 2));
-        assert_eq!(s.side_size.browser, None);
-        assert_eq!(s.geometry(W, H).panel.w, Layout::BROWSER_W);
-        assert!(!s.side_up());
     }
 
     #[test]
