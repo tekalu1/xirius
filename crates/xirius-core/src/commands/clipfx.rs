@@ -96,28 +96,41 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "clip.loop.set",
-            "クリップの中身のループを設定します。クリップはループの終わりまで鳴らしたあと、クリップの終わりまでループを繰り返します（オーディオと MIDI）。--start だけなら終わりを保ち、--length だけなら頭を保ちます",
+            "クリップの中身のループを設定します。クリップはループの終わりまで鳴らしたあと、クリップの終わりまでループを繰り返します（オーディオと MIDI）。--start だけなら終わりを保ち、--length だけなら頭を保ちます。--fill はクリップを伸ばしてループで埋めます",
             vec![
                 ArgDef::ids(IdKind::Clip, "クリップ"),
                 ArgDef::int("start", "ループの頭（クリップの頭からの tick）"),
                 ArgDef::int("length", "ループの長さ（tick）"),
+                ArgDef::int(
+                    "fill",
+                    "クリップの長さ（tick）。ループで埋める。ループが無ければ今のクリップ全体をループにする",
+                ),
                 ArgDef::flag("clear", "ループを外す"),
+                ArgDef::flag(
+                    "toggle",
+                    "どのクリップにもループがあれば外し、そうでなければループの無いクリップの全体をループにする",
+                ),
             ],
             loop_set,
         ),
     ]
 }
 
-/// Sets, moves or clears the loop of clips (EDT-041). With no loop yet, the
-/// loop is the whole clip.
+/// Sets, moves or clears the loop of clips (EDT-041), or lengthens them filled with it (UI-388).
+/// With no loop yet, the loop is the whole clip.
 fn loop_set(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     let ids = a.require_ids::<ClipId>("クリップ")?;
-    let (start, length, clear) = (a.opt_i64("start"), a.opt_i64("length"), a.flag("clear"));
-    if start.is_none() && length.is_none() && !clear {
+    let (start, length, fill) = (a.opt_i64("start"), a.opt_i64("length"), a.opt_i64("fill"));
+    let toggle = a.flag("toggle");
+    if start.is_none() && length.is_none() && fill.is_none() && !a.flag("clear") && !toggle {
         return Err(CmdError::invalid(
-            "--start・--length・--clear のいずれかを指定してください",
+            "--start・--length・--fill・--clear・--toggle のいずれかを指定してください",
         ));
     }
+    if fill.is_some_and(|x| x <= 0) {
+        return Err(CmdError::range("クリップの長さは 1 以上にしてください"));
+    }
+    let clear = a.flag("clear") || (toggle && ids.iter().all(|id| p.clip_loop(*id).is_some()));
     if start.is_some_and(|x| x < 0) {
         return Err(CmdError::range("ループの頭は 0 以上にしてください"));
     }
@@ -149,13 +162,20 @@ fn loop_set(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
                 })
             }
             (None, Some(l)) => Some(ClipLoop { length: l, ..was }),
+            // Filling or turning on keeps the loop a clip has, and loops the whole of one without.
+            (None, None) if fill.is_some() || toggle => Some(was),
             (None, None) => None,
         };
         p.fx_mut(*id).looped = looped;
         p.tidy_fx(*id);
+        if let Some(f) = fill {
+            p.clip_mut(*id)?.1.length = f;
+        }
     }
     Ok(Output::msg(if clear {
         format!("クリップ {} 件のループを外しました", ids.len())
+    } else if fill.is_some() {
+        format!("クリップ {} 件をループで伸ばしました", ids.len())
     } else {
         format!("クリップ {} 件のループを設定しました", ids.len())
     }))

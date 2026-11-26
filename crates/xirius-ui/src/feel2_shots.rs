@@ -3,8 +3,8 @@
 //! EDT-051: a note muted by Alt+click on its upper part, grey beside the two that play.
 //! EDT-032: the pencil's shape turned by the wheel on the bar; a triangle drawn and one held,
 //! and the parabola with Alt held drawn as a straight line.
-//! EDT-041: the bass's clip looped over its first two bars by a drag on its lower right corner,
-//! the pointer on the corner; and the loop's head held one bar later with Alt.
+//! EDT-041, UI-388: the bass's clip lengthened two bars by a drag on the lower half of its right
+//! edge, filled with its loop, the pointer there; and the loop's head held one bar later with Alt.
 //! EDT-062: the keys' part and a part on a new Lead track picked together in the arrangement;
 //! the roll shows the lead's notes with its own, and Ctrl+Shift+A has selected all of them.
 //! EDT-046: a clip held at the right edge with Space down: the view has gone past the song's end
@@ -38,7 +38,7 @@ pub const SHOTS: &[Shot] = &[
         name: "edt032-triangle",
         acts: &[Act::Reset, staged(1)],
     },
-    // EDT-041: the clip looped over its first two bars, the pointer on its corner.
+    // UI-388: the clip lengthened two bars, filled with its loop, the pointer on the grip.
     Shot {
         name: "edt041-loop",
         acts: &[Act::Reset, staged(4)],
@@ -148,9 +148,9 @@ fn pencil(
     )
 }
 
-/// The arrangement alone with the arrow; the lower right corner of the bass's first clip (just
-/// inside it) and the clip's length.
-fn bass_corner(s: &mut Studio, g: &Geometry) -> (Geometry, (f32, f32), i64) {
+/// The arrangement alone with the arrow; the lower half of the right edge of the bass's first
+/// clip (just inside it).
+fn bass_loop_grip(s: &mut Studio, g: &Geometry) -> (Geometry, (f32, f32)) {
     s.popup = None;
     s.drawer_open = false;
     let g = s.geometry(g.size.0, g.size.1);
@@ -160,7 +160,7 @@ fn bass_corner(s: &mut Studio, g: &Geometry) -> (Geometry, (f32, f32), i64) {
     let c = s.project().tracks[&t].clips[0].clone();
     let row = *s.tree().row_of(RowKind::Track(t)).expect("the bass");
     let r = s.clip_rect(&g, &row, &c);
-    (g, (r.right() - 2.0, r.bottom() - 2.0), c.length)
+    (g, (r.right() - 2.0, r.bottom() - 4.0))
 }
 
 fn play(s: &mut Studio, g: &Geometry, n: u8) {
@@ -207,11 +207,12 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             }
         }
         4 | 5 => {
-            let (g, at, length) = bass_corner(s, g);
-            // The loop's end two bars into the clip.
-            let to = (at.0 - s.ticks_to_px(length - 2 * 3840), at.1);
+            let (g, at) = bass_loop_grip(s, g);
+            // Two bars longer, filled with the loop.
+            let to = (at.0 + s.ticks_to_px(2 * 3840), at.1);
             hold(s, &g, at, to, Mods::NONE);
             s.arrange_up(&g, to.0, to.1, Mods::NONE);
+            let (g, at) = bass_loop_grip(s, &g);
             if n == 4 {
                 s.arrange_move(&g, at.0, at.1, Mods::NONE);
                 s.input_map.pointer = at;

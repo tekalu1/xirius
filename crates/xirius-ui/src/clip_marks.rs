@@ -1,8 +1,8 @@
-//! What a clip shows of its processing (EDT-007, EDT-015, EDT-016, EXP-004): marks at the right
-//! of its name (frozen, following the song's tempo, speed, transposition, reversed), and at its
-//! lower left how far the sound it plays is (a ring and the percent while it is stretched or
-//! bounced, ⚠ when it could not be stretched). Marks that do not fit go from the right; the
-//! name ends before them.
+//! What a clip shows of its processing (EDT-007, EDT-015, EDT-016, EXP-004, UI-388): marks at
+//! the right of its name (frozen, following the song's tempo, speed, transposition, reversed,
+//! looped), and at its lower left how far the sound it plays is (a ring and the percent while it
+//! is stretched or bounced, ⚠ when it could not be stretched). Marks that do not fit go from the
+//! right; the name ends before them.
 //!
 //! A bounce shows a square at the clip's lower right that stops it. A stretch that fails also
 //! says so once in a toast, with 「再試行」.
@@ -94,6 +94,15 @@ pub fn marks(track: &Track, clip: &Clip) -> Vec<Mark> {
         if p.reverse {
             out.push(Mark::Icon("reverse"));
         }
+    }
+    out
+}
+
+/// [`marks`], and at the right the loop's while the clip repeats a loop (UI-388).
+pub fn marks_in(studio: &Studio, track: &Track, clip: &Clip) -> Vec<Mark> {
+    let mut out = marks(track, clip);
+    if studio.project().clip_loop(clip.id).is_some() {
+        out.push(Mark::Icon("loop"));
     }
     out
 }

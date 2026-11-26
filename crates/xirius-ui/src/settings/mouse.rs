@@ -311,7 +311,7 @@ fn sample(b: &mut B, ui: &SettingsUi, area: &str, smp: Rect) {
         zone(
             b,
             ui,
-            Rect::new(k.right() - 10.0, k.bottom() - 12.0, 10.0, 12.0),
+            Rect::new(k.right() - 10.0, k.y + k.h / 2.0, 10.0, k.h / 2.0),
             "clip-corner",
             lab("clip-corner"),
             Radius::Xs,

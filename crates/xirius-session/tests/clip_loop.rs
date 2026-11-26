@@ -183,6 +183,7 @@ fn a_bad_loop_is_refused() {
         json!({ "ids": [c], "start": -1 }),
         json!({ "ids": [c], "length": 0 }),
         json!({ "ids": [c], "start": 3840 }),
+        json!({ "ids": [c], "fill": 0 }),
     ] {
         let r = commands::run(
             &mut s,
@@ -193,6 +194,59 @@ fn a_bad_loop_is_refused() {
         );
         assert!(r.is_err(), "{args}");
     }
+}
+
+/// --fill lengthens a clip filled with the whole of what it was (UI-388); the song keeps it once
+/// saved and opened again, and --toggle takes the loop off.
+#[test]
+fn a_filled_loop_is_kept_through_save_and_open_and_toggled_off() {
+    let dir = Dir::new("fill");
+    let mut s = song("fill");
+    let t = id_of(&run(&mut s, "track.add.instrument", json!({})));
+    let c = id_of(&run(
+        &mut s,
+        "clip.add.midi",
+        json!({ "track": t, "at": 0, "bars": 1 }),
+    ));
+    run(
+        &mut s,
+        "note.add",
+        json!({ "clip": c, "at": 0, "pitch": 60, "length": 480 }),
+    );
+    run(
+        &mut s,
+        "clip.loop.set",
+        json!({ "ids": [c], "fill": 3 * 3840 }),
+    );
+    assert_eq!(
+        notes_of(&s, &t, 60),
+        vec![(0, 480), (3840, 4320), (7680, 8160)]
+    );
+
+    s.save_as(dir.path().join("song")).unwrap();
+    let mut s = Session::open_with(dir.path().join("song"), shared_registry()).unwrap();
+    let id = c.parse().unwrap();
+    let l = s.project().clip_loop(id).unwrap();
+    assert_eq!((l.start, l.length), (0, 3840));
+    assert_eq!(s.project().clip(id).unwrap().1.length, 3 * 3840);
+
+    run(
+        &mut s,
+        "clip.loop.set",
+        json!({ "ids": [c], "toggle": true }),
+    );
+    assert_eq!(s.project().clip_loop(id), None);
+    run(
+        &mut s,
+        "clip.loop.set",
+        json!({ "ids": [c], "toggle": true }),
+    );
+    let l = s.project().clip_loop(id).unwrap();
+    assert_eq!(
+        (l.start, l.length),
+        (0, 3 * 3840),
+        "the whole clip, as it is now"
+    );
 }
 
 /// A file whose every sample says which tick of it it is (25 frames to the tick at 48 kHz and

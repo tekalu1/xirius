@@ -224,6 +224,8 @@ pub enum Cursor {
     Mute,
     Audition,
     Range,
+    /// The lower half of a clip's right edge: ↔ with the loop's mark (UI-388).
+    Loop,
     /// The tool has nothing to act on where the pointer is.
     Blocked,
 }

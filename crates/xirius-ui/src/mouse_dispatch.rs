@@ -333,7 +333,7 @@ pub fn arrange_zone(spot: &crate::arrange::Spot) -> Option<&'static str> {
             ..
         } => Some("clip-body"),
         Spot::Clip {
-            grip: crate::arrange::Grip::Corner,
+            grip: crate::arrange::Grip::Loop,
             ..
         } => Some("clip-corner"),
         Spot::Clip { .. } => Some("clip-edge"),

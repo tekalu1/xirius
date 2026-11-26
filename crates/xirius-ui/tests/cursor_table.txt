@@ -65,9 +65,9 @@ extended	Browser::Loc	PointingHand
 extended	Browser::Search	IBeam	
 extended	Chevron	PointingHand	
 extended	Clip@Clip::Body	Arrow	
-extended	Clip@Clip::Corner	ResizeLeftRight	
 extended	Clip@Clip::Cut	Crosshair	Scissors
 extended	Clip@Clip::Left	ResizeLeftRight	
+extended	Clip@Clip::Loop	ResizeLeftRight	Loop
 extended	Clip@Clip::Right	ResizeLeftRight	
 extended	Clip@Fx::Boundary	ResizeLeftRight	
 extended	Clip@Fx::Flag::In	ResizeLeftRight	
@@ -138,8 +138,8 @@ mixer	Browser::Loc	PointingHand
 mixer	Browser::Search	IBeam	
 mixer	Chevron	PointingHand	
 mixer	Clip@Clip::Body	Arrow	
-mixer	Clip@Clip::Corner	ResizeLeftRight	
 mixer	Clip@Clip::Left	ResizeLeftRight	
+mixer	Clip@Clip::Loop	ResizeLeftRight	Loop
 mixer	Clip@Clip::Right	ResizeLeftRight	
 mixer	Clip@Fx::Boundary	ResizeLeftRight	
 mixer	Fold	PointingHand	
@@ -212,9 +212,10 @@ pencil	Browser::Search	IBeam
 pencil	Chevron	PointingHand	
 pencil	Clip@Clip::Body	Crosshair	Pencil
 pencil	Clip@Clip::Body	OperationNotAllowed	
-pencil	Clip@Clip::Corner	Crosshair	Pencil
 pencil	Clip@Clip::Left	Crosshair	Pencil
 pencil	Clip@Clip::Left	OperationNotAllowed	
+pencil	Clip@Clip::Loop	Crosshair	Pencil
+pencil	Clip@Clip::Loop	OperationNotAllowed	
 pencil	Clip@Clip::Right	Crosshair	Pencil
 pencil	Clip@Clip::Right	OperationNotAllowed	
 pencil	Clip@Fx::Boundary	ResizeLeftRight	
@@ -288,8 +289,8 @@ roll	Browser::Loc	PointingHand
 roll	Browser::Search	IBeam	
 roll	Chevron	PointingHand	
 roll	Clip@Clip::Body	Arrow	
-roll	Clip@Clip::Corner	ResizeLeftRight	
 roll	Clip@Clip::Left	ResizeLeftRight	
+roll	Clip@Clip::Loop	ResizeLeftRight	Loop
 roll	Clip@Clip::Right	ResizeLeftRight	
 roll	Clip@Fx::Boundary	ResizeLeftRight	
 roll	Clip@Fx::Flag::In	ResizeLeftRight	

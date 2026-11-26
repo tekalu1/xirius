@@ -232,7 +232,7 @@ impl Studio {
             name_x += crate::draw::CLIP_BADGE + pad;
         }
         let name_w = crate::fonts::measure(&clip.name, FontSize::Caption, Weight::Medium);
-        let marks = crate::clip_marks::marks(track, clip);
+        let marks = crate::clip_marks::marks_in(self, track, clip);
         let end = if marks.is_empty() {
             r.right()
         } else {

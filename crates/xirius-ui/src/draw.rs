@@ -1997,7 +1997,7 @@ pub(crate) fn paint_clip(
     }
     let state = crate::clip_marks::status(studio, clip);
     let color = faint(color_of(c, track)).opacity(crate::clip_marks::dim(state));
-    let marks = crate::clip_marks::marks(track, clip);
+    let marks = crate::clip_marks::marks_in(studio, track, clip);
     let (name_weight, name_ink) = clip_name_style(c, selected);
     pen.mask(r, |pen| {
         let pad = Space::X1.px();

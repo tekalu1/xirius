@@ -32,6 +32,8 @@ struct Picked {
     audio: usize,
     midi: usize,
     muted: usize,
+    /// The clips that repeat a loop (EDT-041).
+    looped: usize,
     /// The audio clips that follow the song's tempo.
     follow: usize,
     /// The clips on a frozen track.
@@ -68,6 +70,7 @@ impl Studio {
             audio: 0,
             midi: 0,
             muted: 0,
+            looped: 0,
             follow: 0,
             frozen: 0,
             span: (Tick::MAX, 0),
@@ -95,6 +98,7 @@ impl Studio {
             }
             got.frozen += usize::from(p.tracks.get(t).is_some_and(|t| t.frozen.is_some()));
             got.muted += usize::from(clip.muted);
+            got.looped += usize::from(p.clip_loop(*c).is_some());
             got.span = (got.span.0.min(clip.start), got.span.1.max(clip.end()));
             got.only = Some((clip.start, clip.length));
         }
@@ -248,6 +252,16 @@ impl Studio {
             self.ctx_cmd("clip.mute", by_ids())
                 .on(got.muted == got.ids.len()),
         );
+        // Checked when every clip loops; the same row takes the loops off (UI-388).
+        let looped = self.ctx_as(
+            "クリップをループ",
+            "clip.loop.set",
+            json!({ "ids": got.ids, "toggle": true }),
+        );
+        items.push(Item {
+            key: self.menu_key("clip.loop.set --toggle"),
+            ..looped.on(got.looped == got.ids.len())
+        });
         items.push(self.ctx_cmd(
             "loop.set",
             json!({ "start": got.span.0, "end": got.span.1 }),

@@ -541,6 +541,13 @@ pub const ENTRIES: &[Entry] = &[
         cat: Cat::Edit,
     },
     Entry {
+        context: "arrange",
+        command: "clip.loop.set --toggle",
+        label: Some("クリップをループ"),
+        keys: &["Mod+Alt+L"],
+        cat: Cat::Edit,
+    },
+    Entry {
         context: "edit",
         command: "select.in-loop",
         label: None,

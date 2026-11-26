@@ -282,8 +282,9 @@ pub enum Grip {
     Body,
     Left,
     Right,
-    /// The lower right corner: the loop (EDT-041).
-    Corner,
+    /// The lower half of the right edge: lengthens the clip filled with its loop (EDT-041,
+    /// UI-388).
+    Loop,
     /// The band along the lower edge, with the extended arrow only: a press cuts there (EDT-001).
     Cut,
 }
@@ -392,9 +393,15 @@ pub enum Preview {
         to: Tick,
         how: xirius_core::commands::RangeMove,
     },
-    /// The loop the corner of `clip` is dragged to (the clip's own picture shows it).
+    /// The loop the head of `clip` is dragged to with Alt (the clip's own picture shows it).
     ClipLoop {
         clip: ClipId,
+        looped: xirius_core::clipfx::ClipLoop,
+    },
+    /// The clip lengthened from the lower half of its right edge, and where each pass of its
+    /// loop starts in it (UI-388).
+    ClipFill {
+        ghost: Ghost,
         looped: xirius_core::clipfx::ClipLoop,
     },
 }
@@ -868,18 +875,6 @@ impl Studio {
             // take that does not play is not drawn over the one that does (EDT-139).
             let stacks = xirius_core::takes::stacks(track);
             let top = self.clip_at(g, row, track, &stacks, x, y);
-            // The lower right corner is the loop's, over the clip's other handles (EDT-041).
-            if let Some((clip, r)) = top {
-                let e = Arrange::GRIP.min(r.w / 3.0);
-                let h = clip_loop::CORNER.min(r.h / 3.0);
-                if x >= r.right() - e && y >= r.bottom() - h {
-                    return Spot::Clip {
-                        track: t,
-                        clip: clip.id,
-                        grip: Grip::Corner,
-                    };
-                }
-            }
             if let Some(spot) = self.fx_spot(g, row, track, x, y) {
                 return spot;
             }
@@ -887,6 +882,10 @@ impl Studio {
                 let e = Arrange::GRIP.min(r.w / 3.0);
                 let grip = if x < r.x + e {
                     Grip::Left
+                } else if x >= r.right() - e && y > r.y + r.h / 2.0 {
+                    // The lower half of the right edge fills with the loop (UI-388); the
+                    // middle still changes the length.
+                    Grip::Loop
                 } else if x >= r.right() - e {
                     Grip::Right
                 } else if self.roll.extended && y >= r.bottom() - Arrange::CUT_BAND {
@@ -2099,7 +2098,7 @@ impl Studio {
                     preview: Preview::Clips(ghosts),
                 })
             }
-            Grip::Corner => self.plan_clip_loop(d, clip),
+            Grip::Loop => self.plan_clip_loop(d, t, clip),
             Grip::Right if d.mods.alt && !d.mods.ctrl && !clip.is_midi() => {
                 self.plan_speed(d, t, clip)
             }

@@ -722,6 +722,8 @@ pub fn argument(name: &str) -> &str {
         "browse" => "空きパッドへ順に配置",
         "clear" | "remove" => "削除",
         "restore" | "reset" => "リセット",
+        "fill" => "ループで埋める長さ",
+        "toggle" => "切り替え",
         "pre" => "プリフェーダー",
         "move" => "移動",
         "adjacent" => "隣接",

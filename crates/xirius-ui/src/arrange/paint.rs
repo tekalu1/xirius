@@ -688,6 +688,28 @@ pub fn overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
                 pen.round(r, alpha(color, 0.45), Radius::Clip);
             }
         }),
+        // The clip as long as it will be, a line where each pass of its loop starts (UI-388).
+        Preview::ClipFill { ghost, looped } => pen.mask(lanes_region, |pen| {
+            let Some(row) = tree.row_of(RowKind::Track(ghost.track)) else {
+                return;
+            };
+            let inset = Space::X1.px();
+            let r = Rect::new(
+                studio.tick_x(g, ghost.start),
+                studio.row_y(g, row) + inset,
+                studio.ticks_to_px(ghost.length),
+                row.h - inset * 2.0,
+            );
+            let color = c.tracks[ghost.color % c.tracks.len()];
+            pen.round(r, alpha(color, 0.45), Radius::Clip);
+            for (at, ..) in xirius_core::clipfx::pieces(Some(*looped), ghost.length)
+                .into_iter()
+                .skip(1)
+            {
+                let x = r.x + studio.ticks_to_px(at);
+                pen.fill(Rect::new(x - 0.5, r.y, 1.0, r.h), c.line[2]);
+            }
+        }),
         Preview::Marquee(r) => pen.round(*r, alpha(c.fill, 0.14), Radius::Xs),
         Preview::Stroke(line) => polyline(pen, line, c.ink_strong),
         Preview::Range {
@@ -1012,7 +1034,9 @@ pub fn cursor(studio: &Studio) -> Option<Cursor> {
             Tool::Range => Cursor::Range,
             // The middle of a clip keeps the arrow, held too (UI-382): no hand over every clip.
             Tool::Select => match grip {
-                Grip::Left | Grip::Right | Grip::Corner => Cursor::ResizeH,
+                Grip::Left | Grip::Right => Cursor::ResizeH,
+                // The lower half of the right edge lengthens with the loop (UI-388).
+                Grip::Loop => Cursor::Loop,
                 Grip::Body => Cursor::Arrow,
                 // The extended arrow's lower edge cuts, with the cut tool's scissors (EDT-001).
                 Grip::Cut => Cursor::Split,
