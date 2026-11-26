@@ -52,24 +52,10 @@ fn choose_swatch(s: &mut Studio, g: &Geometry, n: usize) -> bool {
 }
 
 #[test]
-fn a_midi_clip_has_its_own_rows_in_the_order_of_the_mock() {
+fn a_midi_clip_shows_the_keys_of_its_rows() {
+    // The rows are in tests/context_menus/menus.txt (midi).
     let (mut s, g) = studio();
     assert!(press_on(&mut s, &g, "Keys", 0));
-    assert_eq!(
-        labels(&s),
-        [
-            "ピアノロールで開く",
-            "クリップを分割",
-            "クリップを複製",
-            "クリップを削除",
-            "ループ範囲を設定",
-            "色",
-            "編集",
-            "クリップ",
-            "MIDI",
-            "書き出し",
-        ]
-    );
     assert_eq!(key(&s, "クリップを複製"), "D");
     assert_eq!(
         key(&s, "コピー"),

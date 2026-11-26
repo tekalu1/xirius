@@ -217,13 +217,6 @@ fn the_name_of_a_drum_row_has_its_name_hiding_and_place_in_its_menu() {
 }
 
 #[test]
-fn the_keyboard_keys_have_no_drum_rows_in_their_menu() {
-    let (mut s, g) = roll();
-    name_menu(&mut s, &g, 60);
-    assert_eq!(labels(&s), ["同じ高さのノートを選択", "鍵盤の表示"]);
-}
-
-#[test]
 fn the_keyboard_menu_switches_the_view_between_note_names_and_drum_names() {
     let (mut s, g) = roll();
     let before = steps(&s);

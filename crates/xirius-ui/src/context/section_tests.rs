@@ -100,28 +100,12 @@ fn the_bar_numbers_of_the_ruler_still_seek() {
 }
 
 #[test]
-fn the_right_press_on_a_section_opens_its_menu_in_the_order_of_the_mock() {
+fn the_right_press_on_a_section_selects_it_and_shows_the_keys() {
+    // The rows are in tests/context_menus/menus.txt (other-24).
     let (mut s, g) = studio();
     assert!(press_section(&mut s, &g, 7));
     assert!(s.context_open());
     assert_eq!(s.arrange.section, Some(s.project().sections[1].id));
-    assert_eq!(
-        labels(&s),
-        [
-            "セクション名を変更",
-            "色",
-            "複製",
-            "セクションをループ",
-            "セクションのものを選択",
-            "ここで分割",
-            "セクションを書き出す…",
-            "切り取り",
-            "コピー",
-            "貼り付け",
-            "削除",
-            "時間を削除"
-        ]
-    );
     assert_eq!(
         key(&s, "複製"),
         if cfg!(target_os = "macos") {

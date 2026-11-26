@@ -95,48 +95,6 @@ fn delete_uses_the_tempo_selection_and_protects_the_first_point() {
 }
 
 #[test]
-fn take_rows_use_whole_takes_and_cleanup_is_a_single_undo() {
-    let (mut s, g) = studio();
-    // Undo here must land exactly on the state the test kept; the
-    // instrument-input arm that would follow the selection is not
-    // what this test checks (REC-024).
-    s.rec_set(
-        "prefs.set",
-        serde_json::json!({"key": "midi.follow-selection", "value": "false"}),
-    );
-    let t = track(&s, "Vocal");
-    s.song
-        .run(
-            "record.take.add",
-            json!({"takes":[
-                {"track":t.to_string(),"start":2*BAR,"length":2*BAR,"file":"a.wav","name":"Take 1"},
-                {"track":t.to_string(),"start":2*BAR,"length":2*BAR,"file":"b.wav","name":"Take 2"}
-            ]}),
-        )
-        .unwrap();
-    s.rebuild(&g);
-    let p = s.project();
-    let id = p.tracks[&t]
-        .clips
-        .iter()
-        .find(|c| c.name == "Take 1")
-        .unwrap()
-        .id;
-    for label in [
-        "このテイクを使用",
-        "未使用のテイクをすべて削除",
-        "テイクを削除",
-    ] {
-        let before = s.project();
-        assert!(s.take_context_over(id, None, 400.0, 400.0));
-        assert!(choose(&mut s, &g, label));
-        assert_ne!(s.project(), before);
-        s.undo(&g);
-        assert_eq!(s.project(), before);
-    }
-}
-
-#[test]
 fn the_menu_of_a_take_row_uses_the_take_over_a_stretch_and_unpacks_it() {
     let (mut s, g) = studio();
     // Undo here must land exactly on the state the test kept; the

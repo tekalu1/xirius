@@ -95,23 +95,11 @@ fn press_head(s: &mut Studio, g: &Geometry, t: TrackId) -> bool {
 }
 
 #[test]
-fn a_channel_head_has_its_rows_and_the_press_selects_the_track() {
+fn a_press_on_a_channel_head_selects_the_track() {
+    // The rows are in tests/context_menus/menus.txt (other-48).
     let (mut s, g) = mix();
     let vocal = track(&s, "Vocal");
     assert!(press_head(&mut s, &g, vocal));
-    assert_eq!(
-        labels(&s),
-        [
-            "名前を変更…",
-            "チャンネルエディターを開く",
-            "オートメーションを表示",
-            "ステムを書き出す…",
-            "編集",
-            "トラック",
-            "機器",
-            "表示"
-        ]
-    );
     assert_eq!(s.selected_row, Some(RowKind::Track(vocal)));
 }
 
@@ -135,24 +123,6 @@ fn showing_the_channel_in_the_track_column_makes_it_the_selection() {
     assert!(press_head(&mut s, &g, keys));
     assert!(choose(&mut s, &g, "トラックの列で表示"));
     assert_eq!(s.selected_row, Some(RowKind::Track(keys)));
-}
-
-#[test]
-fn the_master_has_the_copy_rows_the_mixdown_and_the_lanes_only() {
-    let (mut s, g) = mix();
-    assert!(press_head(&mut s, &g, TrackId::MASTER));
-    assert_eq!(
-        labels(&s),
-        [
-            "チャンネルの設定をコピー",
-            "チャンネルの設定を貼り付け",
-            "エフェクトを追加…",
-            "スプリッターを追加",
-            "チャンネルエディターを開く",
-            "ミックスダウンを書き出す…",
-            "オートメーションを表示"
-        ]
-    );
 }
 
 #[test]

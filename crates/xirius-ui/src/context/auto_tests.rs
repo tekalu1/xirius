@@ -85,22 +85,12 @@ fn a_muted_send_curve_remains_editable_and_shape_changes_undo_once() {
 }
 
 #[test]
-fn a_point_has_the_rows_of_the_mock() {
+fn a_pressed_point_is_selected_alone() {
+    // The rows are in tests/context_menus/menus.txt (other-29).
     let (mut s, g) = studio();
     let t = two_lanes(&mut s, &g, "Bass");
     let (x, y) = point_xy(&s, &g, t, 0, 1);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        [
-            "値を入力…",
-            "次のポイントまでの形",
-            "切り取り",
-            "コピー",
-            "削除"
-        ]
-    );
-    assert!(enabled(&s, "次のポイントまでの形"));
     // Pressing a point that was not selected selected it alone.
     let vol = AutoTarget::Volume;
     let tick = ticks(&s, t, &vol)[1];

@@ -34,6 +34,12 @@ impl Studio {
 
     /// 削除 of clips and automation points selected together.
     pub(crate) fn delete_points_and_clips(&mut self) -> bool {
+        // One press, one undo: the points and the clips go back together (in a macro, with the
+        // macro's group).
+        let together = !self.macro_stepping;
+        if together {
+            self.song.session_mut().begin_group();
+        }
         self.points_act(false);
         let ids: Vec<String> = self
             .picked_clips()
@@ -47,6 +53,9 @@ impl Studio {
                 .is_some()
         {
             self.after_clips_gone();
+        }
+        if together {
+            self.song.session_mut().end_group();
         }
         true
     }

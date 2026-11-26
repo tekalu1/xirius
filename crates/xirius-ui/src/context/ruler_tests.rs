@@ -3,7 +3,7 @@
 
 use serde_json::json;
 
-use super::tests::{BAR, choose, enabled, labels, steps, studio};
+use super::tests::{BAR, choose, labels, steps, studio};
 use crate::export::Range;
 use crate::popup::PopupKind;
 use crate::studio::{Geometry, Studio};
@@ -18,24 +18,6 @@ fn press_ruler(s: &mut Studio, g: &Geometry, bar: i64) -> bool {
 fn press_band(s: &mut Studio, g: &Geometry, bar: i64) -> bool {
     let x = s.tick_x(g, (bar - 1) * BAR) + 2.0;
     s.scene_context(g, x, g.ruler.y + 4.0)
-}
-
-#[test]
-fn the_ruler_has_its_rows_in_the_order_of_the_mock() {
-    let (mut s, g) = studio();
-    assert!(press_ruler(&mut s, &g, 3));
-    assert_eq!(
-        labels(&s),
-        [
-            "ここから再生",
-            "マーカーを追加",
-            "ループの始まりをここに",
-            "ループの終わりをここに",
-            "テンポを設定…",
-            "拍子を設定",
-            "目盛り"
-        ]
-    );
 }
 
 #[test]
@@ -115,26 +97,14 @@ fn the_meter_row_offers_the_meters_and_sets_the_bar_of_the_press() {
 }
 
 #[test]
-fn the_loop_band_has_the_loop_rows_and_the_rest_of_the_ruler_does_not() {
+fn the_loop_band_outside_the_loop_is_the_rulers() {
+    // The rows inside the loop are in tests/context_menus/menus.txt (other-22).
     let (mut s, g) = studio();
     s.song
         .run("loop.set", json!({ "start": 4 * BAR, "end": 8 * BAR }))
         .unwrap();
     assert!(press_band(&mut s, &g, 6));
-    assert_eq!(
-        labels(&s),
-        [
-            "ループ",
-            "ループ範囲のものを選択",
-            "ループの中を書き出す…",
-            "複製",
-            "セクションにする",
-            "時間を挿入",
-            "時間を削除"
-        ]
-    );
-    assert!(enabled(&s, "ループ"));
-    // Outside the loop the band is the ruler's.
+    assert_eq!(labels(&s)[0], "ループ");
     assert!(press_band(&mut s, &g, 12));
     assert_eq!(labels(&s)[0], "ここから再生");
 }

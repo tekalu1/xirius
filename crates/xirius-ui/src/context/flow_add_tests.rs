@@ -105,22 +105,11 @@ const ADDS: [&str; 4] = [
 ];
 
 #[test]
-fn the_insert_heading_menu_has_its_rows_in_order() {
+fn the_insert_heading_menu_shows_the_keys_of_the_clipboard() {
+    // The rows are in tests/context_menus/menus.txt (other-57).
     let (mut s, g) = mix();
     let vocal = track(&s, "Vocal");
     assert!(press(&mut s, &g, MixerHit::Heading(vocal, Area::Insert)));
-    assert_eq!(
-        labels(&s),
-        [
-            "インサートをコピー",
-            "インサートを貼り付け",
-            "インサートを後ろに貼り付け",
-            "エフェクトを追加…",
-            "スプリッターを追加",
-            "チャンネルの設定をコピー",
-            "チャンネルの設定を貼り付け"
-        ]
-    );
     assert_eq!(
         key(&s, "インサートをコピー"),
         if cfg!(target_os = "macos") {
@@ -137,9 +126,6 @@ fn the_insert_heading_menu_has_its_rows_in_order() {
             "Ctrl+V"
         }
     );
-    assert!(enabled(&s, "インサートをコピー"));
-    assert!(!enabled(&s, "インサートを貼り付け"));
-    assert!(!enabled(&s, "インサートを後ろに貼り付け"));
 }
 
 #[test]

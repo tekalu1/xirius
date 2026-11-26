@@ -89,6 +89,22 @@ new test, and a row left without them fails the run, naming the row.
   frame 812 is 0.003`; a built-in in the list without a processor in `stock::create` fails as
   `<uid>, …: no processor`. The probe tests (`stock::probe`) take the list from there too. The
   device's own tests then check its sound, not silence or letting go.
+- **A row of a right-press menu** (a rule in `crates/xirius-ui/tests/context_menus/mapping.json`
+  or `supplemental.json`): run the menu tests with `XIRIUS_WRITE_MENUS=1` and read the change
+  to `tests/context_menus/menus.txt` (each menu, opened from the sample song, with its labels in
+  order, the rule of each row and `(dim)`). `context::placement::every_row`
+  (`crates/xirius-ui/src/context/every_row_tests.rs`) then presses the row: it must run a
+  registered command with arguments it takes, be at most one step that one undo takes back, and
+  be exactly one step when its command goes into the history (a row that sets what already
+  stands is in `SETS_WHAT_STANDS` with the reason). A failure names the rule and its place in
+  the table, as `other-17:002 (編集 > 削除) 「削除」 in other-17 (a clip and a point): one press
+  made 2 steps that one undo does not take back together`; a menu that no longer matches the file fails with the line and its menu; a rule
+  that no menu opened shows fails as `<rule> (…): not in any menu of <target> opened here`, and
+  a new target as `<target>: neither in TARGETS nor in NOT_OPENED`. Open the target in
+  `TARGETS` (a state of the sample song that shows the row) or give the reason in `ABSENT` /
+  `NOT_OPENED`. A menu's own test then checks what its rows do, their keys and the selection;
+  it needs no list of labels, no `enabled` of a row of the file and no "one step, one undo"
+  that only compares the song.
 
 ## Build artifacts
 

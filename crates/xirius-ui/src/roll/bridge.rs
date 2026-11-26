@@ -272,6 +272,12 @@ impl Studio {
         if out.toggle_loop {
             self.toggle_loop();
         }
+        // A key that makes more than one edit (Delete of points and notes) is one undo; in a
+        // macro the macro's group already holds them.
+        let together = out.edits.len() > 1 && !self.macro_stepping;
+        if together {
+            self.song.session_mut().begin_group();
+        }
         for edit in out.edits {
             let args = if edit.command == "note.quantize" {
                 self.quant_args(edit.args)
@@ -312,6 +318,9 @@ impl Studio {
                 }
                 Err(e) => self.error = Some(e),
             }
+        }
+        if together {
+            self.song.session_mut().end_group();
         }
         if let Some(ctx) = self.roll_ctx(g) {
             self.roll.sync(&ctx);
