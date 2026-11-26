@@ -414,5 +414,89 @@ class LeftoverTests(unittest.TestCase):
         self.assertFalse(Path(seen[0]["TMP"]).exists())
 
 
+class ReleaseWindowTests(unittest.TestCase):
+    """`--windows` runs the release's window tests and records the commit they passed on."""
+
+    SHA = "c" * 40
+
+    def windows(self, argv, run=None, dirty=""):
+        calls, ran = [], []
+
+        def git(*args):
+            calls.append(args)
+            if args[0] == "status":
+                return dirty
+            if args[0] == "rev-parse":
+                return self.SHA
+            return ""
+
+        def fake_run(command, environment=None):
+            ran.append((command, environment))
+            if run:
+                run(command, environment)
+
+        printed = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, patch("sys.argv", ["ci_tests.py", *argv]), \
+                patch.object(ci_tests, "git", side_effect=git), \
+                patch.object(ci_tests, "run", side_effect=fake_run), \
+                patch.object(ci_tests, "nextest_version"), \
+                patch.object(ci_tests, "WINDOW_RECORDS", Path(tmp) / "records"), \
+                patch.object(ci_tests.leftovers, "user_places", return_value=[Path(tmp) / "none"]), \
+                contextlib.redirect_stdout(printed), contextlib.redirect_stderr(printed):
+            try:
+                code = ci_tests.main()
+            except RuntimeError as error:
+                code = str(error)
+            records = sorted(p.name for p in (Path(tmp) / "records").glob("*"))
+        return code, calls, ran, records, printed.getvalue()
+
+    def test_the_list_is_the_release_window_tests_and_they_are_left_out_of_ci(self):
+        commands = ci_tests.window_commands()
+        self.assertEqual(len(commands), len(ci_tests.release_ci_gate.WINDOW_TESTS))
+        for (package, target), command in zip(ci_tests.release_ci_gate.WINDOW_TESTS, commands):
+            self.assertEqual(command[:3], ["cargo", "nextest", "run"])
+            self.assertEqual(command[-4:], ["-p", package, "--test", target])
+            self.assertTrue(ci_tests.opens_windows(package, target))
+
+    def test_a_pass_writes_the_record_of_the_commit_and_the_tag_holds_it(self):
+        code, calls, ran, records, printed = self.windows(["--windows", "--tag", "v1.0.1"])
+        self.assertEqual(code, 0, printed)
+        self.assertIn("--check-tag", ran[0][0])
+        self.assertEqual([c for c, _ in ran[1:]], ci_tests.window_commands())
+        self.assertNotEqual(ran[1][1]["TMP"], os.environ.get("TMP"), "inside the watch")
+        self.assertEqual(records, [f"{self.SHA}.txt"])
+        tag = [c for c in calls if c[:2] == ("tag", "-a")]
+        self.assertEqual(len(tag), 1)
+        self.assertEqual(tag[0][2:4], ("v1.0.1", self.SHA))
+        ok, why = ci_tests.release_ci_gate.window_verdict(tag[0][-1], self.SHA)
+        self.assertTrue(ok, why)
+        self.assertIn(why, printed)
+
+    def test_changes_beside_the_commit_stop_before_the_tests(self):
+        code, calls, ran, records, _ = self.windows(["--windows"], dirty=" M src/lib.rs")
+        self.assertIn("commit or stash", code)
+        self.assertEqual(ran, [])
+        self.assertEqual(records, [])
+
+    def test_what_the_tests_leave_fails_the_run_with_no_record_and_no_tag(self):
+        def run(command, environment):
+            if command[:2] == ["cargo", "nextest"]:
+                Path(environment["TMP"], "left-by-a-window-test").mkdir()
+
+        code, calls, _, records, printed = self.windows(["--windows", "--tag", "v1.0.1"], run=run)
+        self.assertEqual(code, 1)
+        self.assertIn("left-by-a-window-test", printed)
+        self.assertEqual(records, [])
+        self.assertFalse([c for c in calls if c[:2] == ("tag", "-a")])
+
+    def test_a_failing_window_test_writes_no_record(self):
+        def run(command, environment):
+            if command[:2] == ["cargo", "nextest"]:
+                raise subprocess.CalledProcessError(1, command)
+
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.windows(["--windows"], run=run)
+
+
 if __name__ == "__main__":
     unittest.main()

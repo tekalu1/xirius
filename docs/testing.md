@@ -17,6 +17,11 @@ These are additional builds, not part of a claim that every configuration builds
 `--plugins` remains the explicit real-ARA check: set the plugin paths listed in
 `docs/ara-verification.md`. Tests opening real windows remain excluded by the lists in
 `scripts/ci_tests.py` and must run on a desktop of known size before release.
+`--windows --tag v<version>` runs the window tests a release needs a record of
+(`WINDOW_TESTS` in `scripts/release_ci_gate.py`; for now the `xirius-ui` `e2e_window` save
+and open run) on a clean checkout, and on a pass makes the annotated release tag whose message
+names the commit and the result. The release workflow stops a tag without that record
+(`docs/release-ci-gate.md`).
 MP3 tests list encoder-dependent cases as ignored when LAME is absent. Explicitly executing
 one of those cases with a nonempty name substring filter, `--exact`, or `--ignored` without
 the encoder fails; it cannot be reported as a successful test. Listing remains successful.

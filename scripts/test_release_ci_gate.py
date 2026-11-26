@@ -3,11 +3,15 @@
 They never reach GitHub: the runs and jobs are written here, and the clock is a counter.
 """
 
+import contextlib
 import importlib.util
+import io
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("release_ci_gate", HERE / "release_ci_gate.py")
@@ -179,6 +183,61 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(asked, 3)
 
 
+class WindowRecordTests(unittest.TestCase):
+    """A tag passes only with a passing record of every window test on its own commit."""
+
+    def message(self, record):
+        return f"Xirius 1.0.1\n\n{record}\n"
+
+    def test_the_record_ci_tests_writes_passes_for_its_commit(self):
+        record = gate.window_record(SHA, "2026-11-26T00:00:00Z")
+        self.assertFalse(record.startswith(("- ", "* ")), "not a note the update panel reads")
+        ok, why = gate.window_verdict(self.message(record), SHA)
+        self.assertTrue(ok, why)
+        self.assertEqual(why, record)
+
+    def test_a_tag_without_a_record_stops(self):
+        ok, why = gate.window_verdict("Xirius 1.0.1\n", SHA)
+        self.assertFalse(ok)
+        self.assertIn("no record", why)
+        self.assertFalse(gate.window_verdict("", SHA)[0])
+
+    def test_a_record_of_another_commit_or_not_passing_or_short_stops(self):
+        other = gate.window_record("b" * 40, "t")
+        self.assertIn("not " + SHA, gate.window_verdict(self.message(other), SHA)[1])
+        failed = gate.window_record(SHA, "t").replace("result=pass", "result=fail")
+        self.assertIn("not pass", gate.window_verdict(self.message(failed), SHA)[1])
+        short = gate.window_record(SHA, "t", tests=[])
+        self.assertIn("lacks xirius-ui/e2e_window", gate.window_verdict(self.message(short), SHA)[1])
+        for record in (other, failed, short):
+            self.assertFalse(gate.window_verdict(self.message(record), SHA)[0])
+
+    def test_one_good_record_among_others_passes(self):
+        lines = [gate.window_record("b" * 40, "t"), gate.window_record(SHA, "t")]
+        self.assertTrue(gate.window_verdict(self.message("\n".join(lines)), SHA)[0])
+
+    def test_the_window_tests_are_targets_ci_leaves_out(self):
+        sys.path.insert(0, str(HERE))
+        import ci_tests
+
+        for package, target in gate.WINDOW_TESTS:
+            self.assertTrue((HERE.parent / "crates" / package / "tests" / f"{target}.rs").is_file())
+            self.assertTrue(ci_tests.opens_windows(package, target))
+
+    def test_the_command_line_reads_the_tags_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            message = Path(tmp) / "tag.txt"
+            out = Path(tmp) / "out.txt"
+            message.write_text(self.message(gate.window_record(SHA, "t")), encoding="utf-8")
+            with patch.dict("os.environ", {"GITHUB_OUTPUT": str(out)}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(gate.main(["--sha", SHA, "--window-record", str(message)]), 0)
+            self.assertTrue(out.read_text(encoding="utf-8").startswith("window=window-tests: "))
+            message.write_text("Xirius 1.0.1\n", encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(gate.main(["--sha", SHA, "--window-record", str(message)]), 1)
+
+
 class WorkflowTests(unittest.TestCase):
     """The required jobs are a subset of rust.yml jobs; release waits on their gate."""
 
@@ -205,6 +264,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(text, r"(?ms)^  publish:\n    needs: \[build, ci-gate, sign\]")
         self.assertRegex(text, r"--wait-minutes 90\b")
         self.assertIn("timeout-minutes: 100", text)
+
+    def test_the_release_stops_a_tag_without_the_window_tests_record_and_shows_it(self):
+        text = (HERE.parent / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        gate_job = text.split("\n  ci-gate:\n", 1)[1].split("\n  sign:\n", 1)[0]
+        self.assertIn("--window-record", gate_job)
+        self.assertIn('git cat-file -t "refs/tags/$TAG"', gate_job)
+        self.assertIn("window: ${{ steps.window.outputs.window }}", gate_job)
+        publish = text.split("\n  publish:\n", 1)[1]
+        self.assertIn("WINDOW: ${{ needs.ci-gate.outputs.window }}", publish)
+        self.assertLess(publish.index('"$WINDOW" >> RELEASE-NOTES.md'), publish.index("gh release create"))
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@
 - GitHub Actions は有効。`rust`（Windows と macOS の fmt・clippy・試験・design lint・release の scripts の試験、cargo-deny、gitleaks）と `plan` が push と PR で、`dco` が PR で走る。本物の窓を開く試験は CI から外してある（一覧は `scripts/ci_tests.py`）。それらは Release を出す前に、窓の大きさが決まった PC で流す。macOS のビルドの距離は `mac-build`（手で起こす）で測る。
 - 試験には cargo-nextest `0.9.151` が必要。準備と実行は [docs/testing.md](docs/testing.md) を参照。
 - 手元の検査は `cargo fmt --check`・`cargo clippy --workspace --all-targets -- -D warnings`・`python scripts/ci_tests.py`・`cargo run -p xirius-design-lint`・`cargo deny check`。plan を直したら `python scripts/plan.py check` と `python scripts/test_plan.py` も流す。
-- Release はタグ `v<版>` の push で、作る・署名する・公開するまで自動で進む。公開の前に、同じ commit の main の `rust` の成功を待つ（`docs/release-ci-gate.md`）。`-beta.1` などの付いた版は pre-release になる（`docs/update-signing.md`）。
+- Release はタグ `v<版>` の push で、作る・署名する・公開するまで自動で進む。公開の前に、同じ commit の main の `rust` の成功を待つ（`docs/release-ci-gate.md`）。タグは `python scripts/ci_tests.py --windows --tag v<版>` で作る（Release に要る窓の試験を流し、通った commit と結果を注釈つきのタグの本文に書く。記録の無いタグは release が止める）。`-beta.1` などの付いた版は pre-release になる（`docs/update-signing.md`）。
 - 画面の形は `docs/ui-approved.md` に書いた承認済みのモックに合わせる。
 - `CLAUDE.md` と `AGENTS.md` は同じ中身。片方を直したら、もう片方も同じに直す。
 

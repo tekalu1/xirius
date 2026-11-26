@@ -8,6 +8,9 @@ name: release
 # - 公開の前に ci-gate の job が、同じ commit の main への push で走った rust.yml の run の成功を
 #   GitHub の API（GET だけ）で確かめる。走っている途中なら待ち（90 分まで）、赤・見つからない・
 #   取り消されたなら署名も公開もしない（docs/release-ci-gate.md）。
+# - 本物の窓を開く試験は CI で流せないので、PC で `python scripts/ci_tests.py --windows --tag v<版>`
+#   が流し、通った commit と結果を注釈つきのタグの本文に書く。ci-gate はタグの commit の記録が
+#   無いタグを止め、publish は記録を Release の本文の最後に書き足す（ARC-051）。
 # - プレリリースの版（v1.0.1-beta.1）は GitHub の pre-release として出し、latest にしない。
 #   正式版は latest にする（LIC-040。安定版のアプリは /releases/latest だけを読む）。
 # - 配布物は setup.exe・マニフェスト（Xirius-<版>-win-x64-update.json）・その .sig・zip・
@@ -120,6 +123,7 @@ jobs:
       contents: read
     outputs:
       sha: ${{ steps.gate.outputs.sha }}
+      window: ${{ steps.window.outputs.window }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -130,6 +134,19 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+
+      # The checkout may have fetched the tag as a lightweight one: fetch it again as it is.
+      - id: window
+        name: 窓の試験の記録がタグにある
+        run: |
+          git fetch --force --no-tags origin "refs/tags/$TAG:refs/tags/$TAG"
+          if [ "$(git cat-file -t "refs/tags/$TAG")" != tag ]; then
+            echo "::error::$TAG は注釈の無いタグです。python scripts/ci_tests.py --windows --tag $TAG で作ってください（docs/release-ci-gate.md）"
+            exit 1
+          fi
+          sha=$(git rev-parse "refs/tags/$TAG^{commit}")
+          git for-each-ref --format='%(contents)' "refs/tags/$TAG" > "$RUNNER_TEMP/tag.txt"
+          python scripts/release_ci_gate.py --sha "$sha" --tag "$TAG" --window-record "$RUNNER_TEMP/tag.txt"
 
       - id: gate
         name: main の CI が同じ commit を通した
@@ -231,6 +248,7 @@ jobs:
       contents: write
     env:
       CHANNEL: ${{ needs.build.outputs.channel }}
+      WINDOW: ${{ needs.ci-gate.outputs.window }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -247,6 +265,9 @@ jobs:
         run: |
           sha256sum -c SHA256SUMS.txt
           ls ./*-update.json.sig > /dev/null
+          # The window tests' record, as a plain line: the update panel reads only the bullets.
+          test -n "$WINDOW" || { echo "::error::ci-gate gave no record of the window tests"; exit 1; }
+          printf '\n窓の試験（scripts/ci_tests.py --windows）: %s\n' "$WINDOW" >> RELEASE-NOTES.md
           case "$CHANNEL" in
             beta) flags=(--prerelease --latest=false) ;;
             stable) flags=(--prerelease=false --latest) ;;

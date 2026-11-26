@@ -8744,6 +8744,16 @@ done_when = "ARA の別プロセスの見張り（呼び出しの 30 秒と止�
 status = "done"
 
 [[item]]
+id = "ARC-051"
+title = "窓を開く試験を Release の関門にする（ci_tests.py --windows とタグの記録）"
+area = "ARC"
+phase = "v1.1"
+source = "2026-11-26 の持ち主の承認（試験の監査の判断 2、推奨どおり）"
+after = ["ARC-049"]
+done_when = "python scripts/ci_tests.py --windows が、変更の無い checkout の commit で Release に要る窓の試験（最初は保存・開くを通す xirius-ui の e2e_window の 1 本）を leftovers の見張りの中で流し、通れば commit と結果の 1 行の記録を出す。--tag v<版> は版と本文を確かめ、その記録を本文に持つ注釈つきのタグを作る。release.yml の ci-gate は、注釈の無いタグ・タグの commit の pass の記録が無いタグを止め（sign と publish は走らない）、publish は記録を Release の本文の最後に箇条でない行で書き足す。落ちる・物を残す・変更のある checkout では記録もタグも作らない。scripts の試験で確かめる"
+status = "done"
+
+[[item]]
 id = "UI-371"
 title = "画面外の窓試験を現行の仕様にそろえ、トラック一覧の UIA を読めるようにする"
 area = "UI"
