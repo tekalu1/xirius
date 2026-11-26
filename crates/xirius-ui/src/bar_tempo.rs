@@ -373,7 +373,8 @@ mod tests {
     #[test]
     fn a_drag_sets_the_tempo_by_its_distance_inside_the_range() {
         // (row, pixels moved down, Shift, the tempo after from the one before)
-        let rows: [(&str, f32, bool, fn(f64) -> f64); 5] = [
+        type Row = (&'static str, f32, bool, fn(f64) -> f64);
+        let rows: [Row; 5] = [
             ("Shift makes it fine", -20.0, true, |was| was + 1.0),
             ("down lowers", 20.0, false, |was| was - 10.0),
             ("a press without a move", 0.0, false, |was| was),
