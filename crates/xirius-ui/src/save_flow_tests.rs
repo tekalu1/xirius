@@ -207,8 +207,9 @@ fn ctrl_s_saves_every_kind_of_change_and_another_process_opens_the_same_song() {
     let w = desk.open(s);
 
     w.key("ctrl-shift-s");
+    // The key's own frame polls the save, and a quick one is already taken in there.
     assert!(
-        w.studio.borrow().saving.is_some(),
+        w.studio.borrow().saving.is_some() || w.studio.borrow().song.dir() == Some(dir.clone()),
         "Ctrl+Shift+S answered by the folder starts the save"
     );
     w.settle();
@@ -261,7 +262,10 @@ fn ctrl_s_saves_every_kind_of_change_and_another_process_opens_the_same_song() {
     };
 
     w.key("ctrl-s");
-    assert!(w.studio.borrow().saving.is_some(), "Ctrl+S starts the save");
+    assert!(
+        w.studio.borrow().saving.is_some() || w.studio.borrow().song.is_saved(),
+        "Ctrl+S starts the save"
+    );
     w.settle();
     let here = {
         let s = w.studio.borrow();
