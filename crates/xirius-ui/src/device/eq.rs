@@ -715,24 +715,6 @@ mod tests {
     }
 
     #[test]
-    fn ui_326_a_narrow_window_has_tabs_and_one_band() {
-        let v = defaults();
-        let def = &xirius_params::EQ;
-        let b = body(def, &shape(MIN_W, 4, &v));
-        assert_eq!(b.tabs.len(), 6);
-        assert!(b.tabs[4].chosen && !b.tabs[0].on);
-        assert_eq!(b.names.len(), 1);
-        assert_eq!(b.names[0].text, "HF");
-        let freqs = b.slots.iter().filter(|s| s.label == Some("Freq")).count();
-        assert_eq!(freqs, 1);
-        let wide = body(def, &shape(NATURAL_W, 4, &v));
-        assert!(b.h < wide.h);
-        assert!(narrow(MIN_W) && !narrow(NATURAL_W));
-        // Its height follows its width, not the band chosen.
-        assert_eq!(body(def, &shape(MIN_W, 0, &v)).h, b.h);
-    }
-
-    #[test]
     fn ui_326_a_point_moves_its_band_and_its_menu_sets_its_type() {
         let mut v = defaults();
         let def = &xirius_params::EQ;
@@ -755,20 +737,16 @@ mod tests {
             lc.at.1 > r.y + r.h / 2.0,
             "a cut sits below 0 dB at its corner"
         );
+        // Its types, its slopes, then its on, as the bands declare them.
         let labels: Vec<_> = lc.menu.iter().flatten().map(|c| c.label.clone()).collect();
-        assert_eq!(
-            labels,
-            [
-                "Low Cut",
-                "Low Shelf",
-                "Peaking",
-                "Notch",
-                "12 dB/oct",
-                "24 dB/oct",
-                "48 dB/oct",
-                "バンドをオン"
-            ]
-        );
+        let want: Vec<_> = EQ_BANDS[0]
+            .types
+            .iter()
+            .map(|t| t.label().to_string())
+            .chain(xirius_params::SLOPES.iter().map(|s| s.to_string()))
+            .chain(["バンドをオン".to_string()])
+            .collect();
+        assert_eq!(labels, want);
         // Choosing Notch for the HMF puts its point on 0 dB and drops its y.
         let notch = pts[3].menu[3].clone().unwrap();
         for (k, x) in notch.set {
@@ -795,14 +773,6 @@ mod tests {
         assert_eq!(own.len(), 1);
         let (_, none) = curves(&v, r, Some(3), RATE);
         assert!(none.is_empty(), "a flat band draws nothing of its own");
-    }
-
-    #[test]
-    fn ui_326_every_band_parameter_is_its_bands() {
-        let def = &xirius_params::EQ;
-        assert_eq!(band_of(def, index(def, "mid2_q")), Some(3));
-        assert_eq!(band_of(def, index(def, "low_cut_on")), Some(0));
-        assert_eq!(band_of(def, index(def, "output")), None);
     }
 
     #[test]

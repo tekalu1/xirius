@@ -1,13 +1,10 @@
 //! UI-328: the Limiter's window, without a window.
 
-use std::sync::Arc;
 use std::time::Instant;
 
-use gpui::accesskit;
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::Plugin;
-use xirius_engine::stock::Probe;
 
 use super::dynamics::{self, Dynamics, STEP};
 use super::layout;
@@ -126,21 +123,23 @@ fn ui_328_the_ceilings_point_offers_the_usual_ceilings() {
     let r = s.instruments.frame(0, &g);
     let pts = s.instruments.points_of(r, &x, def, 0);
     let menu: Vec<_> = pts[1].menu.iter().flatten().collect();
-    let labels: Vec<_> = menu.iter().map(|c| c.label.as_str()).collect();
-    assert_eq!(
-        labels,
-        [
-            "Ceiling を -0.1 dB に",
-            "Ceiling を -0.3 dB に",
-            "Ceiling を -1.0 dB に"
-        ]
-    );
-    // The default (-0.3 dB) is the one ticked.
+    let labels: Vec<_> = menu.iter().map(|c| c.label.clone()).collect();
+    let want: Vec<_> = CEILINGS
+        .iter()
+        .map(|c| format!("Ceiling を {c:.1} dB に"))
+        .collect();
+    assert_eq!(labels, want);
+    // The default is the one ticked.
+    let (k, spec) = def.param("ceiling").unwrap();
+    let default = spec.to_plain(spec.default_norm());
     assert_eq!(
         menu.iter().map(|c| c.on).collect::<Vec<_>>(),
-        [false, true, false]
+        CEILINGS
+            .iter()
+            .map(|c| (c - default).abs() < 0.01)
+            .collect::<Vec<_>>()
     );
-    let (k, spec) = def.param("ceiling").unwrap();
+    assert_eq!(menu.iter().filter(|c| c.on).count(), 1);
     for (c, want) in menu.iter().zip(CEILINGS) {
         assert_eq!(c.set.len(), 1);
         assert_eq!(c.set[0].0, k);
@@ -161,13 +160,7 @@ fn ui_328_a_right_press_on_the_ceiling_sets_it_from_its_menu() {
 
 #[test]
 fn ui_328_the_history_keeps_five_seconds_with_the_gain_on_the_input() {
-    let (mut s, _, _, id) = lim_window();
-    let probe = Arc::new(Probe::new());
-    let p = s.project();
-    let find = |x: PluginId| (x == id).then(|| probe.clone());
-    s.instruments
-        .poll_with(&p, 48_000.0, Instant::now(), true, find);
-    assert!(probe.watching());
+    let (s, _, _, _) = lim_window();
     let mut d = Dynamics::default();
     let t0 = Instant::now();
     for i in 0..400u32 {
@@ -185,51 +178,4 @@ fn ui_328_the_history_keeps_five_seconds_with_the_gain_on_the_input() {
     let mut v = values(&x);
     v[k] = spec.to_norm(6.0);
     assert!((dynamics::pre(def, &v) - 1.995).abs() < 0.01);
-}
-
-#[test]
-fn ui_328_the_peaks_are_sample_peaks_and_the_input_reads_plus_over_full_scale() {
-    let (mut s, g, _, id) = lim_window();
-    let of = |s: &Studio, p: &str| {
-        crate::a11y::device_marks(s, &g)
-            .into_iter()
-            .find(|m| m.key == format!("device-{id}-{p}"))
-            .unwrap_or_else(|| panic!("no mark for {p}"))
-            .node
-    };
-    assert_eq!(of(&s, "input").label(), Some("Gain"));
-    assert_eq!(of(&s, "ceiling").label(), Some("Ceiling"));
-    // The loudest sample, not a smoothed level: 1.2 is +1.6 dB.
-    let d = s.instruments.dynamics.entry(id).or_default();
-    d.feed(([1.2, 0.3], [0.96, 0.9]), 1.9, Instant::now(), SPAN);
-    let peak = of(&s, "readout-0");
-    assert_eq!(peak.role(), accesskit::Role::Button);
-    assert_eq!(peak.label(), Some("Input peak"));
-    assert_eq!(peak.value(), Some("+1.6"));
-    assert_eq!(of(&s, "readout-1").value(), Some("-1.9"));
-    assert_eq!(of(&s, "readout-2").value(), Some("-0.4"));
-    let b = {
-        let x = s.project().tracks[&s.instruments.open[0].track]
-            .inserts
-            .iter()
-            .find(|x| x.id == id)
-            .cloned()
-            .unwrap();
-        let r = s.instruments.frame(0, &g);
-        s.instruments.body(r, &x, x.builtin().unwrap())
-    };
-    let d = &s.instruments.dynamics[&id];
-    assert!(b.levels[0].alert(d), "the input over full scale is red");
-    assert!(!b.levels[2].alert(d));
-    // The output over full scale too (M-ui-5); the reduction never.
-    let mut over = d.clone();
-    over.feed(([0.5, 0.3], [1.1, 0.9]), 1.0, Instant::now(), SPAN);
-    assert_eq!(b.levels[2].text(&over), "+0.8");
-    assert!(b.levels[2].alert(&over));
-    assert!(!b.levels[1].text(&over).starts_with('+') && !b.levels[1].alert(&over));
-    // A press clears it.
-    let (x, y) = s.instrument_center(&g, id, Part::Readout(0)).unwrap();
-    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
-    s.instrument_up();
-    assert_eq!(of(&s, "readout-0").value(), Some("-\u{221e}"));
 }

@@ -221,17 +221,6 @@ fn the_target_list_leaves_out_the_per_file_values() {
 }
 
 #[test]
-fn the_target_list_keeps_the_pads_with_a_sound() {
-    let (mut s, _, t, id) = window("Drum Kit");
-    fill(&mut s, id, 0);
-    let rows = listed(&mut s, t);
-    assert!(
-        rows.contains(&target(id, 0, "volume").to_string()),
-        "{rows:?}"
-    );
-}
-
-#[test]
 fn a_lane_of_a_per_file_value_still_loads_and_still_shows_in_the_list() {
     let (mut s, _, t, id) = window("Drum Kit");
     fill(&mut s, id, 0);

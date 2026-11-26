@@ -1,16 +1,12 @@
 //! UI-330: the Reverb's window, without a window.
 
-use std::sync::Arc;
-use std::time::Instant;
-
 use gpui::accesskit;
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::Plugin;
-use xirius_engine::stock::Probe;
 
 use super::layout;
-use super::reverb::{self, FLOOR, GRIP, LIT};
+use super::reverb::{self, DECAYS, FLOOR, GRIP, LIT};
 use crate::instrument::window::{Part, values};
 use crate::studio::{Geometry, Studio};
 use crate::tools::Mods;
@@ -230,25 +226,25 @@ fn ui_330_the_tails_point_offers_the_usual_decays_and_its_wheel_the_damping() {
         .menu
         .iter()
         .flatten()
-        .map(|c| c.label.as_str())
+        .map(|c| c.label.clone())
         .collect();
+    let label = |v: f64| format!("Decay を {v} s に");
+    assert_eq!(labels, DECAYS.map(label));
     assert_eq!(
-        labels,
-        [
-            "Decay を 0.8 s に",
-            "Decay を 1.5 s に",
-            "Decay を 2.5 s に",
-            "Decay を 4 s に"
-        ]
+        labels.last().unwrap(),
+        "Decay を 4 s に",
+        "a whole second has no .0"
     );
     let (px, py) = s.instrument_center(&g, id, Part::Point(0, 1)).unwrap();
     assert!(s.instrument_right(&g, px, py));
 
-    assert!(s.context_choose(&g, "Decay を 4 s に"));
-    assert!((plain(&s, t, "decay") - 4.0).abs() < 1e-6);
+    let last = DECAYS.len() - 1;
+    assert!(s.context_choose(&g, &label(DECAYS[last])));
+    assert!((plain(&s, t, "decay") - DECAYS[last]).abs() < 1e-6);
     let x = fx(&s, t);
     let pts = s.instruments.points_of(r, &x, def, 0);
-    assert!(pts[1].menu[3].as_ref().unwrap().on);
+    let on: Vec<_> = pts[1].menu.iter().flatten().map(|c| c.on).collect();
+    assert_eq!(on, (0..DECAYS.len()).map(|i| i == last).collect::<Vec<_>>());
 
     let d0 = plain(&s, t, "damping");
     let (px, py) = s.instrument_center(&g, id, Part::Point(0, 1)).unwrap();
@@ -281,16 +277,6 @@ fn ui_330_the_reflections_light_and_a_dot_runs_down_the_tail() {
     assert!((d - (s.top + FLOOR / 2.0)).abs() < 1e-9);
     assert_eq!(t, s.start + s.decay / 2.0);
     assert_eq!(reverb::live(&s, s.start + s.decay + 0.01), None);
-
-    // The window watches its probe's onsets as the Delay's does.
-    let (mut st, _, _, id) = rev_window();
-    let probe = Arc::new(Probe::new());
-    let p = st.project();
-    let find = |x: PluginId| (x == id).then(|| probe.clone());
-    st.instruments
-        .poll_with(&p, 48_000.0, Instant::now(), true, find);
-    assert!(probe.watching());
-    assert!(st.instruments.echoes.contains_key(&id));
 }
 
 #[test]

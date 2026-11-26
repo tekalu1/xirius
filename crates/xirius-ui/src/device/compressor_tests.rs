@@ -198,57 +198,176 @@ fn ui_327_the_history_keeps_four_seconds_and_the_readouts_their_most() {
     assert!(!d.over());
 }
 
-/// M-ui-5: the input's and the output's readouts say + over full scale and turn red, as
-/// every meter's does; the reduction's does not.
-#[test]
-fn ui_327_the_input_and_output_read_plus_and_red_over_full_scale() {
-    let (s, g, t, _) = cmp_window();
-    let x = fx(&s, t);
-    let r = s.instruments.frame(0, &g);
-    let b = s.instruments.body(r, &x, x.builtin().unwrap());
-    let mut d = Dynamics::default();
-    d.feed(([1.2, 0.3], [1.1, 0.9]), 3.0, Instant::now(), SPAN);
-    assert_eq!(b.levels[0].text(&d), "+1.6");
-    assert_eq!(b.levels[2].text(&d), "+0.8");
-    assert!(b.levels[0].alert(&d) && b.levels[2].alert(&d));
-    assert_eq!(b.levels[1].text(&d), "-3.0");
-    assert!(!b.levels[1].alert(&d));
-    // Under full scale: no + and not red.
-    let mut d = Dynamics::default();
-    d.feed(([0.9, 0.3], [0.8, 0.5]), 0.0, Instant::now(), SPAN);
-    assert!(!b.levels[0].text(&d).starts_with('+') && !b.levels[0].alert(&d));
+/// The sample song with the built-in effect `name` on Keys, its window open.
+fn effect_window(name: &str) -> (Studio, Geometry, PluginId) {
+    let mut s = Studio::sample();
+    let g = s.geometry(1600.0, 1000.0);
+    let t = s
+        .project()
+        .tracks
+        .values()
+        .find(|t| t.name == "Keys")
+        .unwrap()
+        .id;
+    assert!(s.run_command(
+        "plugin.add",
+        json!({ "track": t.to_string(), "name": name }),
+    ));
+    let id = s.project().tracks[&t]
+        .inserts
+        .iter()
+        .find(|x| x.name == name)
+        .unwrap()
+        .id;
+    s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
+    assert!(s.instruments.is_open(id), "{name}");
+    (s, g, id)
 }
 
-#[test]
-fn ui_327_a_press_on_a_readout_clears_its_most() {
-    let (mut s, g, _, id) = cmp_window();
-    let d = s.instruments.dynamics.entry(id).or_default();
-    d.feed(([0.5, 0.5], [0.5, 0.5]), 3.0, Instant::now(), SPAN);
-    let (x, y) = s.instrument_center(&g, id, Part::Readout(1)).unwrap();
-    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
-    s.instrument_up();
-    let d = &s.instruments.dynamics[&id];
-    assert_eq!(d.readout(1), "0.0");
-    assert_eq!(d.readout(0), "-6.0", "the others keep theirs");
+/// The value the screen reader hears from the mark `part` of the device `id`.
+fn mark(s: &Studio, g: &Geometry, id: PluginId, part: &str) -> accesskit::Node {
+    crate::a11y::device_marks(s, g)
+        .into_iter()
+        .find(|m| m.key == format!("device-{id}-{part}"))
+        .unwrap_or_else(|| panic!("no mark for {part}"))
+        .node
 }
 
+/// M-ui-5: on the Compressor and the Limiter, the input's and the output's readouts are the
+/// loudest sample (1.2 is +1.6 dB), say + over full scale and turn red, as every meter's do;
+/// the reduction's never. Under full scale there is no + and no red. Each readout is a button
+/// whose press clears its most and leaves the others theirs.
 #[test]
-fn ui_327_the_probe_is_watched_while_the_window_is_open() {
-    let (mut s, g, _, id) = cmp_window();
-    let probe = Arc::new(Probe::new());
-    let p = s.project();
-    let find = |x: PluginId| (x == id).then(|| probe.clone());
-    s.instruments
-        .poll_with(&p, 48_000.0, Instant::now(), true, find);
-    assert!(probe.watching());
-    assert!(s.instruments.dynamics.contains_key(&id));
-    let (x, y) = s.instrument_center(&g, id, Part::Close).unwrap();
-    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
-    s.instrument_up();
-    let p = s.project();
-    s.instruments
-        .poll_with(&p, 48_000.0, Instant::now(), true, find);
-    assert!(!probe.watching());
+fn ui_327_328_the_readouts_read_plus_and_red_over_full_scale_and_a_press_clears_one() {
+    let rows = [
+        ("Compressor", compressor::SPAN),
+        ("Limiter", super::limiter::SPAN),
+    ];
+    let mut failures = Vec::new();
+    for (name, span) in rows {
+        let (mut s, g, id) = effect_window(name);
+        let mut bad = Vec::new();
+        let d = s.instruments.dynamics.entry(id).or_default();
+        d.feed(([1.2, 0.3], [1.1, 0.9]), 3.0, Instant::now(), span);
+        let said: Vec<_> = (0..3)
+            .map(|k| mark(&s, &g, id, &format!("readout-{k}")))
+            .map(|n| {
+                (
+                    n.role(),
+                    n.label().map(str::to_owned),
+                    n.value().map(str::to_owned),
+                )
+            })
+            .collect();
+        let want: Vec<_> = [
+            ("Input peak", "+1.6"),
+            ("Reduction peak", "-3.0"),
+            ("Output peak", "+0.8"),
+        ]
+        .iter()
+        .map(|(l, v)| {
+            (
+                accesskit::Role::Button,
+                Some(l.to_string()),
+                Some(v.to_string()),
+            )
+        })
+        .collect();
+        if said != want {
+            bad.push(format!("readouts {said:?}"));
+        }
+        let x = s.project().tracks[&s.instruments.open[0].track]
+            .inserts
+            .iter()
+            .find(|x| x.id == id)
+            .cloned()
+            .unwrap();
+        let b = s
+            .instruments
+            .body(s.instruments.frame(0, &g), &x, x.builtin().unwrap());
+        let d = &s.instruments.dynamics[&id];
+        let red: Vec<_> = b.levels.iter().map(|l| l.alert(d)).collect();
+        if red != [true, false, true] {
+            bad.push(format!("red {red:?}"));
+        }
+        let mut under = Dynamics::default();
+        under.feed(([0.9, 0.3], [0.8, 0.5]), 0.0, Instant::now(), span);
+        if b.levels
+            .iter()
+            .any(|l| l.text(&under).starts_with('+') || l.alert(&under))
+        {
+            bad.push("under full scale, a + or red".into());
+        }
+        for (k, cleared) in [(0, "-\u{221e}"), (1, "0.0")] {
+            let (x, y) = s.instrument_center(&g, id, Part::Readout(k)).unwrap();
+            if !s.instrument_press(&g, x, y, 1, Mods::NONE) {
+                bad.push(format!("readout {k} took no press"));
+            }
+            s.instrument_up();
+            let v = mark(&s, &g, id, &format!("readout-{k}"))
+                .value()
+                .map(str::to_owned);
+            if v.as_deref() != Some(cleared) {
+                bad.push(format!("readout {k} pressed reads {v:?}"));
+            }
+        }
+        let kept = mark(&s, &g, id, "readout-2").value().map(str::to_owned);
+        if kept.as_deref() != Some("+0.8") {
+            bad.push(format!("the output kept {kept:?}"));
+        }
+        if !bad.is_empty() {
+            failures.push(format!("{name}: {bad:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "readouts: {failures:#?}");
+}
+
+/// Each built-in effect window that draws what it hears watches its probe while it is open
+/// (the Compressor's and the Limiter's meters, the Delay's and the Reverb's onsets), and lets
+/// it go once closed.
+#[test]
+fn every_effect_window_watches_its_probe_while_it_is_open() {
+    type Kept = fn(&Studio, PluginId) -> bool;
+    let rows: [(&str, Kept); 4] = [
+        ("Compressor", |s, id| {
+            s.instruments.dynamics.contains_key(&id)
+        }),
+        ("Limiter", |s, id| s.instruments.dynamics.contains_key(&id)),
+        ("Delay", |s, id| s.instruments.echoes.contains_key(&id)),
+        ("Reverb", |s, id| s.instruments.echoes.contains_key(&id)),
+    ];
+    let mut failures = Vec::new();
+    for (name, kept) in rows {
+        let (mut s, g, id) = effect_window(name);
+        let mut bad = Vec::new();
+        let probe = Arc::new(Probe::new());
+        let find = |x: PluginId| (x == id).then(|| probe.clone());
+        let p = s.project();
+        s.instruments
+            .poll_with(&p, 48_000.0, Instant::now(), true, find);
+        if !probe.watching() {
+            bad.push("not watched while open");
+        }
+        if !kept(&s, id) {
+            bad.push("nothing kept of what it heard");
+        }
+        let (x, y) = s.instrument_center(&g, id, Part::Close).unwrap();
+        if !s.instrument_press(&g, x, y, 1, Mods::NONE) {
+            bad.push("the close took no press");
+        }
+        s.instrument_up();
+        let p = s.project();
+        s.instruments
+            .poll_with(&p, 48_000.0, Instant::now(), true, find);
+        if probe.watching() {
+            bad.push("still watched once closed");
+        }
+        if !bad.is_empty() {
+            failures.push(format!("{name}: {bad:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "probes: {failures:#?}");
 }
 
 #[test]
