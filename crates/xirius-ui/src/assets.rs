@@ -365,14 +365,24 @@ mod tests {
         assert!(OCTICONS_LICENSE.contains("GitHub Inc."));
     }
 
+    /// The logo is drawn `LOGO_ASPECT` wide for its height: that is the wordmark's own shape.
     #[test]
-    fn the_logo_is_the_brand_wordmark() {
+    fn the_logo_is_drawn_in_the_wordmarks_shape() {
         let bytes = Assets.load(LOGO_PATH).unwrap().unwrap();
-        assert!(bytes.starts_with(b"<svg"));
+        let svg = std::str::from_utf8(&bytes).unwrap();
+        assert!(svg.starts_with("<svg"));
+        let view: Vec<f32> = svg
+            .split("viewBox=\"")
+            .nth(1)
+            .and_then(|v| v.split('"').next())
+            .expect("a viewBox")
+            .split(' ')
+            .map(|n| n.parse().unwrap())
+            .collect();
+        let (w, h) = (view[2], view[3]);
         assert!(
-            std::str::from_utf8(&bytes)
-                .unwrap()
-                .contains("viewBox=\"0 0 728 144\"")
+            (LOGO_ASPECT - w / h).abs() < 1e-4,
+            "LOGO_ASPECT {LOGO_ASPECT} but the wordmark is {w}x{h}"
         );
     }
 

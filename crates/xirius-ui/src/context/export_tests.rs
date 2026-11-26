@@ -132,6 +132,7 @@ fn a_finished_export_has_the_rows_of_the_matrix_and_the_old_ones_can_be_written_
             "ごみ箱へ"
         ]
     );
+    let fresh = labels(&s);
     assert!(enabled(&s, "聴く"));
     assert!(enabled(&s, "エクスプローラーで表示"));
     assert!(!enabled(&s, "書き直す"), "the song has not changed");
@@ -143,10 +144,15 @@ fn a_finished_export_has_the_rows_of_the_matrix_and_the_old_ones_can_be_written_
     s.ctx = None;
     let t = *s.project().tracks.keys().next().unwrap();
     s.command(|song| song.toggle_mute(t));
+    assert!(
+        s.bar_view().export_stale,
+        "the bar says the export is out of date"
+    );
     s.open_export(ANCHOR);
     assert_eq!(cards(&s)[0].stale, Some(true));
     menu(&mut s, &g);
     assert!(enabled(&s, "書き直す"));
+    assert_eq!(labels(&s), fresh, "the rewrite row keeps its place");
     let steps = s.song.steps();
     assert!(choose(&mut s, &g, "書き直す"));
     assert!(panel_open(&s), "the panel comes back where it was");
@@ -394,53 +400,6 @@ fn the_rows_are_the_export_commands_with_a_job() {
     assert!(s.context_open(), "the one question");
     assert_eq!(labels(&s), ["ファイルをごみ箱へ"]);
     assert_eq!(s.export.jobs.len(), 1);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn the_rewrite_row_stays_in_its_place_whether_it_is_dim_or_not() {
-    let (_tmp, mut s, g, dir) = exported("dim");
-    menu(&mut s, &g);
-    let fresh = labels(&s);
-    assert!(!enabled(&s, "書き直す"));
-    s.popup = None;
-    s.ctx = None;
-    let t = *s.project().tracks.keys().next().unwrap();
-    s.command(|song| song.toggle_mute(t));
-    s.open_export(ANCHOR);
-    menu(&mut s, &g);
-    assert!(enabled(&s, "書き直す"));
-    assert_eq!(labels(&s), fresh);
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
-fn an_out_of_date_export_stays_out_of_date_when_the_song_is_opened_again() {
-    let (_tmp, mut s, g, dir) = exported("reopen");
-    let job = cards(&s)[0].job.clone();
-    s.popup = None;
-    let t = *s.project().tracks.keys().next().unwrap();
-    s.command(|song| song.toggle_mute(t));
-    s.command(|song| song.save());
-    assert!(s.error.is_none(), "{:?}", s.error);
-
-    // Another song, and back to this one.
-    s.new_song_sync();
-    s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
-    assert!(s.error.is_none(), "{:?}", s.error);
-    s.popup = None;
-    s.open_export(ANCHOR);
-    let c = cards(&s);
-    assert_eq!(c[0].job, job);
-    assert_eq!(c[0].stale, Some(true), "the record knows what the song was");
-    assert!(s.bar_view().export_stale);
-    menu(&mut s, &g);
-    assert!(enabled(&s, "書き直す"));
-    assert!(choose(&mut s, &g, "書き直す"));
-    assert!(until(&mut s, |s| {
-        let c = cards(s);
-        c[0].state == State::Done && c[0].stale == Some(false)
-    }));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

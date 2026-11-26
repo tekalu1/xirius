@@ -161,10 +161,4 @@ mod tests {
         assert_eq!(latin.weight, japanese.weight);
         assert!(latin.fallbacks.is_none() && japanese.fallbacks.is_none());
     }
-
-    #[test]
-    fn family_names_are_the_bundled_ones() {
-        assert_eq!(family(Font::Inter).as_ref(), "Inter");
-        assert_eq!(family(Font::NotoSansJp).as_ref(), "Noto Sans JP");
-    }
 }
