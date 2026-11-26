@@ -80,60 +80,111 @@ fn edt_051_alt_click_on_the_upper_part_mutes_the_note_and_greys_it() {
     assert!(!context(&s, &g).notes()[1].muted);
 }
 
+/// UI-088, UI-284, UI-295: in the roll, → ← move the selected notes a sixteenth (on a quarter
+/// grid too), ↑ ↓ a semitone, Shift+↑ ↓ an octave. With nothing selected the key picks a note and
+/// moves none, as before. Each press is one step undone on its own, the note stays selected,
+/// the Alt form is kept (Alt+→ by the grid, Alt+↑ a semitone, Alt+Shift+↑ an octave), and
+/// several selected notes move together in one step that one Ctrl+Z takes back.
 #[test]
-fn ui_088_the_arrows_alone_move_the_selected_notes_by_a_sixteenth_in_one_step() {
-    let (mut s, g) = setup();
-    s.tool = Tool::Select;
-    // A quarter grid: the arrows still go by a sixteenth.
-    s.song
-        .run("view.grid", json!({"grid": "1/4", "editor": "roll"}))
-        .unwrap();
-    s.set_grid_mode(crate::tools::SnapMode::Quantize);
-    assert_eq!(s.input_context(&g), "roll");
-    // With nothing selected the arrow picks a note, as before.
-    let steps = s.song.steps();
-    assert!(s.edit_key(&g, "right", Mods::NONE));
-    assert_eq!(s.roll.selected.len(), 1);
-    assert_eq!(s.song.steps(), steps);
-    let id = *s.roll.selected.iter().next().unwrap();
-    let start = |s: &Studio| {
-        context(s, &g)
-            .notes()
-            .iter()
-            .find(|n| n.id == id)
-            .unwrap()
-            .start
-    };
-    let was = start(&s);
-    // Then → moves it a sixteenth later as one step, ← back.
-    assert!(s.edit_key(&g, "right", Mods::NONE));
-    assert!(s.error.is_none(), "{:?}", s.error);
-    assert_eq!(start(&s), was + 240);
-    assert_eq!(s.song.steps(), steps + 1);
-    assert!(s.edit_key(&g, "right", Mods::NONE));
-    assert!(s.edit_key(&g, "left", Mods::NONE));
-    assert_eq!(start(&s), was + 240);
-    assert_eq!(s.song.steps(), steps + 3);
-    assert_eq!(s.roll.selected.len(), 1, "the note stays selected");
-    // Alt+→ still goes by the grid.
-    assert!(s.edit_key(&g, "right", Mods::alt()));
-    assert_eq!(start(&s), was + 240 + 960);
-    // Each press is undone on its own.
-    assert!(s.edit_key(&g, "z", Mods::ctrl()));
-    assert!(s.edit_key(&g, "z", Mods::ctrl()));
-    assert_eq!(start(&s), was + 480);
-    // Several selected notes move together, in one step.
-    assert!(s.edit_key(&g, "a", Mods::ctrl()));
-    let before: Vec<_> = context(&s, &g).notes().iter().map(|n| n.start).collect();
-    assert!(s.edit_key(&g, "left", Mods::NONE));
-    let starts =
-        |s: &Studio| -> Vec<_> { context(s, &g).notes().iter().map(|n| n.start).collect() };
-    assert_eq!(
-        starts(&s),
-        before.iter().map(|t| t - 240).collect::<Vec<_>>()
+fn the_arrow_keys_move_the_selected_notes_by_their_step_each_press_one_undo() {
+    type Of = fn(&Note) -> i64;
+    // (row, key, back, mods, its step, Alt's mods, Alt's step, what moves)
+    type Row = (
+        &'static str,
+        &'static str,
+        &'static str,
+        Mods,
+        i64,
+        Mods,
+        i64,
+        Of,
     );
-    assert!(s.edit_key(&g, "z", Mods::ctrl()));
-    assert_eq!(starts(&s), before, "one Ctrl+Z takes back the whole move");
+    let rows: [Row; 3] = [
+        (
+            "→ a sixteenth",
+            "right",
+            "left",
+            Mods::NONE,
+            240,
+            Mods::alt(),
+            960,
+            |n| n.start,
+        ),
+        (
+            "↑ a semitone",
+            "up",
+            "down",
+            Mods::NONE,
+            1,
+            Mods::alt(),
+            1,
+            |n| i64::from(n.pitch),
+        ),
+        (
+            "Shift+↑ an octave",
+            "up",
+            "down",
+            Mods::shift(),
+            12,
+            Mods::alt_shift(),
+            12,
+            |n| i64::from(n.pitch),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (row, key, back, mods, by, alt, alt_by, of) in rows {
+        let (mut s, g) = setup();
+        s.tool = Tool::Select;
+        // A quarter grid: the arrows still go by a sixteenth.
+        s.song
+            .run("view.grid", json!({"grid": "1/4", "editor": "roll"}))
+            .unwrap();
+        s.set_grid_mode(crate::tools::SnapMode::Quantize);
+        assert_eq!(s.input_context(&g), "roll", "{row}");
+        let steps = s.song.steps();
+        let press = |s: &mut Studio, k: &str, m: Mods| {
+            assert!(s.edit_key(&g, k, m), "{row}: {k}");
+            assert!(s.error.is_none(), "{row}: {:?}", s.error);
+        };
+        press(&mut s, key, mods);
+        if (s.roll.selected.len(), s.song.steps()) != (1, steps) {
+            failures.push(format!(
+                "{row}: with nothing selected the key did not only pick one"
+            ));
+            continue;
+        }
+        let id = *s.roll.selected.iter().next().unwrap();
+        let at = |s: &Studio| of(context(s, &g).note(id).unwrap());
+        let all = |s: &Studio| context(s, &g).notes().iter().map(of).collect::<Vec<_>>();
+        let was = at(&s);
+        press(&mut s, key, mods);
+        let one = (at(&s), s.song.steps());
+        press(&mut s, back, mods);
+        press(&mut s, back, mods);
+        let back_twice = (at(&s), s.song.steps(), s.roll.selected.len());
+        press(&mut s, key, alt);
+        let by_alt = at(&s);
+        press(&mut s, "z", Mods::ctrl());
+        let undone = at(&s);
+        press(&mut s, "a", Mods::ctrl());
+        let before = all(&s);
+        press(&mut s, back, mods);
+        let together = all(&s);
+        press(&mut s, "z", Mods::ctrl());
+        let got = (one, back_twice, by_alt, undone, together, all(&s));
+        let want = (
+            (was + by, steps + 1),
+            (was - by, steps + 3, 1),
+            was - by + alt_by,
+            was - by,
+            before.iter().map(|v| v - by).collect::<Vec<_>>(),
+            before.clone(),
+        );
+        if got != want {
+            failures.push(format!("{row}: {got:?}, want {want:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "the arrow keys: {failures:#?}");
 }
 
 /// The id a command made.
@@ -306,70 +357,38 @@ fn edt_062_parts_picked_on_two_tracks_are_edited_together_in_one_step() {
     assert_eq!(notes_on(&s, &both), all);
 }
 
+/// UI-284 with the audition setting: the picked or moved note sounds while the key is down (the
+/// top one of several), and without the setting nothing sounds. The moves themselves are the
+/// table above.
 #[test]
-fn ui_284_the_up_and_down_arrows_move_the_selected_notes_a_semitone_in_one_step() {
+fn ui_284_the_up_and_down_arrows_sound_the_moved_note_only_with_the_audition_setting() {
     let (mut s, g) = setup();
     s.tool = Tool::Select;
     s.rec_set(
         "prefs.set",
         json!({"key": "edit.audition", "value": "true"}),
     );
-    assert_eq!(s.input_context(&g), "roll");
-    // With nothing selected ↑ picks a note, as before, and the note sounds while the key is down.
-    let steps = s.song.steps();
     assert!(s.edit_key(&g, "up", Mods::NONE));
-    assert_eq!(s.roll.selected.len(), 1);
-    assert_eq!(s.song.steps(), steps);
     let id = *s.roll.selected.iter().next().unwrap();
-    let pitch = |s: &Studio| {
-        context(s, &g)
-            .notes()
-            .iter()
-            .find(|n| n.id == id)
-            .unwrap()
-            .pitch
-    };
-    let was = pitch(&s);
-    assert_eq!(s.roll.sounding(), Some(was));
+    let was = context(&s, &g).note(id).unwrap().pitch;
+    assert_eq!(s.roll.sounding(), Some(was), "the picked note sounds");
     assert!(s.key_sound_up());
     assert_eq!(s.roll.sounding(), None);
-    // Then ↑ moves it a semitone up as one step, and the moved note sounds.
     assert!(s.edit_key(&g, "up", Mods::NONE));
-    assert!(s.error.is_none(), "{:?}", s.error);
-    assert_eq!(pitch(&s), was + 1);
-    assert_eq!(s.song.steps(), steps + 1);
-    assert_eq!(s.roll.sounding(), Some(was + 1));
+    assert_eq!(s.roll.sounding(), Some(was + 1), "the moved note sounds");
     assert!(s.key_sound_up());
-    assert!(s.edit_key(&g, "down", Mods::NONE));
-    assert!(s.edit_key(&g, "down", Mods::NONE));
-    assert_eq!(pitch(&s), was - 1);
-    assert_eq!(s.song.steps(), steps + 3);
-    assert_eq!(s.roll.selected.len(), 1, "the note stays selected");
-    // Alt+↑ is still a semitone, Alt+Shift+↑ an octave.
-    assert!(s.edit_key(&g, "up", Mods::alt()));
-    assert_eq!(pitch(&s), was);
-    assert!(s.edit_key(&g, "up", Mods::alt_shift()));
-    assert_eq!(pitch(&s), was + 12);
-    // Each press is undone on its own.
-    assert!(s.edit_key(&g, "z", Mods::ctrl()));
-    assert_eq!(pitch(&s), was);
-    assert!(s.edit_key(&g, "z", Mods::ctrl()));
-    assert_eq!(pitch(&s), was - 1);
-    // Several selected notes move together, in one step.
     assert!(s.edit_key(&g, "a", Mods::ctrl()));
     let pitches =
         |s: &Studio| -> Vec<_> { context(s, &g).notes().iter().map(|n| n.pitch).collect() };
     let before = pitches(&s);
     assert!(s.edit_key(&g, "up", Mods::NONE));
     assert_eq!(
-        pitches(&s),
-        before.iter().map(|p| p + 1).collect::<Vec<_>>()
+        s.roll.sounding(),
+        before.iter().max().map(|p| p + 1),
+        "the top one sounds"
     );
-    // The top one sounds.
-    assert_eq!(s.roll.sounding(), before.iter().max().map(|p| p + 1));
     assert!(s.key_sound_up());
     assert!(s.edit_key(&g, "z", Mods::ctrl()));
-    assert_eq!(pitches(&s), before, "one Ctrl+Z takes back the whole move");
     // Without the audition setting the keys move the notes and nothing sounds.
     s.rec_set(
         "prefs.set",
@@ -384,80 +403,75 @@ fn ui_284_the_up_and_down_arrows_move_the_selected_notes_a_semitone_in_one_step(
     assert!(!s.key_sound_up());
 }
 
+/// UI-284, UI-295: the keys that pick rather than move. Outside the roll ↓ steps the clip
+/// selection and Shift+↓ grows it; in the roll Mod+Shift+↑ grows the note selection. None of
+/// them moves a note or makes a step.
 #[test]
-fn ui_284_the_up_and_down_arrows_step_the_selection_outside_the_roll_as_before() {
-    let (mut s, g) = setup();
-    s.tool = Tool::Select;
-    assert!(s.edit_key(&g, "a", Mods::ctrl()));
-    assert!(!s.roll.selected.is_empty());
-    s.arrange.focus = true;
-    assert_ne!(s.input_context(&g), "roll");
-    let steps = s.song.steps();
-    let picked = s.picked_clips();
-    assert!(s.edit_key(&g, "down", Mods::NONE));
-    assert_eq!(s.song.steps(), steps, "no note moved");
-    assert_ne!(s.picked_clips(), picked, "the clip selection stepped");
-}
-
-#[test]
-fn ui_295_shift_up_and_down_move_the_selected_notes_an_octave_and_grow_the_selection_with_none() {
-    let (mut s, g) = setup();
-    s.tool = Tool::Select;
-    assert_eq!(s.input_context(&g), "roll");
-    // With nothing selected Shift+↑ grows the selection as before: a note is picked, none moves.
-    let steps = s.song.steps();
-    assert!(s.roll.selected.is_empty());
-    assert!(s.edit_key(&g, "up", Mods::shift()));
-    assert!(s.error.is_none(), "{:?}", s.error);
-    assert_eq!(s.roll.selected.len(), 1);
-    assert_eq!(s.song.steps(), steps);
-    let id = *s.roll.selected.iter().next().unwrap();
-    let pitch = |s: &Studio| {
-        context(s, &g)
-            .notes()
-            .iter()
-            .find(|n| n.id == id)
-            .unwrap()
-            .pitch
-    };
-    let was = pitch(&s);
-    // With a note selected Shift+↑↓ move it an octave, each press one step.
-    assert!(s.edit_key(&g, "up", Mods::shift()));
-    assert!(s.error.is_none(), "{:?}", s.error);
-    assert_eq!(pitch(&s), was + 12);
-    assert_eq!(s.song.steps(), steps + 1);
-    assert!(s.edit_key(&g, "down", Mods::shift()));
-    assert!(s.edit_key(&g, "down", Mods::shift()));
-    assert_eq!(pitch(&s), was - 12);
-    assert_eq!(s.song.steps(), steps + 3);
-    assert_eq!(s.roll.selected.len(), 1, "the note stays selected");
-    // Alt+Shift+↑ is still an octave.
-    assert!(s.edit_key(&g, "up", Mods::alt_shift()));
-    assert_eq!(pitch(&s), was);
-    assert!(s.edit_key(&g, "z", Mods::ctrl()));
-    assert_eq!(pitch(&s), was - 12);
-    // Mod+Shift+↑ still grows the selection, and no note moves.
-    let steps = s.song.steps();
-    assert!(s.edit_key(&g, "up", Mods::ctrl_shift()));
-    assert_eq!(s.roll.selected.len(), 2);
-    assert_eq!(s.song.steps(), steps);
-    assert_eq!(pitch(&s), was - 12);
-}
-
-#[test]
-fn ui_295_shift_up_and_down_grow_the_clip_selection_outside_the_roll_as_before() {
-    let (mut s, g) = setup();
-    s.tool = Tool::Select;
-    assert!(s.edit_key(&g, "a", Mods::ctrl()));
-    assert!(!s.roll.selected.is_empty());
-    s.arrange.focus = true;
-    assert_ne!(s.input_context(&g), "roll");
-    let steps = s.song.steps();
-    let picked = s.picked_clips();
-    assert!(s.edit_key(&g, "down", Mods::shift()));
-    assert_eq!(s.song.steps(), steps, "no note moved");
-    assert!(
-        s.picked_clips().len() > picked.len(),
-        "the clip selection grew"
-    );
+fn the_arrow_keys_that_pick_grow_or_step_the_selection_and_move_no_note() {
+    type Picked = fn(&Studio) -> Vec<String>;
+    type Right = fn(&[String], &[String]) -> bool;
+    fn clips(s: &Studio) -> Vec<String> {
+        s.picked_clips().iter().map(|c| format!("{c:?}")).collect()
+    }
+    // (row, in the roll, key, mods, what is picked, is it right: before, after)
+    let rows: [(&str, bool, &str, Mods, Picked, Right); 3] = [
+        (
+            "↓ outside the roll steps the clips",
+            false,
+            "down",
+            Mods::NONE,
+            clips,
+            |before, after| after != before,
+        ),
+        (
+            "Shift+↓ outside the roll grows the clips",
+            false,
+            "down",
+            Mods::shift(),
+            clips,
+            |before, after| after.len() > before.len(),
+        ),
+        (
+            "Mod+Shift+↑ in the roll grows the notes",
+            true,
+            "up",
+            Mods::ctrl_shift(),
+            |s| s.roll.selected.iter().map(|n| n.to_string()).collect(),
+            |before, after| (before.len(), after.len()) == (1, 2),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (row, in_roll, key, mods, picked, right) in rows {
+        let (mut s, g) = setup();
+        s.tool = Tool::Select;
+        if in_roll {
+            // One note picked and taken an octave down, so there are notes above it.
+            assert!(s.edit_key(&g, "up", Mods::shift()), "{row}");
+            assert!(s.edit_key(&g, "down", Mods::shift()), "{row}");
+        } else {
+            assert!(s.edit_key(&g, "a", Mods::ctrl()), "{row}");
+            assert!(!s.roll.selected.is_empty(), "{row}");
+            s.arrange.focus = true;
+        }
+        if (s.input_context(&g) == "roll") != in_roll {
+            failures.push(format!(
+                "{row}: the input context is {}",
+                s.input_context(&g)
+            ));
+            continue;
+        }
+        let notes = context(&s, &g).notes().to_vec();
+        let (steps, before) = (s.song.steps(), picked(&s));
+        assert!(s.edit_key(&g, key, mods), "{row}");
+        let after = picked(&s);
+        if !right(&before, &after) {
+            failures.push(format!("{row}: picked {before:?} -> {after:?}"));
+        }
+        // Outside the roll the part shown follows the clips, so only the steps tell.
+        let moved = in_roll && context(&s, &g).notes() != notes.as_slice();
+        if s.song.steps() != steps || moved {
+            failures.push(format!("{row}: a note moved"));
+        }
+    }
+    assert!(failures.is_empty(), "the keys that pick: {failures:#?}");
 }

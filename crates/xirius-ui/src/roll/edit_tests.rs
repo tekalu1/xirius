@@ -99,6 +99,10 @@ fn velocities_move_relatively_and_become_the_next_drawn_velocity() {
             .collect::<Vec<_>>(),
         [70, 90]
     );
+    // The next drawn velocity is the one of the note the drag held, not the first selected.
+    let from = (v.x(2400), v.y(60) + 1.0);
+    gesture(&mut s, &g, from, (from.0, from.1 - 10.0), Mods::NONE, 1);
+    assert_eq!(s.roll.next_vel, 101);
 }
 
 #[test]
@@ -304,31 +308,90 @@ fn shift_q_restores_timing_after_q_and_alt_q() {
     assert_eq!(s.roll_ctx(&g).unwrap().note(id).unwrap().start, 977);
 }
 
+/// The arrow starts basic (2026-10-21). The key "1" on the arrow and the setting both switch it
+/// between basic and extended, the setting follows the key, and only extended puts the velocity
+/// strip on the top of a note. "1" with another tool picked takes the arrow back without
+/// switching it. Each step is a row, on one studio.
 #[test]
-fn repeated_arrow_button_and_key_toggle_basic_and_extended() {
+fn the_arrow_key_and_setting_switch_basic_and_extended_and_the_velocity_strip_follows() {
+    type Step = fn(&mut Studio, &Geometry);
+    fn set(s: &mut Studio, mode: &str) {
+        s.rec_set(
+            "prefs.set",
+            json!({"key": "edit.arrow.mode", "value": mode}),
+        );
+        s.apply_edit_prefs();
+    }
     let (mut s, g) = fixture();
-    let mode = |s: &Studio| {
-        s.song
+    s.roll.row_h = 24.0;
+    s.roll.center(&s.roll_ctx(&g).unwrap());
+    let rows: [(&str, Step, bool); 7] = [
+        (
+            "as it starts",
+            |s, _| {
+                s.apply_edit_prefs();
+            },
+            false,
+        ),
+        (
+            "key 1",
+            |s, g| assert!(s.edit_key(g, "1", Mods::NONE)),
+            true,
+        ),
+        (
+            "key 1 again",
+            |s, g| assert!(s.edit_key(g, "1", Mods::NONE)),
+            false,
+        ),
+        ("the setting to extended", |s, _| set(s, "extended"), true),
+        ("the setting to basic", |s, _| set(s, "basic"), false),
+        (
+            "key 1 once more",
+            |s, g| assert!(s.edit_key(g, "1", Mods::NONE)),
+            true,
+        ),
+        (
+            "key 1 with the pencil picked",
+            |s, g| {
+                s.tool = Tool::Draw;
+                s.edit_key(g, "1", Mods::NONE);
+            },
+            true,
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (row, step, extended) in rows {
+        step(&mut s, &g);
+        let mode = s
+            .song
             .settings()
             .lock()
             .unwrap()
             .prefs
-            .text("edit.arrow.mode")
-    };
-    // The arrow starts basic (2026-10-21).
-    assert!(!s.roll.extended);
-    assert_eq!(mode(&s), "basic");
-    assert!(s.edit_key(&g, "1", Mods::NONE));
-    assert!(s.roll.extended);
-    assert_eq!(mode(&s), "extended");
-    assert!(s.edit_key(&g, "1", Mods::NONE));
-    assert!(!s.roll.extended);
-    assert_eq!(mode(&s), "basic");
-    assert!(s.edit_key(&g, "1", Mods::NONE));
-    assert!(s.roll.extended);
-    s.tool = Tool::Draw;
-    s.edit_key(&g, "1", Mods::NONE);
-    assert!(s.roll.extended);
+            .text("edit.arrow.mode");
+        let c = s.roll_ctx(&g).unwrap();
+        let v = s.roll.view(&c);
+        let n = c.notes()[0];
+        let top = s
+            .roll
+            .hit_note(
+                &c,
+                &v,
+                v.x(n.start) + v.px(n.length) / 2.0,
+                v.y(n.pitch) + 1.0,
+            )
+            .map(|(_, z)| z);
+        let want = (
+            extended,
+            if extended { "extended" } else { "basic" },
+            Some(if extended { Zone::Velocity } else { Zone::Body }),
+        );
+        let got = (s.roll.extended, mode.as_str(), top);
+        if got != want {
+            failures.push(format!("{row}: {got:?}, want {want:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "the arrow's mode: {failures:#?}");
 }
 
 #[test]
@@ -395,18 +458,6 @@ fn scale_marks_follow_the_selected_root_and_mode() {
     assert!(!s.roll.in_scale(66));
     s.run_command("view.scale", json!({"scale":"off"}));
     assert!(!s.roll.in_scale(62));
-}
-
-#[test]
-fn dragging_the_second_of_multiple_selected_notes_remembers_its_velocity() {
-    let (mut s, g) = fixture();
-    s.roll.extended = true;
-    let c = s.roll_ctx(&g).unwrap();
-    s.roll.selected = c.notes().iter().map(|n| n.id).collect();
-    let v = s.roll.view(&c);
-    let p = (v.x(2400), v.y(60) + 1.0);
-    gesture(&mut s, &g, p, (p.0, p.1 - 10.0), Mods::NONE, 1);
-    assert_eq!(s.roll.next_vel, 101);
 }
 
 #[test]
@@ -492,47 +543,4 @@ fn the_velocity_setting_is_what_the_pencil_draws_and_last_keeps_the_edited_one()
     );
     s.apply_edit_prefs();
     assert_eq!(s.roll.next_vel, 64);
-}
-
-#[test]
-fn the_arrow_setting_basic_takes_the_velocity_strip_off_the_notes() {
-    let (mut s, g) = fixture();
-    s.roll.row_h = 24.0;
-    s.roll.center(&s.roll_ctx(&g).unwrap());
-    let upper = |s: &Studio| {
-        let c = s.roll_ctx(&g).unwrap();
-        let v = s.roll.view(&c);
-        let n = c.notes()[0];
-        s.roll
-            .hit_note(
-                &c,
-                &v,
-                v.x(n.start) + v.px(n.length) / 2.0,
-                v.y(n.pitch) + 1.0,
-            )
-            .map(|(_, z)| z)
-    };
-    // Without the setting the arrow is basic (2026-10-21).
-    s.apply_edit_prefs();
-    assert!(!s.roll.extended);
-    assert_eq!(upper(&s), Some(Zone::Body));
-    s.rec_set(
-        "prefs.set",
-        json!({"key": "edit.arrow.mode", "value": "extended"}),
-    );
-    s.apply_edit_prefs();
-    assert_eq!(upper(&s), Some(Zone::Velocity));
-    s.rec_set(
-        "prefs.set",
-        json!({"key": "edit.arrow.mode", "value": "basic"}),
-    );
-    s.apply_edit_prefs();
-    assert!(!s.roll.extended);
-    assert_eq!(upper(&s), Some(Zone::Body));
-    s.rec_set(
-        "prefs.set",
-        json!({"key": "edit.arrow.mode", "value": "extended"}),
-    );
-    s.apply_edit_prefs();
-    assert_eq!(upper(&s), Some(Zone::Velocity));
 }

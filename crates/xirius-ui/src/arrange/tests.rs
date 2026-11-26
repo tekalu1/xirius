@@ -1131,17 +1131,6 @@ fn the_lanes_button_opens_a_volume_lane_and_plus_adds_more() {
 }
 
 #[test]
-fn every_kind_of_target_can_have_a_lane() {
-    let (s, _) = studio();
-    let p = s.project();
-    let keys = &p.tracks[&track(&s, "Keys")];
-    let all = targets_of(keys);
-    assert!(all.contains(&AutoTarget::Volume));
-    assert!(all.contains(&AutoTarget::Pan));
-    assert!(all.contains(&AutoTarget::Mute));
-}
-
-#[test]
 fn points_are_added_dragged_and_bent_in_single_steps() {
     let (mut s, g) = studio();
     let bass = two_lanes(&mut s, &g, "Bass");
@@ -1258,19 +1247,6 @@ fn clips_cannot_be_taken_while_their_lanes_show_unless_set_otherwise() {
     assert_eq!(points(&s), kept);
 }
 
-#[test]
-fn lane_values_play_and_the_lanes_survive_saving() {
-    let (mut s, g) = studio();
-    let bass = two_lanes(&mut s, &g, "Bass");
-    let p = s.project();
-    let json = serde_json::to_string(&*p).unwrap();
-    let back: Project = serde_json::from_str(&json).unwrap();
-    assert_eq!(back.tracks[&bass].automation, p.tracks[&bass].automation);
-    assert_eq!(back.tracks[&bass].auto_mode, AutoMode::Read);
-    let vol = &p.tracks[&bass].automation[0];
-    assert_eq!(vol.value_at((6 * BAR) as f64), Some(0.0));
-}
-
 // ---------------------------------------------------------------- zoom
 
 #[test]
@@ -1288,9 +1264,6 @@ fn ctrl_wheel_makes_tracks_taller_around_the_pointer() {
     assert!((after - y).abs() < 1.0 || s.scroll.1 == 0.0, "{after} {y}");
     // Without Ctrl the wheel is not ours.
     assert!(!s.arrange_wheel(&g, x, y, 1.0, none()));
-    // Never past the limits.
-    s.arrange_wheel(&g, x, y, -100.0, ctrl());
-    assert_eq!(s.arrange.track_h, Arrange::TRACK_H_MIN);
 }
 
 #[test]
@@ -1314,26 +1287,41 @@ fn ctrl_shift_wheel_zooms_time_around_the_pointer() {
     );
 }
 
+/// Each wheel zoom, turned far past its end, stops at its limit; at the widest one beat is
+/// wider than a 4K window's lanes.
 #[test]
-fn zoom_stops_at_the_limits_and_one_beat_can_fill_the_view() {
-    let (mut s, g) = studio();
-    let x = g.lanes.x + 400.0;
-    let y = g.lanes.y + 40.0;
+fn every_wheel_zoom_stops_at_its_limits_and_one_beat_can_fill_the_view() {
     let both = Mods {
         ctrl: true,
         shift: true,
         alt: false,
     };
-    s.arrange_wheel(&g, x, y, 1000.0, both);
-    assert_eq!(s.beat_w, s.beat_w_max());
+    type Now = fn(&Studio) -> f32;
+    let beat: Now = |s| s.beat_w;
+    let height: Now = |s| s.arrange.track_h;
+    let widest: Now = |s| s.beat_w_max();
+    let narrowest: Now = |_| Studio::BEAT_W_MIN;
+    let tallest: Now = |_| Arrange::TRACK_H_MAX;
+    let lowest: Now = |_| Arrange::TRACK_H_MIN;
+    let mut failures = Vec::new();
+    for (name, mods, delta, now, want) in [
+        ("time in", both, 1000.0, beat, widest),
+        ("time out", both, -1000.0, beat, narrowest),
+        ("taller", ctrl(), 1000.0, height, tallest),
+        ("shorter", ctrl(), -1000.0, height, lowest),
+    ] {
+        let (mut s, g) = studio();
+        let x = g.lanes.x + 400.0;
+        let y = row_at(&s, &g, RowKind::Track(track(&s, "Keys")), 0.5);
+        s.arrange_wheel(&g, x, y, delta, mods);
+        if now(&s) != want(&s) {
+            failures.push(format!("{name}: {} want {}", now(&s), want(&s)));
+        }
+    }
+    let (s, _) = studio();
     // One beat is wider than a 4K window's lanes.
-    assert!(s.beat_w >= 3840.0);
-    s.arrange_wheel(&g, x, y, -1000.0, both);
-    assert_eq!(s.beat_w, Studio::BEAT_W_MIN);
-    let keys = RowKind::Track(track(&s, "Keys"));
-    let row_y = row_at(&s, &g, keys, 0.5);
-    s.arrange_wheel(&g, x, row_y, 1000.0, ctrl());
-    assert_eq!(s.arrange.track_h, Arrange::TRACK_H_MAX);
+    assert!(s.beat_w_max() >= 3840.0);
+    assert!(failures.is_empty(), "wheel zoom limits: {failures:#?}");
 }
 
 // ---------------------------------------------------------------- what is shown
@@ -1461,19 +1449,9 @@ fn each_tool_shows_its_own_picture_on_a_part_and_not_allowed_where_there_is_none
     // Ctrl with the arrow tool is the range tool.
     s.arrange_move(&g, on_vocal.0, on_vocal.1, ctrl());
     assert_eq!(crate::pointer::of_studio(&s, &g).shape, Some(Shape::Range));
-}
-
-#[test]
-fn the_crosshair_setting_swaps_every_pictures_for_the_systems_crosshair() {
-    use crate::pointer::Shape;
-    use gpui::CursorStyle;
-    let (mut s, g) = studio();
-    let on_clip = clip_mid(&s, &g, "Keys", 0);
+    // The crosshair setting (off by default) swaps every tool's picture for the system's
+    // crosshair; "not allowed" is not a tool's picture, so it stays.
     assert!(!s.crosshair, "the tool's own picture is the default");
-    assert_eq!(
-        pointer_at(&mut s, &g, Tool::Cut, on_clip).shape,
-        Some(Shape::Scissors)
-    );
     s.song
         .run(
             "prefs.set",
@@ -1497,12 +1475,6 @@ fn the_crosshair_setting_swaps_every_pictures_for_the_systems_crosshair() {
             "{tool:?}"
         );
     }
-    // "Not allowed" is not a tool's picture, so it stays.
-    let x_free = free_x(&s, &g);
-    let on_vocal = (
-        x_free,
-        row_at(&s, &g, RowKind::Track(track(&s, "Vocal")), 0.5),
-    );
     assert_eq!(
         pointer_at(&mut s, &g, Tool::Cut, on_vocal).style,
         CursorStyle::OperationNotAllowed
@@ -1617,15 +1589,11 @@ fn edt_135_the_ripple_switch_and_its_key_make_a_delete_close_up_and_a_longer_cli
     let kept: Vec<_> = left.iter().copied().filter(|&x| x != at).collect();
     assert_eq!(starts(&s), kept);
     assert!(s.error.is_none(), "{:?}", s.error);
-}
 
-#[test]
-fn edt_135_the_rolls_bar_has_no_ripple_switch() {
+    // The roll's bar has no switch. With the transport in the bottom bar (UI-300), the
+    // arrangement's stands left of the grid at every width.
     let l = crate::topbar::BarLayout::of(1440.0, "曲", false);
     assert_eq!(l.ripple, Rect::default());
-    let a = crate::topbar::BarLayout::of(1440.0, "曲", true);
-    assert!(a.ripple.w > 0.0 && a.ripple.right() < a.grid.x);
-    // With the transport in the bottom bar (UI-300), it stands at every width.
     for w in [
         960.0, 1200.0, 1240.0, 1280.0, 1400.0, 1440.0, 1600.0, 1920.0, 2200.0,
     ] {

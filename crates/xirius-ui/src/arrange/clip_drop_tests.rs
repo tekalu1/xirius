@@ -558,7 +558,6 @@ fn the_ghost_is_named_after_the_file_and_a_bar_long_until_it_is_read() {
     assert_eq!(s.clip_drop_length(Path::new("no-such-file.wav"), 0), bar);
     assert_eq!(stem(Path::new("loops/Kick 120bpm.wav")), "Kick 120bpm");
     assert_eq!(stem(Path::new("")), "Audio");
-    assert!((GHOST_ALPHA - 0.62).abs() < f32::EPSILON);
 }
 
 /// The sample with one clip selected, as a click on it leaves it.

@@ -104,6 +104,11 @@ fn the_top_clip_is_the_one_painted_last_and_the_one_taken() {
             assert_eq!(spot(&s, &g, right_of_early, y), (late, Grip::Body));
             assert_eq!(spot(&s, &g, left_of_late, y), (late, Grip::Left));
         }
+        // A press in the middle of the overlap selects the top part.
+        let at = ((l.x + e.right()) / 2.0, y);
+        down(&mut s, &g, at, Mods::default());
+        s.arrange_up(&g, at.0, at.1, Mods::default());
+        assert_eq!(s.selected_clip, Some((t, top)), "later first {later_first}");
     }
 }
 
@@ -158,18 +163,5 @@ fn a_drag_in_the_overlap_moves_and_resizes_the_top_clip() {
         };
         assert_eq!(start(&s, top), want, "the top part's edge moved");
         assert_eq!(start(&s, under), before.1, "the part under it stayed");
-    }
-}
-
-#[test]
-fn a_press_in_the_overlap_selects_the_top_clip() {
-    for later_first in [false, true] {
-        let (mut s, g) = studio();
-        let (t, early, late, top) = overlap(&mut s, &g, later_first);
-        let (e, l) = (rect(&s, &g, t, early), rect(&s, &g, t, late));
-        let at = ((l.x + e.right()) / 2.0, e.y + e.h / 2.0);
-        down(&mut s, &g, at, Mods::default());
-        s.arrange_up(&g, at.0, at.1, Mods::default());
-        assert_eq!(s.selected_clip, Some((t, top)));
     }
 }
