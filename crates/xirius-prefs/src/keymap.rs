@@ -856,21 +856,13 @@ mod tests {
     }
 
     #[test]
-    fn the_preset_is_the_apps_own_keys() {
+    fn the_preset_has_no_conflict_and_a_wider_context_answers() {
+        // The keys themselves are tests/default-keys.txt (tests/it/default_keys.rs).
         let k = Keymap::default();
-        assert_eq!(
-            k.lookup("roll", &ch("Q")),
-            Some(("roll".into(), "note.quantize".into()))
-        );
         // A wider context answers when the narrow one has no key.
         assert_eq!(
             k.lookup("roll", &ch("Space")),
             Some(("global".into(), "transport.play".into()))
-        );
-        // The arrangement has its own Q: one row for each place (SET-001).
-        assert_eq!(
-            k.lookup("arrange", &ch("Q")),
-            Some(("arrange".into(), "clip.quantize".into()))
         );
         assert!(
             k.conflicts(Os::Win).is_empty(),

@@ -6,29 +6,6 @@ use xirius_prefs::keymap::{Issue, Others};
 use xirius_prefs::{Chord, File, Keymap, Os, Prefs, Settings};
 
 #[test]
-fn ops_012_supported_defaults_match_the_source_and_unsupported_keys_stay_unbound() {
-    let map = Keymap::default();
-    for (context, key, command) in [
-        ("global", "Enter", "transport.start"),
-        ("global", "Space", "transport.play"),
-        ("global", "F2", "clip.open"),
-        ("global", "Mod+E", "export.open"),
-        ("edit", "1", "tool.select"),
-        ("edit", "5", "tool.draw"),
-        ("arrange", "G", "clip.join"),
-        ("roll", "G", "note.join"),
-        ("roll", "Shift+Q", "note.quantize --restore"),
-    ] {
-        assert_eq!(
-            map.lookup(context, &Chord::parse(key, Os::Win).unwrap())
-                .unwrap()
-                .1,
-            command
-        );
-    }
-}
-
-#[test]
 fn key_009_duplicate_rows_remain_conflicts_and_invalid_arguments_are_skipped() {
     let dir_tmp = tempfile::Builder::new()
         .prefix("xirius-duplicate-")

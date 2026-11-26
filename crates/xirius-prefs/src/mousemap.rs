@@ -746,16 +746,13 @@ mod tests {
     use crate::chord::{ALT, MOD, SHIFT};
 
     #[test]
-    fn the_defaults_are_the_apps_holds() {
+    fn the_defaults_read_and_a_hold_is_found_by_its_modifier_bits() {
+        // The defaults themselves are tests/default-keys.txt (tests/it/default_keys.rs).
         let m = Mousemap::default();
-        assert_eq!(m.hold("roll", "select", MOD).as_deref(), Some("draw"));
         assert_eq!(
             m.hold("roll", "select", MOD | SHIFT).as_deref(),
             Some("cut")
         );
-        assert_eq!(m.hold("roll", "draw", MOD).as_deref(), Some("select"));
-        assert_eq!(m.hold("arrange", "select", MOD).as_deref(), Some("range"));
-        assert_eq!(m.hold("arrange", "cut", ALT).as_deref(), Some("select"));
         assert_eq!(m.hold("arrange", "select", ALT), None);
         assert!(m.warnings().is_empty(), "{:?}", m.warnings());
         for (c, md, a) in DEFAULTS {
