@@ -10,7 +10,7 @@ use xirius_engine::server::find_host;
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{host::HostConfig, plugins::Isolation, starting::Starting};
 
-mod crash_records;
+use crate::crash_records;
 use crash_records::CrashRecords;
 
 #[test]

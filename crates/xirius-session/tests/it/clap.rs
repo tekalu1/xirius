@@ -22,7 +22,7 @@ use xirius_session::host::{HostConfig, SessionHost, collect_plugin_states};
 use xirius_session::plugins::Isolation;
 use xirius_vst3::PluginState;
 
-mod crash_records;
+use crate::crash_records;
 use crash_records::CrashRecords;
 
 const GUARD: Duration = Duration::from_secs(60);

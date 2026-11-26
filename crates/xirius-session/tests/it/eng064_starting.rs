@@ -1,7 +1,7 @@
 //! A song's player is started a little at a time (ENG-064): each step opens one plugin, the
 //! progress says how many tracks are done, the build takes what was opened, and each plugin's
 //! opening time is kept. A plugin that cannot be opened says so as before and the song opens.
-mod crash_records;
+use crate::crash_records;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

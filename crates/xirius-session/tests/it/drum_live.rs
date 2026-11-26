@@ -1,5 +1,5 @@
 //! A stock instrument keeps sounding while a hosted insert is rebuilt.
-mod crash_records;
+use crate::crash_records;
 
 use serde_json::{Value, json};
 use std::sync::Arc;

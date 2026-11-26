@@ -9,8 +9,10 @@ runs doctests, and checks the complete context-menu catalog. Cargo builds use si
 package groups for comparison. Neither mode runs ignored tests by default.
 
 A crate's integration tests are modules of one test executable, `tests/it/main.rs`, one file
-per area (ARC-052; so far `xirius-core`). The crate links once instead of once per file. A test's
-name is `<file>::<test>`: `cargo test -p xirius-core --test it recovery::`, or with nextest
+per area (ARC-052; so far `xirius-core` and `xirius-session`). The crate links once instead of once
+per file. Tests that open windows, set a variable another test would read, or use their own harness
+keep executables of their own (listed in each `main.rs`). A test's name is `<file>::<test>`:
+`cargo test -p xirius-core --test it recovery::`, or with nextest
 `-E 'binary(it) & test(/^recovery::/)'`. nextest still runs each test in a process of its own.
 
 The workspace build combines the UI dev-dependencies' `test-io` and the engine's

@@ -16,7 +16,7 @@ use xirius_session::ext::ExtConfig;
 use xirius_session::graph::Select;
 
 const RATE: u32 = 48_000;
-mod support;
+use crate::support;
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 

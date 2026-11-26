@@ -9,7 +9,7 @@ use xirius_core::{
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{build::Builder, export, graph::Select, plugins::Isolation};
 
-mod crash_records;
+use crate::crash_records;
 use crash_records::CrashRecords;
 
 const PID: PluginId = PluginId(1);

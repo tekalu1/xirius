@@ -1,4 +1,5 @@
 //! A send lane reaches both the offline mixer and the running audio callback.
+use crate::support;
 use serde_json::{Value, json};
 use xirius_core::{Session, id::TrackId, model::Project, session::RunOptions};
 use xirius_session::{
@@ -7,7 +8,6 @@ use xirius_session::{
     graph::Select,
     host::{HostConfig, SessionHost},
 };
-mod support;
 
 fn run(s: &mut Session, name: &str, args: Value) -> Value {
     s.run(name, args.as_object().unwrap(), &RunOptions::human())

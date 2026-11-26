@@ -1,11 +1,7 @@
-//! A value moved in a plugin's own window that changes its latency builds the mix again even
-//! when the edit is taken into the song in the same frame (ENG-068). The screen takes the
-//! window's edits into the song right after the poll that heard of the new latency, and doing
-//! so synced the engine at once, which dropped the mix that had just begun for the latency:
-//! the plugin went on with the new delay and the mix with the old compensation.
-//!
-//! The new instance is opened from what the playing one has now: with a value the song set
-//! before, it must have the value moved in the window, not the one it was opened with (ENG-069).
+//! A value a macro control holds, moved in the plugin's own window, goes back to the control's
+//! value in the plugin as well as in the song (MIX-039). The song kept the control's value and
+//! took the window's state, so the plugin went on playing the hand's value while the song (and
+//! the next time it is opened) had the control's.
 //!
 //! Skips when `xirius-plugin-host` has not been built (`cargo test --workspace` builds it).
 
@@ -21,7 +17,7 @@ use xirius_session::commands::{self, shared_registry};
 use xirius_session::host::{HostConfig, SessionHost, collect_plugin_states};
 use xirius_session::plugins::Isolation;
 
-mod crash_records;
+use crate::crash_records;
 use crash_records::CrashRecords;
 
 fn run(s: &mut Session, name: &str, args: Value) -> RunResult {
@@ -32,14 +28,14 @@ fn run(s: &mut Session, name: &str, args: Value) -> RunResult {
         .unwrap_or_else(|e| panic!("{name}: {e:?}"))
 }
 
-/// The delay of the instance that plays, read from the state it reports when asked.
+/// The delay the playing instance has, read from the state it reports when asked.
 fn delay(server: &PluginServer, link: &PluginLink) -> u32 {
     let request = server.request_state(link);
     let deadline = Instant::now() + Duration::from_secs(30);
     while !link.capture_finished(request) {
         assert!(
             Instant::now() < deadline,
-            "the instance that plays never reported its state"
+            "the plugin never reported its state"
         );
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -53,27 +49,8 @@ fn delay(server: &PluginServer, link: &PluginLink) -> u32 {
 }
 
 #[test]
-fn a_latency_moved_in_the_window_is_compensated_when_the_edit_is_taken_at_once() {
+fn a_value_a_macro_holds_moved_in_the_window_goes_back_to_the_macro_in_the_plugin() {
     let _records = CrashRecords::new();
-    move_in_window(None, false);
-}
-
-#[test]
-fn the_new_instance_has_the_value_moved_in_the_window_over_the_one_the_song_had() {
-    let _records = CrashRecords::new();
-    // The song opens it with delay 192; the window moves it to 128.
-    move_in_window(Some(0.75), false);
-}
-
-#[test]
-fn the_windowed_owner_rebuilds_with_the_latency_moved_in_the_editor() {
-    let _records = CrashRecords::new();
-    move_in_window(Some(0.75), true);
-}
-
-/// Opens the test plugin (with the song's value `start` for its delay, if any), moves the
-/// delay to 128 in its window and runs the screen's frames until the mix plays the new latency.
-fn move_in_window(start: Option<f64>, windowed: bool) {
     let Some(exe) = find_host() else {
         eprintln!("opening in hosts needs the plugin host binary");
         return;
@@ -82,36 +59,49 @@ fn move_in_window(start: Option<f64>, windowed: bool) {
     let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     let entries = probe(&dll).unwrap();
     let uid = entries[0].uid.clone();
-    let mut s = Session::with_registry(Project::new("latency-edit"), shared_registry());
+    let mut s = Session::with_registry(Project::new("owned-edit"), shared_registry());
     let t = run(&mut s, "track.add.audio", json!({ "name": "A" })).data["id"]
         .as_str()
         .unwrap()
         .to_string();
-    let r = run(
+    let pid = run(
         &mut s,
         "plugin.add",
         json!({ "track": t, "name": "Test Latency", "format": "vst3", "uid": uid }),
-    );
+    )
+    .data["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     run(
         &mut s,
         "plugin.isolation.set",
-        json!({ "ids": r.data["id"], "mode": "dedicated" }),
+        json!({ "ids": [pid], "mode": "dedicated" }),
     );
-    if let Some(v) = start {
-        run(
-            &mut s,
-            "plugin.param.set",
-            json!({ "id": r.data["id"], "param": "1", "value": v }),
-        );
-    }
-    let id = s
-        .project()
-        .tracks
-        .values()
-        .flat_map(|t| &t.inserts)
-        .next()
-        .unwrap()
-        .id;
+    // The macro holds the delay at 192 (0.75 of 256).
+    run(
+        &mut s,
+        "control.assign",
+        json!({ "track": t, "control": "k1", "target": format!("param:{pid}:1") }),
+    );
+    run(
+        &mut s,
+        "control.set",
+        json!({ "track": t, "control": "k1", "value": 0.75 }),
+    );
+    let held = |s: &Session| {
+        s.project()
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .next()
+            .unwrap()
+            .params
+            .get("1")
+            .copied()
+    };
+    assert_eq!(held(&s), Some(0.75));
+    let id = pid.parse().unwrap();
     let (mut host, mut audio, warnings) = SessionHost::start(
         s.project(),
         HostConfig {
@@ -125,11 +115,7 @@ fn move_in_window(start: Option<f64>, windowed: bool) {
     )
     .unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
-    // As the screen's player: a new latency builds its mix while the old one plays on.
     host.set_nonblocking(true);
-    if windowed {
-        host.set_windowed();
-    }
     let latency = |host: &SessionHost| {
         host.plugins()
             .reports()
@@ -138,47 +124,67 @@ fn move_in_window(start: Option<f64>, windowed: bool) {
             .map(|r| r.status.latency)
     };
     let before = latency(&host).expect("the plugin plays");
-    let base = before - start.map_or(0, |v| (v * 256.0).round() as u32);
-    let opts = RunOptions::human();
-    let mut buffer = [0.0; 256 * 2];
+    {
+        let server = host.plugins().server_of(id).unwrap();
+        let link = host.plugins().link(id).unwrap();
+        assert_eq!(
+            delay(server, &link),
+            192,
+            "the plugin opens with the macro's value"
+        );
+    }
+    let steps = s.cursor();
 
-    // As the window does when its value is moved: the plugin's own edit, which sends the
-    // edit and the new latency together.
+    // The hand moves the delay to 128 in the plugin's window.
     let link = host.plugins().link(id).unwrap();
     host.plugins()
         .server_of(id)
         .unwrap()
         .simulate_edit(&link, 1, &[0.5]);
 
-    // A frame of the screen: the poll, the window's edits into the song, a step of the swap.
-    // The new latency can be heard before the pending edit is taken into the song
-    // (they arrive as their own messages), so the frames go on until both are seen.
+    // Frames of the screen until the edit is taken and the mix is settled again.
+    let opts = RunOptions::human();
+    let mut buffer = [0.0; 256 * 2];
     let mut taken = false;
+    let mut moved = false;
     let deadline = Instant::now() + Duration::from_secs(30);
-    while (latency(&host) != Some(base + 128) || !taken) && Instant::now() < deadline {
+    loop {
         audio.render(&mut buffer, 2);
         host.poll();
         taken |= collect_plugin_states(&mut s, &mut host, &opts)
             .unwrap()
             .result
             .is_some();
-        if let Some(report) = host.step_swap() {
-            assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        host.step_swap();
+        moved |= latency(&host) != Some(before);
+        let settled = taken && latency(&host) == Some(before) && !host.swap_pending();
+        if settled || Instant::now() > deadline {
+            break;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(taken, "the edit is in the song");
-    assert_eq!(
-        latency(&host),
-        Some(base + 128),
-        "the mix is built with the latency the plugin reports"
-    );
-    assert!(!host.swap_pending());
     let server = host.plugins().server_of(id).unwrap();
     let link = host.plugins().link(id).unwrap();
-    assert_eq!(
-        delay(server, &link),
-        128,
-        "the instance that plays has the value moved in the window"
+    let heard = delay(server, &link);
+    eprintln!(
+        "moved in the window to 128 (latency moved: {moved}); the song holds {:?}, the plugin plays {heard}",
+        held(&s)
     );
+    assert!(taken, "the window's state is in the song");
+    assert_eq!(held(&s), Some(0.75), "the song keeps the macro's value");
+    assert_eq!(heard, 192, "the plugin plays the macro's value again");
+    assert_eq!(latency(&host), Some(before), "and the mix is built for it");
+    assert_eq!(s.cursor(), steps + 1, "the window's state is one step");
+
+    // The value sent back is not taken from the plugin as another edit.
+    let calm = Instant::now() + Duration::from_millis(400);
+    while Instant::now() < calm {
+        audio.render(&mut buffer, 2);
+        host.poll();
+        let again = collect_plugin_states(&mut s, &mut host, &opts).unwrap();
+        assert!(again.result.is_none(), "no edit came back");
+        host.step_swap();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(held(&s), Some(0.75));
 }

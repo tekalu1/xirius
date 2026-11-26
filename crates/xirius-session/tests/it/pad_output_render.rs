@@ -1,5 +1,6 @@
 //! PLG-069: a pad bus appears in offline stems and the complete export.
 
+use crate::crash_records;
 use serde_json::{Value, json};
 use xirius_core::{Session, id::TrackId, model::Project, session::RunOptions};
 use xirius_session::{
@@ -9,7 +10,6 @@ use xirius_session::{
     ext::ExtConfig,
     graph::Select,
 };
-mod crash_records;
 
 fn run(s: &mut Session, name: &str, args: Value) -> Value {
     s.run_value(name, args, &RunOptions::human())

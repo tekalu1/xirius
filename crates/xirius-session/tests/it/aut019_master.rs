@@ -1,7 +1,7 @@
 //! AUT-019: the master's automation is as late as the audio at its stage. Behind a master insert
 //! with latency, the master's lanes and the plug-ins after it (in its splitter's branches too)
 //! are evaluated that much earlier on the song clock, so an export does not drift.
-mod crash_records;
+use crate::crash_records;
 
 use std::{collections::BTreeMap, sync::Arc};
 use xirius_core::{

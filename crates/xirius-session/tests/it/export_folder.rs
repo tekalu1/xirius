@@ -1,7 +1,7 @@
 //! CTX-018: a folder as one stem. A folder connected to a bus is written as the bus's mix under
 //! the folder's name; one without a bus is refused. Every render is offline.
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

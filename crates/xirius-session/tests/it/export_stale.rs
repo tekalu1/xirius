@@ -5,7 +5,7 @@
 //! opens an audio device or a file window, and the files written again go to a bin of the test's
 //! own folder.
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
