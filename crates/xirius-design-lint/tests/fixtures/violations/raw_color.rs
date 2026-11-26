@@ -1,4 +1,4 @@
-// 生の色。行末の印が、その行で出るはずの違反（書き方は tests/fixtures.rs）。
+// 生の色。行末の印が、その行で出るはずの違反（書き方は tests/it/fixtures.rs）。
 fn colors() {
     let a = rgb(0x336699); //~ raw-color
     let b = hsla(0.5, 0.5, 0.5, 1.0); //~ raw-color

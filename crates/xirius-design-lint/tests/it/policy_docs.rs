@@ -1,6 +1,6 @@
 #[test]
 fn terminology_table_covers_daw_terms() {
-    let doc = include_str!("../../../docs/design-rules.md");
+    let doc = include_str!("../../../../docs/design-rules.md");
     for (before, after) in [
         ("格子", "グリッド"),
         ("吸着", "スナップ"),

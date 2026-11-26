@@ -126,7 +126,7 @@ let d = div().border_1(); // design-lint: allow(border) 同じ行にも書ける
 - 太さ 2px（`StructureLine::THICKNESS`）。両端は丸い（`CAP`）。行から離し、字下げの溝の真ん中（`gutter_x(深さ)`）。
   塊の角からは `END_INSET` 内側で止める。
 - 色は通常は中立。フォルダーに hover しているときと選択しているときだけアクセント（`LineState`）。
-  どの状態も、中立の面の上で 3:1 以上（`tests/contrast.rs`）。
+  どの状態も、中立の面の上で 3:1 以上（`tests/it/contrast.rs`）。
 - 畳んだフォルダーでは描かない（行が無いので範囲も無い）。
 - lint: 細い固定値の面は `line` の違反。`StructureLine` の定数を通した物だけが通る
   （見本は `crates/xirius-design-lint/tests/fixtures/{clean/structure_line.rs,violations/line.rs}`）。
@@ -150,7 +150,7 @@ let d = div().border_1(); // design-lint: allow(border) 同じ行にも書ける
 - 段は 4 つ。小節（`Bar`）・拍（`Beat`。6/8・9/8・12/8 は付点 4 分）・拍の分割（`Sub`。1/2、複合拍子か 3 連のグリッドでは 1/3）・細かい線（`Fine`。分割より細かいスナップの値とフレーム、秒の線）。
 - 太さは小節だけ 2px（`GridLine::BAR_THICKNESS`）、ほかは 1px（`THICKNESS`）。置く位置は `GridLine::left`（2px の線は時刻の位置を真ん中にする）。
 - 色は文字の色を薄く重ねた `line_grid_bar`・`line_grid_beat`・`line_grid_sub`・`line_grid_fine`。どの面（地・hover・選択・黒鍵の行）の上でも、
-  両方のテーマで 小節 > 拍 > 分割 > 細かい の比になる（`tests/contrast.rs`）。
+  両方のテーマで 小節 > 拍 > 分割 > 細かい の比になる（`tests/it/contrast.rs`）。
 - 小節線と拍線（拍が `MIN_BEAT_PX` 以上離れたとき）は間引かない。分割と細かい線は `MIN_FINE_PX` 以上離れたときだけ出し、出始めは `GridLine::fade` で薄く入れる。
 - lint: `div` の細い固定値の面は `line` の違反で、太さ・長さの引数に `GridLine` の字がある物は通る。グリッドの色の面は、幅を `GridLine` から取った物
   （`Pen` は `Rect::new` の 3 つ目、`div` は `w` が `GridLine::width`・`THICKNESS`・`BAR_THICKNESS`）だけが通り、ほかは `Pen` なら `line`、`div` の `bg` なら `color-family`
@@ -163,7 +163,7 @@ let d = div().border_1(); // design-lint: allow(border) 同じ行にも書ける
 
 面の上辺の光は使わない（OPEN-24 で「光なし」に決めた。plan.toml の UI-007）。面どうしの区切りは次の 2 つだけ。
 
-- **面の段の明るさの差**: `Surface` の隣り合う段（明るさの順）の CIE L* の差が 1.25 以上（`crates/xirius-design/tests/surface_steps.rs`）。
+- **面の段の明るさの差**: `Surface` の隣り合う段（明るさの順）の CIE L* の差が 1.25 以上（`crates/xirius-design/tests/it/surface_steps.rs`）。
   暗い・明るいの両方で確かめる。下限の理由はテストの先頭の注。段を足す・色を変えるときは、このテストが落ちない値にする。
 - **浮く面の外側の影**: `FloatShadow`。ぼかして全周に広げる。片側にだけ出る影・光・縁は、中立の色でも `one-sided-edge` の違反。
 

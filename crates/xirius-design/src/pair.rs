@@ -2,7 +2,7 @@
 //!
 //! - 面は [`Surface`]、文字（アイコンを含む）は [`Ink`]。色の値は、組を通してだけ取り出せる。
 //! - 許された組の一覧は、下の `allowed_pairs!` の 1 か所だけ。型（`ReadableOn`）と
-//!   実行時の表（[`ALLOWED`]）と、`tests/contrast.rs` の検査が、全部この一覧から出る。
+//!   実行時の表（[`ALLOWED`]）と、`tests/it/contrast.rs` の検査が、全部この一覧から出る。
 //! - 薄い文字（`ink-weak` の類い）は、`Ink` に作らない。
 //!
 //! 型で縛る（作れない組は、コンパイルが通らない）:
@@ -307,7 +307,7 @@ kinds! {
 }
 
 /// 許された組の一覧。ここが唯一の定義で、型・表・検査が全部ここから出る。
-/// 組を足すと `tests/contrast.rs` が両テーマで 4.5:1 を確かめる。
+/// 組を足すと `tests/it/contrast.rs` が両テーマで 4.5:1 を確かめる。
 macro_rules! allowed_pairs {
     ($( $s:ident : [ $($i:ident),* $(,)? ] ; )*) => {
         $( $( impl ReadableOn<surface::$s> for ink::$i {} )* )*

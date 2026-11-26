@@ -1,7 +1,7 @@
 //! トラックの小さな札（ミュート・ソロ・録音待ち・モニター）。
 //!
 //! 切れているときは中立の面（[`Toggle::off`]）。入っているときだけ色の面（[`Toggle::on`]）で、
-//! 札の文字は面ごとに決めた色だけ（どれも 4.5:1 以上。`tests/contrast.rs`）。
+//! 札の文字は面ごとに決めた色だけ（どれも 4.5:1 以上。`tests/it/contrast.rs`）。
 
 use crate::color::Color;
 use crate::pair::{Readable, Surface};

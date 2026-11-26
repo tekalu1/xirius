@@ -186,7 +186,7 @@ fn an_unchanged_file_is_not_read_again_and_a_changed_one_comes_in_even_at_the_sa
 
 /// The time the check before a command takes on a song whose `project.json` is tens of MB,
 /// with nothing changed: from the size and time, against reading and hashing the file.
-/// Run by hand: `cargo test -p xirius-mcp --test prj025_stamp -- --ignored --nocapture`.
+/// Run by hand: `cargo test -p xirius-mcp --test it -- --ignored --nocapture prj025_stamp::`.
 #[test]
 #[ignore = "writes a song of tens of MB"]
 fn the_check_before_a_command_on_a_large_song() {
