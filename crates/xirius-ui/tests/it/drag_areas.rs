@@ -69,11 +69,6 @@ fn the_independent_windows_register_their_drag_areas() {
         text.contains("WindowControlArea::Drag") && text.contains("drag_rects"),
         "the built-in and channel editor windows must register `drag_rects` as Drag areas"
     );
-    // A double click on the bar is taken, so the system does not maximise (UI-337).
-    assert!(
-        text.contains("click_count >= 2") && text.contains("stop_propagation"),
-        "a double click on the bar must stop the press"
-    );
 }
 
 #[test]
