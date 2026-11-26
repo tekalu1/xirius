@@ -1101,6 +1101,24 @@ mod tests {
         }
     }
 
+    /// A number reads back as the number written, to the last bit: a song saved and opened
+    /// again is the same song (ARC-050). serde_json's default parse read this one a step off.
+    #[test]
+    fn a_number_reads_back_to_the_last_bit() {
+        let (_tmp, store, _) = song("a");
+        let mut p = store.read_project().unwrap();
+        let level = 0.46275642631951835;
+        for t in p.tracks.values_mut() {
+            std::sync::Arc::make_mut(t).volume_db = level;
+        }
+        store.write_project(&p).unwrap();
+        let back = store.read_project().unwrap();
+        assert!(!back.tracks.is_empty());
+        for t in back.tracks.values() {
+            assert_eq!(t.volume_db.to_bits(), f64::to_bits(level));
+        }
+    }
+
     #[test]
     fn a_backup_that_reads_back_wrong_stops_the_write_before_it_starts() {
         let (_tmp, store, hash) = song("a");

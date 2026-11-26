@@ -542,6 +542,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
 ];
 #[cfg(test)]
 mod save_crash_tests;
+#[cfg(test)]
+mod save_flow_tests;
 
 #[cfg(windows)]
 mod file_owner;
