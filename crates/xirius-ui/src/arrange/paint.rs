@@ -914,7 +914,8 @@ fn range_frame(pen: &mut Pen, studio: &Studio, g: &Geometry, lanes_region: Rect)
     });
 }
 
-/// The cut tool's line over the clip under the pointer, where a press would split it.
+/// The cut tool's line over the clip under the pointer, where a press would split it; on the
+/// extended arrow's lower edge also the band that cuts (EDT-001, as the roll's, UI-292).
 fn cut_line(pen: &mut Pen, studio: &Studio, g: &Geometry, region: Rect) {
     let Some((track, clip, at)) = studio.cut_preview(g) else {
         return;
@@ -930,7 +931,24 @@ fn cut_line(pen: &mut Pen, studio: &Studio, g: &Geometry, region: Rect) {
     let r = studio.clip_rect(g, row, c);
     let x = studio.tick_x(g, at).round();
     let ink = pen.c.ink_strong;
-    pen.mask(region, |pen| pen.fill(Rect::new(x, r.y, 1.0, r.h), ink));
+    let ring = pen.c.ring;
+    let band = matches!(
+        studio.arrange.hover,
+        Spot::Clip {
+            grip: Grip::Cut,
+            ..
+        }
+    )
+    .then(|| {
+        let e = Arrange::GRIP.min(r.w / 3.0);
+        Rect::new(r.x + e, r.bottom() - 5.0, r.w - e * 2.0, 4.0)
+    });
+    pen.mask(region, |pen| {
+        if let Some(band) = band {
+            pen.round(band, ring, Radius::Pill);
+        }
+        pen.fill(Rect::new(x, r.y, 1.0, r.h), ink);
+    });
 }
 
 /// The value of a drag, in a small box below and right of the pointer.
@@ -996,6 +1014,8 @@ pub fn cursor(studio: &Studio) -> Option<Cursor> {
             Tool::Select => match grip {
                 Grip::Left | Grip::Right | Grip::Corner => Cursor::ResizeH,
                 Grip::Body => Cursor::Arrow,
+                // The extended arrow's lower edge cuts, with the cut tool's scissors (EDT-001).
+                Grip::Cut => Cursor::Split,
             },
         },
         Spot::Fx { part, .. } => match part {

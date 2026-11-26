@@ -128,8 +128,31 @@ fn erasing_or_muting_a_sweep_is_one_history_step() {
     }
 }
 #[test]
-fn smart_lower_click_splits_and_boundary_click_joins_without_changing_tools() {
+fn the_basic_arrow_moves_a_clip_by_its_lower_edge_and_does_not_cut_it() {
     let (mut s, g) = setup();
+    let t = track(&s, "Keys");
+    let c = s.project().tracks[&t].clips[0].clone();
+    let row = *s.tree().row_of(RowKind::Track(t)).unwrap();
+    let r = s.clip_rect(&g, &row, &c);
+    let p = (s.tick_x(&g, c.start + c.length / 2), r.bottom() - 2.0);
+    assert!(matches!(
+        s.arrange_spot(&g, p.0, p.1),
+        Spot::Clip {
+            grip: Grip::Body,
+            ..
+        }
+    ));
+    gesture(&mut s, &g, p, p, Mods::NONE);
+    assert_eq!(s.project().tracks[&t].clips.len(), 1);
+    gesture(&mut s, &g, p, (p.0 + 60.0, p.1), Mods::NONE);
+    let clips = &s.project().tracks[&t].clips;
+    assert_eq!(clips.len(), 1);
+    assert!(clips[0].start > c.start);
+}
+#[test]
+fn the_extended_arrow_cuts_on_a_clips_lower_edge_and_joins_at_the_cut() {
+    let (mut s, g) = setup();
+    s.roll.extended = true;
     let t = track(&s, "Keys");
     let c = s.project().tracks[&t].clips[0].clone();
     let row = *s.tree().row_of(RowKind::Track(t)).unwrap();

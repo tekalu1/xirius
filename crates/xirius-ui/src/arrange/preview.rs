@@ -10,15 +10,26 @@ impl Studio {
             .tool(Area::Arrange, self.tool, self.arrange.mods)
     }
 
-    /// Where a press with the cut tool would split the clip under the pointer
-    /// (on the grid), if it would split one.
+    /// Where a press with the cut tool, or with the extended arrow on a clip's lower edge
+    /// (EDT-001), would split the clip under the pointer (on the grid), if it would split one.
     pub fn cut_preview(&self, g: &Geometry) -> Option<(TrackId, ClipId, Tick)> {
-        if self.arrange.drag.is_some() || self.arrange_tool() != Tool::Cut {
+        if self.arrange.drag.is_some() {
             return None;
         }
         let (x, _) = self.arrange.pointer?;
-        let (track, clip) = match self.arrange.hover {
-            Spot::Clip { track, clip, .. } | Spot::Fx { track, clip, .. } => (track, clip),
+        let m = self.arrange.mods;
+        let (track, clip) = match (self.arrange_tool(), &self.arrange.hover) {
+            (Tool::Cut, Spot::Clip { track, clip, .. } | Spot::Fx { track, clip, .. }) => {
+                (*track, *clip)
+            }
+            (
+                Tool::Select,
+                Spot::Clip {
+                    track,
+                    clip,
+                    grip: Grip::Cut,
+                },
+            ) if !(m.shift || m.alt || m.ctrl) => (*track, *clip),
             _ => return None,
         };
         let project = self.project();

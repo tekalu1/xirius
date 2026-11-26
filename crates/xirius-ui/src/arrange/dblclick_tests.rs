@@ -255,9 +255,12 @@ fn a_double_click_anywhere_down_a_clip_opens_it_locked_or_not() {
                 let (_, clip, r) = first_clip(&s, &g, "Drums");
                 let row = *s.tree().row_of(RowKind::Track(drums)).expect("row");
                 let at = (r.x + r.w * across, s.row_y(&g, &row) + down as f32 + 0.5);
-                // The low edge of a clip that moves is the smart tool's: its presses cut the
+                // The low edge of a clip that moves is the extended arrow's: its presses cut the
                 // clip there (and join it back by the cut), which is undone for the next point.
-                let smart = !locked && at.1 >= r.bottom() - 8.0 && at.1 < r.bottom();
+                let smart = !locked
+                    && s.roll.extended
+                    && at.1 >= r.bottom() - Arrange::CUT_BAND
+                    && at.1 < r.bottom();
                 let steps = s.song.steps();
                 s.selected_clip = None;
                 double_click(&mut s, &g, at);

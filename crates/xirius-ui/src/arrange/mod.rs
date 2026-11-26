@@ -163,6 +163,8 @@ impl Arrange {
     pub const LOOP_H: f32 = crate::ruler::LOOP_H;
     /// How wide the grips at a clip's, the loop's or a section's ends are.
     pub const GRIP: f32 = crate::ruler::GRIP;
+    /// How tall the band along a clip's lower edge is where the extended arrow cuts (EDT-001).
+    pub const CUT_BAND: f32 = 8.0;
     /// How far the pointer goes before a press becomes a drag.
     pub const DRAG_PX: f32 = 3.0;
     pub const TRACK_DRAG_PX: f32 = 5.0;
@@ -282,6 +284,8 @@ pub enum Grip {
     Right,
     /// The lower right corner: the loop (EDT-041).
     Corner,
+    /// The band along the lower edge, with the extended arrow only: a press cuts there (EDT-001).
+    Cut,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -885,6 +889,8 @@ impl Studio {
                     Grip::Left
                 } else if x >= r.right() - e {
                     Grip::Right
+                } else if self.roll.extended && y >= r.bottom() - Arrange::CUT_BAND {
+                    Grip::Cut
                 } else {
                     Grip::Body
                 };
@@ -2013,7 +2019,7 @@ impl Studio {
                 .map_or(0, |tr| crate::draw::track_color(tr))
         };
         match grip {
-            Grip::Body => {
+            Grip::Body | Grip::Cut => {
                 let min_start = sel.iter().filter_map(|k| find(*k)).map(|k| k.start).min()?;
                 let start = self.snap_tick(clip.start + dt, shift);
                 let delta = (start - clip.start).max(-min_start);
