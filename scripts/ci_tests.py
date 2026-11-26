@@ -208,7 +208,8 @@ def report_flaky(junits, label):
 def default_feature_commands():
     # Exercise ordinary dependencies without the UI's test-io and engine's warn_debug union.
     return [
-        ["cargo", "test", "--locked", "-j", "6", "-p", "xirius-core", "--test", "state_hash", "--test", "history_writer"],
+        ["cargo", "test", "--locked", "-j", "6", "-p", "xirius-core", "--test", "it", "--", "state_hash::",
+         "history_writer::"],
         ["cargo", "test", "--locked", "-j", "6", "-p", "xirius-session", "--test", "empty_instrument"],
         ["cargo", "test", "--locked", "-j", "6", "-p", "xirius-cli", "--test", "song_flow", "--test", "prefs_cli"],
     ]

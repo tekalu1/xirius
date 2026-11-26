@@ -64,7 +64,11 @@ fn child_that_waits_to_be_killed() {
 /// Starts the child on `dir`, waits for its edits, and kills it.
 fn kill_a_running_session(dir: &PathBuf) {
     let mut child = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "child_that_waits_to_be_killed", "--nocapture"])
+        .args([
+            "--exact",
+            "recovery::child_that_waits_to_be_killed",
+            "--nocapture",
+        ])
         .env(CHILD, dir)
         .stdout(Stdio::piped())
         .spawn()

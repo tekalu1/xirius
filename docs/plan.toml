@@ -7619,7 +7619,7 @@ title = "画面だけが答えるコマンドを、CLI の MCP では探すこ�
 area = "MCP"
 phase = "v1"
 source = "impl-17-cli-mcp-bugs-report.md § B-1・B-2"
-done_when = "CommandDef に screen_only があり、input.rs と screen_ops.rs の画面専用コマンドに付いている。Gateway は画面があるか（hosted か new か）で tools/list と tools/call を分け、CLI の MCP には project.new・view.mixer・view.zoom.*・edit.nudge.*・loop.selection・transport.start・browser.put・tool.* が出ず、アプリの MCP には出る（MCP-008 から、tools/list はどちらも入口だけで、画面のコマンドは ops_list・ops_schema と入口からの実行で分ける）。browser.put と project.new の readOnlyHint は false。xirius ops list の各行に screen_only が出る。crates/xirius-mcp/tests/screen_tools.rs と crates/xirius-core/tests/screen_commands.rs で、直す前のコードで落ちることを確かめる"
+done_when = "CommandDef に screen_only があり、input.rs と screen_ops.rs の画面専用コマンドに付いている。Gateway は画面があるか（hosted か new か）で tools/list と tools/call を分け、CLI の MCP には project.new・view.mixer・view.zoom.*・edit.nudge.*・loop.selection・transport.start・browser.put・tool.* が出ず、アプリの MCP には出る（MCP-008 から、tools/list はどちらも入口だけで、画面のコマンドは ops_list・ops_schema と入口からの実行で分ける）。browser.put と project.new の readOnlyHint は false。xirius ops list の各行に screen_only が出る。crates/xirius-mcp/tests/screen_tools.rs と crates/xirius-core/tests/it/screen_commands.rs で、直す前のコードで落ちることを確かめる"
 status = "done"
 
 [[item]]
@@ -7628,7 +7628,7 @@ title = "transient の印だけを返す tool.* などを、画面が無いと�
 area = "MCP"
 phase = "v1"
 source = "impl-17-cli-mcp-bugs-report.md § B-3"
-done_when = "Extension に has_screen があり、画面のある UI の拡張だけが true を返す。Session は screen_only のコマンドを画面の無いときに error[denied]「… は画面でだけ使えます」で止め、tool.select・snap.invert・project.new・view.mixer が CLI で ok: true を返さない。crates/xirius-core/tests/screen_commands.rs で、直す前のコードで落ちることを確かめる"
+done_when = "Extension に has_screen があり、画面のある UI の拡張だけが true を返す。Session は screen_only のコマンドを画面の無いときに error[denied]「… は画面でだけ使えます」で止め、tool.select・snap.invert・project.new・view.mixer が CLI で ok: true を返さない。crates/xirius-core/tests/it/screen_commands.rs で、直す前のコードで落ちることを確かめる"
 status = "done"
 
 [[item]]
@@ -7637,7 +7637,7 @@ title = "track.add.with-instrument と note.put の notes の at・length で「
 area = "MCP"
 phase = "v1"
 source = "impl-17-cli-mcp-bugs-report.md § B-4"
-done_when = "notes の at・length は tick の整数と「小節.拍.tick」の両方を受け（at はクリップの先頭から）、読めない値では「at は tick の整数か \"小節.拍.tick\" で指定してください」と原因と書き方を言い、「ありません」とは言わない。引数の説明にも同じ書き方がある。crates/xirius-core/tests/instrument.rs と note_edit.rs で、直す前のコードで落ちることを確かめる"
+done_when = "notes の at・length は tick の整数と「小節.拍.tick」の両方を受け（at はクリップの先頭から）、読めない値では「at は tick の整数か \"小節.拍.tick\" で指定してください」と原因と書き方を言い、「ありません」とは言わない。引数の説明にも同じ書き方がある。crates/xirius-core/tests/it/instrument.rs と note_edit.rs で、直す前のコードで落ちることを確かめる"
 status = "done"
 
 [[item]]
@@ -7701,7 +7701,7 @@ title = "plugin.param.set の --plain に 0〜1 の値を % のパラメータ�
 area = "CLI"
 phase = "v1"
 source = "impl-17-cli-mcp-bugs-report.md § B-9"
-done_when = "単位が % で範囲が 0 以上 100 以下のパラメーターに 0 より大きく 1 以下の --plain を渡すと、値は単位の値のまま設定し、メッセージに「0.25 % に設定しました。0〜1 の割合なら --value を使います」のように書き、data.warnings にも同じ一文を入れる。--plain のヘルプは単位の値で、0〜1 の割合は --value だと書く。crates/xirius-core/tests/builtin_params.rs で、直す前のコードで落ちることを確かめる"
+done_when = "単位が % で範囲が 0 以上 100 以下のパラメーターに 0 より大きく 1 以下の --plain を渡すと、値は単位の値のまま設定し、メッセージに「0.25 % に設定しました。0〜1 の割合なら --value を使います」のように書き、data.warnings にも同じ一文を入れる。--plain のヘルプは単位の値で、0〜1 の割合は --value だと書く。crates/xirius-core/tests/it/builtin_params.rs で、直す前のコードで落ちることを確かめる"
 status = "done"
 
 [[item]]
@@ -7710,7 +7710,7 @@ title = "project.save-as が空でないフォルダーを断るとき、保存�
 area = "CLI"
 phase = "v1"
 source = "impl-17-cli-mcp-bugs-report.md § B-10"
-done_when = "空でないフォルダーへの project.save-as は error[conflict] のまま「… は空のフォルダーではありません。空のフォルダーか、まだ無いフォルダーを指定してください」と次の手を言い、上書きの選択肢は足さない。crates/xirius-core/tests/save_as_conflict.rs で、直す前のコードで落ちることを確かめる"
+done_when = "空でないフォルダーへの project.save-as は error[conflict] のまま「… は空のフォルダーではありません。空のフォルダーか、まだ無いフォルダーを指定してください」と次の手を言い、上書きの選択肢は足さない。crates/xirius-core/tests/it/save_as_conflict.rs で、直す前のコードで落ちることを確かめる"
 status = "done"
 
 [[item]]
@@ -8762,6 +8762,17 @@ source = "2026-11-26 の持ち主の承認（試験の監査の §6・§7 の 3�
 after = ["ARC-049"]
 done_when = "headless の窓（OS が窓に入力を渡す口）で、別名で保存の Ctrl+Shift+S が保存先を聞き、答えた場所へ本物の保存が書き、音符・プラグインのつまみ・ミュート・名前・テンポを変えて Ctrl+S で保存した曲を別のプロセスで開くと全体が同じで、project.json そのものも同じ（開くは履歴から戻すので、ファイルの欠けを隠さない）。曲の数は書いた値と最後のビットまで同じに読み戻る（serde_json の float_roundtrip。既定の読みは 1 段ずれ、開き直した曲のつまみの値が変わっていた）。曲のメニューとスタート画面の、キーを表示する行・ボタンは、どれも押したときと表示のキーを押したときで同じ結果になる（行から作る試験。UI-378）。曲のメニューの開く…に答えると同じ曲が開き、曲のメニューとスタート画面の最近の曲の行は、行のどこを押してもその行が取り、クリックでその曲が開く（スタート画面の最初の行の下のテンポの帯が取らない。UI-350）。各試験はわざと壊すと落ちることを確かめた。試験は減らさない"
 status = "done"
+
+[[item]]
+id = "ARC-052"
+title = "クレートの統合試験を 1 つの試験の実行ファイルにまとめる"
+area = "ARC"
+phase = "v1.1"
+source = "2026-11-26 の持ち主の承認（試験の監査の §7 の 4・判断 1、推奨どおり）"
+after = ["ARC-048"]
+done_when = "まず xirius-core の tests/ の統合試験を tests/it/main.rs の mod にまとめ（1 ファイル 1 モジュール、試験の名前は <ファイル>::<試験>）、手元のビルドとリンクの時間・試験の実行ファイルの数と大きさ・main の rust の build と shard の時間を前後で測る。縮むなら、実行ファイルの多いクレートから同じ形に広げる。窓を開く試験・別のプロセスを起こして互いに邪魔する試験・harness = false の試験は分けたまま残し、理由を書く。試験の名前を指す所（scripts/ci_tests.py・scripts/release_ci_gate.py・docs）は名前で直す。試験は減らさない"
+status = "partial"
+remaining = "xirius-core のほかのクレート"
 
 [[item]]
 id = "UI-371"

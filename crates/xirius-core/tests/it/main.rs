@@ -1,0 +1,80 @@
+//! The integration tests of xirius-core, in one test executable (ARC-052): one file per area,
+//! each a module here. One executable links once, where 73 linked one each; nextest still runs
+//! every test in a process of its own, so the modules share no state.
+//!
+//! A test's name is `<file>::<test>`: `cargo nextest run -p xirius-core -E 'test(/^recovery::/)'`
+//! or `cargo test -p xirius-core --test it recovery::`.
+
+mod ai_overwrite;
+mod ai_work;
+mod aliases;
+mod arrange;
+mod arrange_time;
+mod auto_steps;
+mod builtin_params;
+mod cc_shape;
+mod channel_inserts;
+mod channel_settings;
+mod clip_ara;
+mod clip_process;
+mod clip_transpose;
+mod clipboard;
+mod clipedit;
+mod clipfx;
+mod collect;
+mod command_visual;
+mod comp;
+mod context_scope;
+mod core;
+mod ctx2_commands;
+mod ctx2_regressions;
+mod deactivate;
+mod draw_shape;
+mod duplicate_settings;
+mod edit3;
+mod field_turn;
+mod folder_bus;
+mod folder_pack;
+mod group_bus;
+mod history_args;
+mod history_writer;
+mod insert_ops;
+mod instrument;
+mod key_more;
+mod key_rows;
+mod lanes;
+mod macros_saved;
+mod many_inserts;
+mod markers;
+mod master_name;
+mod menu_commands;
+mod midi_edit;
+mod midi_out;
+mod missing_plugin_state;
+mod note_edit;
+mod note_source;
+mod overlap;
+mod pad_output;
+mod pitch_correction;
+mod plugin_copy;
+mod quantize_bars;
+mod quantize_panel;
+mod rack;
+mod rack_edit;
+mod rack_layers;
+mod range_edit;
+mod range_lane;
+mod recovery;
+mod reload;
+mod ripple;
+mod roll_view;
+mod sample_files;
+mod save_as_conflict;
+mod screen_commands;
+mod sidechain;
+mod state_hash;
+mod tempo_move;
+mod track_by;
+mod track_colors;
+mod track_preset;
+mod track_transpose;

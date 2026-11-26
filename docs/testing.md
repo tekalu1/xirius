@@ -8,6 +8,11 @@ runs doctests, and checks the complete context-menu catalog. Cargo builds use si
 `--list` shows the selected workspace test targets; `--legacy` runs the original Cargo
 package groups for comparison. Neither mode runs ignored tests by default.
 
+A crate's integration tests are modules of one test executable, `tests/it/main.rs`, one file
+per area (ARC-052; so far `xirius-core`). The crate links once instead of once per file. A test's
+name is `<file>::<test>`: `cargo test -p xirius-core --test it recovery::`, or with nextest
+`-E 'binary(it) & test(/^recovery::/)'`. nextest still runs each test in a process of its own.
+
 The workspace build combines the UI dev-dependencies' `test-io` and the engine's
 `assert_no_alloc/warn_debug`. Default-feature checks separately exercise core edit hashes,
 background history writes, session playback/audition/MIDI capture, CLI/MCP song flow, and
