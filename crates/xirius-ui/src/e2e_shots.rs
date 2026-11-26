@@ -454,7 +454,7 @@ fn song_json(s: &Studio1) -> serde_json::Value {
 }
 
 /// Where two songs differ, as JSON pointers (the first few).
-fn differences(a: &serde_json::Value, b: &serde_json::Value) -> Vec<String> {
+pub(crate) fn differences(a: &serde_json::Value, b: &serde_json::Value) -> Vec<String> {
     fn walk(a: &serde_json::Value, b: &serde_json::Value, at: String, out: &mut Vec<String>) {
         use serde_json::Value::{Array, Object};
         match (a, b) {

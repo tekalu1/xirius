@@ -21,7 +21,9 @@ base64 = "0.22"
 flate2 = "1"
 roxmltree = "0.21"
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
+# Numbers read back to the last bit, so a song opened again holds the values it saved
+# (ARC-050): the default parse can land one step off.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 # The hash the AI's write over the song is checked by (AI-018).
 sha2 = "0.10"
 toml = "0.9"

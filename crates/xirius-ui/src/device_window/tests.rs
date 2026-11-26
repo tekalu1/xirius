@@ -315,7 +315,7 @@ pub(crate) mod headless {
     }
 
     #[derive(Clone)]
-    pub(super) struct HeadlessWindow(pub(super) Rc<WindowState>);
+    pub(crate) struct HeadlessWindow(pub(super) Rc<WindowState>);
 
     impl HasWindowHandle for HeadlessWindow {
         fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
@@ -330,7 +330,7 @@ pub(crate) mod headless {
     }
 
     impl HeadlessWindow {
-        pub(super) fn draw(&self) {
+        pub(crate) fn draw(&self) {
             let cb = self.0.request_frame.borrow_mut().take();
             if let Some(mut cb) = cb {
                 cb(RequestFrameOptions {
@@ -341,7 +341,7 @@ pub(crate) mod headless {
             }
         }
 
-        pub(super) fn dispatch(&self, ev: PlatformInput) {
+        pub(crate) fn dispatch(&self, ev: PlatformInput) {
             let cb = self.0.input.borrow_mut().take();
             if let Some(mut cb) = cb {
                 cb(ev);
@@ -459,7 +459,7 @@ pub(crate) mod headless {
         foreground: ForegroundExecutor,
         text_system: Arc<dyn PlatformTextSystem>,
         display: Rc<dyn PlatformDisplay>,
-        pub(super) windows: RefCell<Vec<HeadlessWindow>>,
+        pub(crate) windows: RefCell<Vec<HeadlessWindow>>,
     }
 
     impl HeadlessPlatform {
