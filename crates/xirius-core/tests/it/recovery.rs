@@ -39,8 +39,10 @@ fn track_names(s: &Session) -> Vec<String> {
 }
 
 /// Runs only in the child process the tests below start: makes a song, saves
-/// it, edits three more times, says so and waits to be killed.
+/// it, edits three more times, says so and waits to be killed. Ignored so it is not counted as a
+/// test of its own; the parent starts it with `--ignored`.
 #[test]
+#[ignore = "the child process's body; the tests below start it with --ignored"]
 fn child_that_waits_to_be_killed() {
     let Ok(dir) = std::env::var(CHILD) else {
         return;
@@ -65,6 +67,7 @@ fn child_that_waits_to_be_killed() {
 fn kill_a_running_session(dir: &PathBuf) {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args([
+            "--ignored",
             "--exact",
             "recovery::child_that_waits_to_be_killed",
             "--nocapture",

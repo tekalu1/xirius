@@ -51,6 +51,7 @@ fn plugin(e: &Entry) -> Plugin {
 fn run_child(root: &Path, mode: &str, host: &Path, dll: &Path) -> std::process::Output {
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
+            "--ignored",
             "--exact",
             "plugin_crash_isolation::fixture_child",
             "--nocapture",
@@ -96,7 +97,9 @@ fn fatal_initialization_in_the_host_keeps_the_parent_alive_and_silent() {
     );
     assert!(root.path().join("survived-silent").is_file());
 }
+/// The child process `run_child` starts. Ignored so it is not counted as a test of its own.
 #[test]
+#[ignore = "the child process's body; run_child starts it with --ignored"]
 fn fixture_child() {
     let Ok(mode) = std::env::var("XIRIUS_ISOLATE_TEST_CHILD") else {
         return;
