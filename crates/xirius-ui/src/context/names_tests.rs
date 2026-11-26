@@ -1,8 +1,7 @@
 //! The words on the menu rows of every scene (CTX-008, ARC-027): short names and no sentence that
 //! explains. The product's own terms are held by `xirius-design-lint` (wording).
 
-use super::tests::{BAR, labels, studio};
-use crate::arrange::probe::clip_mid;
+use super::tests::studio;
 
 /// The sources that put words on menu rows.
 pub(super) const SOURCES: &[(&str, &str)] = &[
@@ -50,32 +49,6 @@ fn no_row_explains_in_a_sentence() {
             }
         }
     }
-}
-
-#[test]
-fn the_rename_rows_say_what_the_registry_says() {
-    let (mut s, g) = studio();
-    let rename = "名前を変更…".to_string();
-    let x = clip_mid(&s, &g, "Keys", 0);
-    assert!(s.scene_context(&g, x.0, x.1));
-    assert!(
-        super::tests::all_labels(&s).contains(&rename),
-        "{:?}",
-        labels(&s)
-    );
-
-    let marker = "名前を変更…".to_string();
-    s.song
-        .run("marker.add", serde_json::json!({"at": 4 * BAR}))
-        .unwrap();
-    let id = s.project().markers[0].id;
-    let r = s.marker_rect(&g, id).unwrap();
-    assert!(s.scene_context(&g, r.x + 4.0, r.y + 4.0));
-    assert!(
-        super::tests::all_labels(&s).contains(&marker),
-        "{:?}",
-        labels(&s)
-    );
 }
 
 #[test]

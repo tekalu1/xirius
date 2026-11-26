@@ -1354,6 +1354,14 @@ fn the_search_clear_shows_with_text_empties_it_and_keeps_the_field() {
     assert_eq!(m.node.label(), Some(crate::search_box::CLEAR_NAME));
     let field = marks.iter().find(|m| m.key == "home-search").unwrap();
     assert_eq!(field.node.description(), Some("1 件"));
+    s.pick_text(None, "qqqq", false);
+    let marks = crate::a11y::marks(&s, &g);
+    let field = marks.iter().find(|m| m.key == "home-search").unwrap();
+    assert_eq!(
+        field.node.description(),
+        Some(crate::search_box::NO_MATCH),
+        "nothing found says the one phrase"
+    );
     assert!(s.press(&g, Hit::Home(Spot::SearchClear)));
     assert_eq!(home(&s).pick.field.value, "");
     assert_eq!(home(&s).focus, Focus::Search);
@@ -1371,13 +1379,4 @@ fn down_from_the_search_goes_to_the_first_row_and_up_on_it_returns() {
     assert!(s.home_key(&g, "up", NONE));
     assert!(s.home_key(&g, "up", NONE));
     assert_eq!(home(&s).focus, Focus::Search, "up on the first row returns");
-}
-
-#[test]
-fn nothing_found_on_the_start_screen_says_the_one_phrase() {
-    let (_tmp, mut s, g) = kept(&["a"]);
-    s.pick_text(None, "qqqq", false);
-    let marks = crate::a11y::marks(&s, &g);
-    let field = marks.iter().find(|m| m.key == "home-search").unwrap();
-    assert_eq!(field.node.description(), Some("見つかりません"));
 }

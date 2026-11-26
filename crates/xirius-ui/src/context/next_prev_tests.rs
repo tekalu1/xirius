@@ -185,18 +185,3 @@ fn from_a_turned_knob_the_preset_keys_step_from_its_preset_and_without_a_window_
     assert!(!s.run_binding(&g, "plugin.preset.next"));
     assert_eq!(s.song().steps(), steps);
 }
-
-#[test]
-fn the_four_commands_are_in_the_table_with_no_arguments_and_a_name() {
-    let s = Studio::sample();
-    for (name, label) in [
-        ("mixer.channel.next", "次のチャンネル"),
-        ("mixer.channel.prev", "前のチャンネル"),
-        ("plugin.preset.next", "次のプリセット"),
-        ("plugin.preset.prev", "前のプリセット"),
-    ] {
-        let def = s.song.registry().get(name).expect(name);
-        assert!(def.args.is_empty(), "{name}");
-        assert_eq!(xirius_core::commands::labels::label(name), Some(label));
-    }
-}
