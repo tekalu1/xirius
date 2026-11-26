@@ -128,6 +128,18 @@ fn mixed_pad_outputs_show_the_last_pressed_pads_destination() {
     press(&mut s, &g, id, 0, Mods::ctrl());
     assert_eq!(shown(&s), 0);
     assert_eq!(row(&s), "Kick Bus");
+    // A row whose bus name is not resolved says Main, never the bus's id; a rename follows.
+    let unnamed = body(&s, &g, t)
+        .spots
+        .into_iter()
+        .find(|x| x.mark == Mark::Output);
+    assert_eq!(unnamed.unwrap().text, "Main");
+    assert!(
+        s.run_command("track.rename", json!({"id":bus,"name":"Drum Bus"})),
+        "{:?}",
+        s.error
+    );
+    assert_eq!(row(&s), "Drum Bus");
 }
 
 /// The 0..1 value of a pad's `id` in the song (its default when it keeps none).

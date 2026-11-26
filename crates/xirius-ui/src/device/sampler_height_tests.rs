@@ -7,7 +7,7 @@ use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::Plugin;
 
 use super::control::Look;
-use super::layout::{self, Body, Mark};
+use super::layout::{self, Body};
 use super::sampler;
 use crate::instrument::window::Part;
 use crate::instrument::{Pick, current};
@@ -44,58 +44,6 @@ fn body(s: &Studio, g: &Geometry, t: TrackId) -> Body {
     let def = s.instruments.def_of(&x).unwrap();
     let r = s.instruments.frame(0, g);
     s.instruments.body(r, &x, def)
-}
-
-#[test]
-fn an_unresolved_output_row_never_exposes_a_bus_id() {
-    let (mut s, g, t, id) = window("Drum Kit");
-    fill(&mut s, &g, id, 0);
-    assert!(
-        s.run_command("track.add.bus", json!({"name":"Kick Bus"})),
-        "{:?}",
-        s.error
-    );
-    let bus = s
-        .project()
-        .tracks
-        .values()
-        .find(|t| t.name == "Kick Bus")
-        .unwrap()
-        .id;
-    assert!(
-        s.run_command(
-            "plugin.pad_output.set",
-            json!({"id":id,"pads":[{"pad":"A1"}],"to":bus}),
-        ),
-        "{:?}",
-        s.error
-    );
-    let row = body(&s, &g, t)
-        .spots
-        .into_iter()
-        .find(|x| x.mark == Mark::Output)
-        .unwrap();
-    assert_eq!(row.text, "Main");
-    let output_text = |s: &Studio| {
-        let x = plugin(s, t);
-        let def = s.instruments.def_of(&x).unwrap();
-        let r = s.instruments.frame(0, &g);
-        let name = &s.project().tracks[&bus].name;
-        s.instruments
-            .body_named(r, &x, def, Some(name))
-            .spots
-            .into_iter()
-            .find(|x| x.mark == Mark::Output)
-            .unwrap()
-            .text
-    };
-    assert_eq!(output_text(&s), "Kick Bus");
-    assert!(
-        s.run_command("track.rename", json!({"id":bus,"name":"Drum Bus"})),
-        "{:?}",
-        s.error
-    );
-    assert_eq!(output_text(&s), "Drum Bus");
 }
 
 fn size(s: &Studio) -> (f32, f32) {
@@ -168,32 +116,6 @@ const WIDTHS: [f32; 3] = [905.0, 640.0, 520.0];
 fn open_at(s: &mut Studio, t: TrackId, w: f32) {
     let n = need(s, t, w);
     s.instruments.open[0].body = n;
-}
-
-#[test]
-fn an_empty_a1_and_a_filled_a1_open_the_same_window() {
-    let (mut s, g, t, id) = window("Drum Kit");
-    let empty = size(&s);
-    assert_eq!(empty, KIT);
-    row_inside(&s, &g, t);
-    fill(&mut s, &g, id, 0);
-    assert_eq!(size(&s), empty);
-    row_inside(&s, &g, t);
-}
-
-#[test]
-fn a_sound_on_another_pad_than_a1_puts_the_knobs_in_the_window_and_live() {
-    let (mut s, g, t, id) = window("Drum Kit");
-    fill(&mut s, &g, id, 4);
-    assert_eq!(size(&s), KIT);
-    let b = body(&s, &g, t);
-    assert!(b.idle_slots.is_empty() && b.idle_graphs.is_empty());
-    let x = plugin(&s, t);
-    let def = s.instruments.def_of(&x).unwrap();
-    let k = sampler::idx(def, "cutoff");
-    let k = k.expect("the pad's cutoff");
-    assert!(b.slots.iter().any(|x| x.k == k && !x.dim));
-    row_inside(&s, &g, t);
 }
 
 #[test]
@@ -294,6 +216,7 @@ fn an_empty_pad_shows_its_row_dim_and_takes_no_value_from_it() {
 fn the_narrow_stacked_form_follows_the_same_rule() {
     for w in WIDTHS {
         let (mut s, g, t, id) = window("Drum Kit");
+        assert_eq!(size(&s), KIT, "an empty kit opens at its natural size");
         open_at(&mut s, t, w);
         let empty = size(&s);
         row_inside(&s, &g, t);
@@ -304,6 +227,13 @@ fn the_narrow_stacked_form_follows_the_same_rule() {
         open_at(&mut s2.0, s2.2, w);
         fill(&mut s2.0, &s2.1, s2.3, 4);
         assert_eq!(size(&s2.0), empty, "{w}: A5 filled");
+        // A sound on another pad than A1 puts its knobs in the window, live.
+        let b = body(&s2.0, &s2.1, s2.2);
+        assert!(b.idle_slots.is_empty() && b.idle_graphs.is_empty(), "{w}");
+        let x = plugin(&s2.0, s2.2);
+        let k = sampler::idx(s2.0.instruments.def_of(&x).unwrap(), "cutoff");
+        let k = k.expect("the pad's cutoff");
+        assert!(b.slots.iter().any(|x| x.k == k && !x.dim), "{w}");
         row_inside(&s2.0, &s2.1, s2.2);
         pick(&mut s2.0, &s2.1, s2.3, 1);
         assert_eq!(size(&s2.0), empty, "{w}: empty pad chosen");

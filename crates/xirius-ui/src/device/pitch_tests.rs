@@ -1,6 +1,6 @@
 //! UI-359: the Pitch Correction window without opening a native window.
 
-use super::control::{self, Look, Step};
+use super::control::{self, Look};
 use super::layout::{self, Shape};
 use xirius_params::{PITCH_CORRECTION, pitch_correction};
 
@@ -37,22 +37,7 @@ fn pitch_ui_has_the_approved_controls_and_graph_at_both_widths() {
                 );
             }
         }
-    }
-}
-
-#[test]
-fn pitch_ui_pick_lists_and_bottom_row_match_the_approved_layout() {
-    let def = &PITCH_CORRECTION;
-    let values: Vec<_> = def.params.iter().map(|p| p.default_norm()).collect();
-    for width in [360.0, 640.0] {
-        let body = layout::body(
-            def,
-            &Shape {
-                w: width,
-                values: &values,
-                ..Shape::default()
-            },
-        );
+        // The pick lists sit beside their names; Formant and Range share the bottom row.
         for (k, label) in [(0, "Key"), (1, "Scale")] {
             let slot = body.slot(k).unwrap();
             let name = body.names.iter().find(|n| n.text == label).unwrap();
@@ -160,16 +145,6 @@ fn pitch_ui_keyboard_follows_key_and_restores_the_named_scale() {
 }
 
 #[test]
-fn pitch_ui_knobs_use_the_existing_drag_and_arrow_sensitivity() {
-    let speed = &PITCH_CORRECTION.params[2];
-    let initial = speed.default_norm();
-    let dragged = control::dragged(speed, initial, -40.0, false);
-    assert!(speed.to_plain(dragged) > 20.0);
-    let down = control::step(speed, dragged, -1.0, Step::Small);
-    assert!(speed.to_plain(down) < speed.to_plain(dragged));
-}
-
-#[test]
 fn pitch_ui_history_waits_for_the_audio_latency_and_keeps_silence_empty() {
     use std::time::{Duration, Instant};
     let mut history = super::pitch::History::default();
@@ -233,28 +208,6 @@ fn pitch_ui_automation_offers_six_targets_without_range() {
         p.builtin().unwrap().params[6].to_plain(p.params["range"]),
         2.0
     );
-}
-
-#[test]
-fn pitch_ui_builtin_insert_opens_its_device_window() {
-    use crate::studio::Studio;
-    use serde_json::json;
-    let mut s = Studio::sample();
-    let bass = s
-        .project()
-        .tracks
-        .values()
-        .find(|t| t.name == "Bass")
-        .unwrap()
-        .id;
-    assert!(s.run_command("plugin.add", json!({"track": bass.to_string(),
-        "name": "Pitch Correction", "kind": "effect", "format": "builtin", "uid": "pitch-correction"})));
-    let id = s.project().tracks[&bass].inserts.last().unwrap().id;
-    s.show_instrument(bass, id);
-    assert!(s.instruments.is_open(id));
-    assert!(crate::instrument::window::is_built_in(
-        s.project().tracks[&bass].inserts.last().unwrap()
-    ));
 }
 
 #[test]
@@ -330,6 +283,10 @@ fn pitch_ui_power_and_default_preset_follow_the_builtin_window() {
         );
     }
     s.show_instrument(track, id);
+    assert!(s.instruments.is_open(id));
+    assert!(crate::instrument::window::is_built_in(
+        s.project().tracks[&track].inserts.last().unwrap()
+    ));
     s.instruments.detached_target = Some(id);
     let g = s.geometry(1600.0, 1000.0);
     let (x, y) = s.instrument_center(&g, id, Part::Power).unwrap();

@@ -118,14 +118,6 @@ fn resize(s: &mut Studio, t: TrackId, w: f32) {
     s.instruments.open[0].body = layout::size(def, w);
 }
 
-#[test]
-fn ui_326_it_opens_wide_on_the_lmf_band_and_the_output_spectrum() {
-    let (s, _, _, id) = eq_window();
-    assert_eq!(s.instruments.open[0].body.0, eq::NATURAL_W);
-    assert_eq!(s.instruments.band(id), 2);
-    assert_eq!(s.instruments.tap(id), Tap::Output);
-}
-
 /// The song playing to a silent output (M-ui-7): each move of a drag copies the song and
 /// syncs the player, as it does on a real one.
 fn play_silent(s: &mut Studio) {
@@ -327,25 +319,62 @@ fn ui_326_the_spectrum_menu_chooses_what_the_analyser_shows() {
     assert!(off.0 < both.0);
 }
 
+/// It opens wide on the LMF band and the output spectrum. A press on a knob chooses the knob's
+/// band, whichever band, and the output knob, of no band, leaves it. Narrow, one band shows,
+/// the tabs choose it, and the height follows the width, not the band.
 #[test]
-fn ui_326_a_press_in_a_column_or_on_a_tab_chooses_the_band() {
+fn ui_326_it_opens_on_the_lmf_and_a_press_in_a_column_or_on_a_tab_chooses_the_band() {
     let (mut s, g, t, id) = eq_window();
+    assert_eq!(s.instruments.open[0].body.0, eq::NATURAL_W);
+    assert_eq!(s.instruments.band(id), 2);
+    assert_eq!(s.instruments.tap(id), Tap::Output);
+    let mut failures = Vec::new();
+    for (i, band) in xirius_params::EQ_BANDS.iter().enumerate() {
+        let freq = k_of(&s, t, band.freq);
+        press(&mut s, &g, id, Part::Knob(freq));
+        if s.instruments.band(id) != i {
+            failures.push(format!("{}: band {}", band.freq, s.instruments.band(id)));
+        }
+    }
     let k = k_of(&s, t, "high_freq");
     press(&mut s, &g, id, Part::Knob(k));
-    assert_eq!(s.instruments.band(id), 4);
-    // Narrow, one band shows and the tabs choose it.
-    resize(&mut s, t, 480.0);
-    let r = s.instruments.frame(0, &g);
+    let output = k_of(&s, t, "output");
+    press(&mut s, &g, id, Part::Knob(output));
+    if s.instruments.band(id) != 4 {
+        failures.push(format!("output: band {}", s.instruments.band(id)));
+    }
+    assert!(
+        failures.is_empty(),
+        "the band a knob chooses: {failures:#?}"
+    );
     let def = fx(&s, t).builtin().unwrap();
+    let wide = s
+        .instruments
+        .body(s.instruments.frame(0, &g), &fx(&s, t), def);
+    assert!(wide.tabs.is_empty());
+
+    // Narrow, one band shows and the tabs choose it.
+    assert!(eq::narrow(eq::MIN_W) && !eq::narrow(eq::NATURAL_W));
+    resize(&mut s, t, eq::MIN_W);
+    let r = s.instruments.frame(0, &g);
     let body = s.instruments.body(r, &fx(&s, t), def);
     assert_eq!(body.tabs.len(), 6);
-    assert!(body.tabs[4].chosen);
+    assert!(
+        body.tabs[4].chosen && !body.tabs[0].on,
+        "the low cut is off"
+    );
+    let names: Vec<_> = body.names.iter().map(|n| n.text).collect();
+    assert_eq!(names, ["HF"]);
+    let freqs = body.slots.iter().filter(|s| s.label == Some("Freq"));
+    assert_eq!(freqs.count(), 1);
     assert!(body.slot(k_of(&s, t, "mid1_freq")).is_none());
+    assert!(body.h < wide.h);
     press(&mut s, &g, id, Part::Tab(2));
     assert_eq!(s.instruments.band(id), 2);
-    let body = s.instruments.body(r, &fx(&s, t), def);
-    assert!(body.slot(k_of(&s, t, "mid1_freq")).is_some());
-    assert!(body.slot(k).is_none());
+    let lmf = s.instruments.body(r, &fx(&s, t), def);
+    assert!(lmf.slot(k_of(&s, t, "mid1_freq")).is_some());
+    assert!(lmf.slot(k).is_none());
+    assert_eq!(lmf.h, body.h, "the height is the width's, not the band's");
 }
 
 #[test]

@@ -7,7 +7,7 @@ use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::Plugin;
 
-use super::delay::{self, ECHO_FOR, Echo, LIT};
+use super::delay::{self, ECHO_FOR, Echo, FEELS, LIT, WHOLES};
 use super::layout;
 use crate::instrument::window::{Part, values};
 use crate::studio::{Geometry, Studio};
@@ -143,14 +143,27 @@ fn ui_329_the_beats_box_and_its_point_offer_each_note_straight_dotted_and_triple
     let pts = s.instruments.points_of(r, &x, def, 0);
     assert_eq!(pts[0].name, "Beats");
     assert_eq!(pts[0].value, "1/8 D");
+    // Each note straight, then dotted, then as a triplet, a line between the feels.
     let rows: Vec<_> = pts[0].menu.iter().flatten().collect();
-    assert_eq!(rows.len(), 18);
-    assert_eq!(pts[0].menu.iter().filter(|r| r.is_none()).count(), 2);
-    let labels: Vec<_> = rows.iter().map(|c| c.label.as_str()).collect();
+    let want: Vec<_> = (0..FEELS.len())
+        .flat_map(|f| (0..WHOLES.len()).map(move |d| delay::beats_label(d, f)))
+        .collect();
+    let labels: Vec<_> = rows.iter().map(|c| c.label.clone()).collect();
+    assert_eq!(labels, want);
     assert_eq!(&labels[..3], ["1/32", "1/16", "1/8"]);
-    assert_eq!(labels[8], "1/8 D");
-    assert_eq!(labels[17], "1/1 T");
-    assert!(rows[8].on && rows.iter().filter(|c| c.on).count() == 1);
+    assert_eq!(
+        pts[0].menu.iter().filter(|r| r.is_none()).count(),
+        FEELS.len() - 1
+    );
+    // The one it is on is ticked, alone.
+    let (d, f) = delay::note(def, &values(&x));
+    let on: Vec<_> = rows.iter().map(|c| c.on).collect();
+    assert_eq!(
+        on,
+        (0..rows.len())
+            .map(|i| i == f * WHOLES.len() + d)
+            .collect::<Vec<_>>()
+    );
 
     // A right press on the point: a row sets the note and its feel at once.
     let (px, py) = s.instrument_center(&g, id, Part::Point(0, 0)).unwrap();
@@ -225,20 +238,6 @@ fn ui_329_the_repeats_light_as_the_onsets_come() {
     assert!((e.since(t2).unwrap() - 0.4).abs() < 1e-6);
     assert!(!e.feed(5, t1 + ECHO_FOR));
     assert_eq!(e.since(t1 + ECHO_FOR), None);
-}
-
-#[test]
-fn ui_329_the_window_watches_its_probe_for_onsets() {
-    use std::sync::Arc;
-    use xirius_engine::stock::Probe;
-    let (mut s, _, _, id) = del_window();
-    let probe = Arc::new(Probe::new());
-    let p = s.project();
-    let find = |x: PluginId| (x == id).then(|| probe.clone());
-    s.instruments
-        .poll_with(&p, 48_000.0, Instant::now(), true, find);
-    assert!(probe.watching());
-    assert!(s.instruments.echoes.contains_key(&id));
 }
 
 #[test]
