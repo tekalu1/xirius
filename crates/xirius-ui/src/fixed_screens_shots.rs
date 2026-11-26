@@ -319,6 +319,7 @@ mod tests {
             "ファイル  F9",
             "プール",
         ];
+        assert_eq!(RAIL_TIPS.len(), crate::browser::RailTab::ALL.len());
         for (shot, text) in RAIL_TIPS.iter().zip(expect) {
             let (s, _) = play_to(RAIL_TIPS, shot.name, 1440.0, 860.0);
             let Hit::Rail(_) = s.hover else {

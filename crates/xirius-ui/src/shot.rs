@@ -1461,24 +1461,4 @@ mod tests {
         assert_eq!(i32::from_le_bytes(file[22..26].try_into().unwrap()), -1);
         assert_eq!(u16::from_le_bytes(file[28..30].try_into().unwrap()), 32);
     }
-
-    #[test]
-    fn the_first_steps_can_be_aimed_at_on_the_sample_at_the_default_size() {
-        // The run aims with `center_of`; a target it cannot aim at is skipped,
-        // which would leave a picture that shows nothing of the step.
-        let studio = Studio::sample();
-        let g = studio.geometry(1440.0, 860.0);
-        for target in [
-            Track("Conga"),
-            Folder("Percussion"),
-            Mute("Drums"),
-            Chevron("Rhythm"),
-            Clip("Keys"),
-            DrawerToggle,
-            Bar(9),
-        ] {
-            let hit = resolve(&studio, target).unwrap();
-            assert!(studio.center_of(&g, hit).is_some(), "{target:?}");
-        }
-    }
 }

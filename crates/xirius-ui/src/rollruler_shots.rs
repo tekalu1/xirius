@@ -322,11 +322,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_stage_has_its_own_name_and_a_known_number() {
-        let mut names: Vec<_> = ROLL_RULER.iter().map(|s| s.name).collect();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names.len(), ROLL_RULER.len());
+    fn every_stage_has_a_known_number() {
+        // Each name is its own: `shot`'s `the_script_names_are_unique_and_in_order`.
         for shot in ROLL_RULER {
             for act in shot.acts {
                 if let Act::RollRuler(n) = act {
