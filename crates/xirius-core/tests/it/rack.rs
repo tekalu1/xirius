@@ -1,5 +1,7 @@
 //! The rack model (PRJ-026): saving, loading with repair, the relaxed
 //! instrument rule and `rack.show`.
+use proptest::prelude::*;
+use proptest::test_runner::RngSeed;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use xirius_core::id::{NodeId, PluginId, TrackId};
@@ -358,44 +360,174 @@ fn a_split_of_many_branches_is_written_and_read_whole() {
     q.validate().unwrap();
 }
 
-#[test]
-fn the_default_crossovers_rise_for_any_number_of_branches() {
+/// The same cases on every run and every machine, and no regression file left behind
+/// (ARC-054). A failure comes back as the smallest case that fails.
+fn config(cases: u32) -> ProptestConfig {
+    ProptestConfig {
+        cases,
+        failure_persistence: None,
+        rng_seed: RngSeed::Fixed(54),
+        ..ProptestConfig::default()
+    }
+}
+
+/// The narrowest band of `c`: the least ratio of a crossover to the one below it.
+fn narrowest(c: &[f64]) -> f64 {
+    c.windows(2).map(|w| w[1] / w[0]).fold(f64::MAX, f64::min)
+}
+
+/// What the default crossovers of `n` (six or more) branches keep: they fit; up to 142 branches
+/// the bands keep the gap a dragged crossover keeps; six to 110 run from 60 Hz to 12 kHz; 111
+/// and more start at 20 Hz and leave one even step free under 20 kHz, so the next added branch
+/// has room.
+fn defaults_hold(n: usize) -> Result<(), String> {
     use xirius_core::rack::{CROSSOVER_GAP, crossovers_fit, default_crossovers};
+    let c = default_crossovers(n);
+    let (low, top) = (c[0], c[n - 2]);
+    let ends = format!("{low} .. {top}");
+    if !crossovers_fit(&c, n) {
+        return Err(format!("{n}: they do not fit: {:?}", &c[..c.len().min(8)]));
+    }
+    if n <= 142 && narrowest(&c) < CROSSOVER_GAP - 1e-12 {
+        return Err(format!("{n}: a band of {}", narrowest(&c)));
+    }
+    if n <= 110 && ((low - 60.0).abs() > 1e-9 || (top - 12_000.0).abs() > 1e-6) {
+        return Err(format!("{n}: {ends}, not 60 .. 12000"));
+    }
+    let step = 1000.0_f64.powf(1.0 / (n - 1) as f64);
+    if n > 110
+        && ((low - 20.0).abs() > 1e-9 || top >= 20_000.0 || (top * step - 20_000.0).abs() > 1.0)
+    {
+        return Err(format!("{n}: {ends}, not 20 and one step under 20000"));
+    }
+    Ok(())
+}
+
+#[test]
+fn the_default_crossovers_keep_their_values_and_where_their_spread_changes() {
+    use xirius_core::rack::{CROSSOVER_GAP, default_crossovers};
     // Two to five keep the values they always had.
     assert_eq!(default_crossovers(2), [1000.0]);
     assert_eq!(default_crossovers(3), [200.0, 2000.0]);
     assert_eq!(default_crossovers(4), [150.0, 800.0, 4000.0]);
     assert_eq!(default_crossovers(5), [100.0, 400.0, 1600.0, 6000.0]);
-    let gap = |c: &[f64]| c.windows(2).map(|w| w[1] / w[0]).fold(f64::MAX, f64::min);
-    for n in [
-        6, 7, 12, 64, 109, 110, 111, 112, 141, 142, 143, 144, 512, 100_000,
-    ] {
-        let c = default_crossovers(n);
-        assert!(crossovers_fit(&c, n), "{n}: {:?}", &c[..c.len().min(8)]);
-        // Up to 142 branches the bands keep the gap a dragged crossover keeps; past that they
-        // still rise, narrower than the gap.
-        let g = gap(&c);
-        assert!(n > 142 || g >= CROSSOVER_GAP - 1e-12, "{n}: {g}");
-        if n > 110 {
-            // 111 and more start at 20 Hz and leave one even step free under 20 kHz, so the
-            // next added branch has room.
-            let top = c[n - 2];
-            assert!((c[0] - 20.0).abs() < 1e-9, "{n}: {}", c[0]);
-            assert!(top < 20_000.0, "{n}: {top}");
-            assert!(
-                (top * (1000.0_f64).powf(1.0 / (n - 1) as f64) - 20_000.0).abs() < 1.0,
-                "{n}: {top}"
-            );
+    // The numbers either side of a change of spread, which the property below may not draw.
+    for n in [6, 110, 111, 142, 143, 100_000] {
+        assert_eq!(defaults_hold(n), Ok(()));
+    }
+    // Past 142 they still rise, narrower than the gap.
+    assert!(narrowest(&default_crossovers(143)) < CROSSOVER_GAP);
+}
+
+/// One fewer than `n` crossovers that rise from `low` by the ratios `up`, as a song may hold
+/// them: inside 20 Hz to 20 kHz or not.
+fn rising(low: f64, up: &[f64]) -> Vec<f64> {
+    let mut c = vec![low];
+    for r in up {
+        c.push(c[c.len() - 1] * r);
+    }
+    c
+}
+
+proptest! {
+    #![proptest_config(config(256))]
+
+    /// For any number of branches from six up.
+    #[test]
+    fn the_default_crossovers_fit_for_any_number_of_branches(n in 6usize..20_000) {
+        prop_assert_eq!(defaults_hold(n), Ok(()));
+    }
+
+    /// Branches added on top of any crossover a song may hold (`m` at once, as a load fills
+    /// them, or one at a time, as `rack.branch.add` does) rise above it and are numbers.
+    #[test]
+    fn added_crossovers_rise_above_any_top_one(exp in -3.0..300.0f64, m in 1usize..=64) {
+        use xirius_core::rack::added_crossovers;
+        let last = 10f64.powf(exp);
+        let c = added_crossovers(last, m);
+        prop_assert_eq!(c.len(), m);
+        prop_assert!(
+            c[0] > last && c.windows(2).all(|w| w[0] < w[1]) && c.iter().all(|f| f.is_finite()),
+            "above {}: {:?}", last, &c[..c.len().min(6)]
+        );
+    }
+
+    /// Under 20 kHz they share the top band, so they stay inside the range: all at once, or
+    /// added one at a time, forty times over.
+    #[test]
+    fn crossovers_added_under_20_khz_stay_inside_the_range(
+        last in 20.0..=19_000.0f64,
+        m in 1usize..=64,
+    ) {
+        use xirius_core::rack::{added_crossovers, crossovers_fit};
+        let top = |c: &[f64]| c[c.len().saturating_sub(3)..].to_vec();
+        let mut c = vec![last];
+        c.extend(added_crossovers(last, m));
+        prop_assert!(crossovers_fit(&c, m + 2), "{} + {}: {:?}", last, m, top(&c));
+        let mut c = vec![last];
+        for k in 1..=40 {
+            c.extend(added_crossovers(c[c.len() - 1], 1));
+            prop_assert!(crossovers_fit(&c, k + 2), "{} + {} one by one: {:?}", last, k, top(&c));
         }
     }
-    assert!(gap(&default_crossovers(143)) < CROSSOVER_GAP);
-    // Six to 110 spread over 60 Hz to 12 kHz.
-    for n in [6, 64, 110] {
-        let c = default_crossovers(n);
-        assert!(
-            (c[0] - 60.0).abs() < 1e-9 && (c[n - 2] - 12_000.0).abs() < 1e-6,
-            "{n}: {c:?}"
-        );
+
+    /// A load keeps any crossovers that rise, even outside 20 Hz to 20 kHz as an older song may
+    /// hold them, and puts the missing ones on top; ones inside 20 Hz to 19 kHz stay inside the
+    /// range. None at all, or ones out of order, give the defaults as they are.
+    #[test]
+    fn missing_crossovers_are_filled_on_top_of_any_kept_ones(
+        (n, low, up) in (3u64..=600).prop_flat_map(|n| (
+            Just(n),
+            1.0..60_000.0f64,
+            prop::collection::vec(1.000_001..3.0f64, 0..(n as usize - 1).min(40)),
+        )),
+        broken in 0usize..3,
+    ) {
+        use xirius_core::rack::{crossovers_fit, crossovers_kept, default_crossovers};
+        let kept = rising(low, &up);
+        let mut t = frequency_track(n, kept.clone());
+        t.fix_rack(&mut fresh_id());
+        let c = crossovers_of(&t);
+        let top = &c[c.len().saturating_sub(4)..];
+        prop_assert!(crossovers_kept(&c, n as usize), "{:?}: {:?}", kept, top);
+        prop_assert_eq!(&c[..kept.len()], &kept[..]);
+        if kept.iter().all(|f| (20.0..=19_000.0).contains(f)) {
+            prop_assert!(crossovers_fit(&c, n as usize), "{:?}: {:?}", kept, top);
+        }
+        let broken = match broken {
+            0 => Vec::new(),
+            1 => kept.iter().rev().copied().chain([low]).collect(),
+            _ => [low, low].into_iter().chain(kept.iter().copied()).collect(),
+        };
+        let mut t = frequency_track(n, broken.clone());
+        t.fix_rack(&mut fresh_id());
+        prop_assert_eq!(crossovers_of(&t), default_crossovers(n as usize), "{:?}", broken);
+    }
+}
+
+proptest! {
+    #![proptest_config(config(24))]
+
+    /// Any crossovers a song keeps are written and read back to the bit, for any number of
+    /// branches (a file each, so fewer cases).
+    #[test]
+    fn frequency_crossovers_are_written_and_read_whole_for_any_number_of_branches(
+        (n, low, up) in (2u64..=600).prop_flat_map(|n| (
+            Just(n),
+            1e-3..1e5f64,
+            prop::collection::vec(1.000_001..1.1f64, n as usize - 2),
+        )),
+    ) {
+        let (_d, dir) = dir(&format!("bands-{n}"));
+        let c = rising(low, &up);
+        let p = project(vec![frequency_track(n, c.clone())]);
+        p.validate().unwrap();
+        Store::new(&dir).write_project(&p).unwrap();
+        let (q, rows) = Store::new(&dir).read_project_report().unwrap();
+        prop_assert!(rows.is_empty(), "{}: {:?}", n, rows);
+        let back = crossovers_of(&q.tracks[&TrackId(2)]);
+        let bits = |c: &[f64]| c.iter().map(|f| f.to_bits()).collect::<Vec<_>>();
+        prop_assert_eq!(bits(&back), bits(&c), "{} branches", n);
     }
 }
 
@@ -424,35 +556,9 @@ fn crossovers_of(t: &Track) -> Vec<f64> {
     }
 }
 
+/// The values a small split is filled with (any number of branches is the property above).
 #[test]
-fn missing_crossovers_are_filled_on_top_of_the_kept_ones_for_any_number_of_branches() {
-    use xirius_core::rack::{crossovers_fit, crossovers_kept, default_crossovers};
-    for n in [6, 64, 512] {
-        // None at all, or out of order: the defaults, as they are.
-        for broken in [vec![], vec![2000.0, 200.0], vec![500.0, 500.0]] {
-            let mut t = frequency_track(n, broken.clone());
-            t.fix_rack(&mut fresh_id());
-            assert_eq!(
-                crossovers_of(&t),
-                default_crossovers(n as usize),
-                "{n} {broken:?}"
-            );
-        }
-        // Kept ones that rise stay, even outside 20 Hz to 20 kHz as an older song may hold
-        // them; the missing ones go on top.
-        for kept in [vec![1000.0], vec![5.0], vec![1000.0, 50_000.0]] {
-            let mut t = frequency_track(n, kept.clone());
-            t.fix_rack(&mut fresh_id());
-            let c = crossovers_of(&t);
-            assert!(crossovers_kept(&c, n as usize), "{n} {kept:?}");
-            assert_eq!(c[..kept.len()], kept[..], "{n}");
-        }
-        // Ones in the range stay in it.
-        let mut t = frequency_track(n, vec![1000.0]);
-        t.fix_rack(&mut fresh_id());
-        let c = crossovers_of(&t);
-        assert!(crossovers_fit(&c, n as usize), "{n}: {:?}", &c[..6]);
-    }
+fn missing_crossovers_of_a_small_split_double_and_what_is_not_a_number_goes() {
     let mut t = frequency_track(4, vec![1000.0]);
     t.fix_rack(&mut fresh_id());
     assert_eq!(crossovers_of(&t), [1000.0, 2000.0, 4000.0]);
@@ -721,21 +827,6 @@ fn a_branch_added_above_a_crossover_near_the_largest_number_keeps_it_or_changes_
     assert!(e.contains("余地"), "{e}");
     assert_eq!(at(&s, 2), [f64::MAX]);
     s.project().validate().unwrap();
-}
-
-#[test]
-fn frequency_crossovers_are_written_and_read_whole_for_any_number_of_branches() {
-    use xirius_core::rack::default_crossovers;
-    for n in [6, 64, 512] {
-        let (_d, dir) = dir(&format!("bands-{n}"));
-        let c = default_crossovers(n as usize);
-        let p = project(vec![frequency_track(n, c.clone())]);
-        p.validate().unwrap();
-        Store::new(&dir).write_project(&p).unwrap();
-        let (q, rows) = Store::new(&dir).read_project_report().unwrap();
-        assert!(rows.is_empty(), "{n}: {rows:?}");
-        assert_eq!(crossovers_of(&q.tracks[&TrackId(2)]), c, "{n}");
-    }
 }
 
 #[test]

@@ -33,6 +33,9 @@ xirius-params = { path = "../xirius-params" }
 [dev-dependencies]
 # A test's folder under the temp folder, removed when dropped even if the test fails (ARC-028).
 tempfile = "3"
+# Properties of the rack's crossovers over any number of branches (ARC-054). Without the default
+# features: no forked runs, no timeout, no regression files.
+proptest = { version = "1.12", default-features = false, features = ["std"] }
 
 # The CPU time of the test's thread, which a busy machine does not stretch (ARC-034).
 [target.'cfg(windows)'.dev-dependencies]

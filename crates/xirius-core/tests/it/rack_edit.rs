@@ -412,7 +412,7 @@ fn crossovers(s: &Session, t: &str, split: &str) -> Vec<f64> {
 
 #[test]
 fn frequency_crossovers_rise_inside_the_range_however_the_split_is_made() {
-    use xirius_core::rack::{crossovers_fit, crossovers_kept, default_crossovers};
+    use xirius_core::rack::{crossovers_fit, default_crossovers};
     for n in [6usize, 64, 512] {
         let (mut s, t, _) = song();
         // Made as a frequency split.
@@ -440,31 +440,17 @@ fn frequency_crossovers_rise_inside_the_range_however_the_split_is_made() {
         assert!(crossovers_fit(&c, n + 1), "{n}: {:?}", &c[c.len() - 4..]);
         s.project().validate().unwrap();
     }
-    // Branches added one by one to a frequency split of two keep every crossover there was and
-    // rise; inside the range while the top band can still be halved under 20 kHz (57 added).
+    // A branch added to a frequency split of two cuts the top band and keeps the 1 kHz the user
+    // had. Adding more, one by one from any top crossover, is the property of
+    // `added_crossovers` in rack.rs.
     let (mut s, t, _) = song();
     let a = id(&run(
         &mut s,
         "rack.split.add",
         json!({ "track": t, "mode": "frequency" }),
     ));
-    let mut was = crossovers(&s, &t, &a);
-    for k in 3..=200 {
-        run(&mut s, "rack.branch.add", json!({ "split": a }));
-        let c = crossovers(&s, &t, &a);
-        assert_eq!(c[..was.len()], was[..], "{k}");
-        assert!(crossovers_kept(&c, k), "{k}: {:?}", &c[c.len() - 4..]);
-        assert!(
-            k > 58 || crossovers_fit(&c, k),
-            "{k}: {:?}",
-            &c[c.len() - 4..]
-        );
-        if k == 3 {
-            // The first added cuts the top band and keeps the 1 kHz the user had.
-            assert_eq!(c, [1000.0, 2000.0]);
-        }
-        was = c;
-    }
+    run(&mut s, "rack.branch.add", json!({ "split": a }));
+    assert_eq!(crossovers(&s, &t, &a), [1000.0, 2000.0]);
     // The AI cannot type crossovers outside 20 Hz to 20 kHz.
     let b = id(&run(
         &mut s,

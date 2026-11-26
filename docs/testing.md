@@ -155,6 +155,19 @@ new test, and a row left without them fails the run, naming the row.
   as `audio.count-in = 8 (round 0, prefs.set): the studio has 0`, `edit.snap.roll.mode = bar
   (round 0, prefs.set): the next launch reads "adaptive"` or `edit.cursor.crosshair = true (round
   0): at once the studio does not work by it`.
+- **A rack split's crossovers, a right-press menu's layout rule or the viewport's maths**
+  (`xirius_core::rack`, `xirius_ui::context::layout`, `xirius_ui::viewport`): these are checked
+  as properties over any input, with proptest (a dev-dependency only), not over a list of cases.
+  `tests/it/rack.rs` in xirius-core holds the crossovers for any number of branches (the
+  defaults, ones added on top, ones a load fills, a file written and read); `tests/it/context_layout.rs`
+  in xirius-ui holds `build` over any rows in any categories (each row once, where the rules put
+  it, or the root's error), and `viewport.rs` its zoom, clamp and rows. A new category, a new
+  label in `DIRECT_ORDER` or a change to `ROOT_ROWS` is in the inputs with no line to add. A
+  change to a rule changes the model beside the property, which says what the code must give.
+  Each property runs its cases from the fixed seed 54 and writes no regression file, so a run
+  here is the run in CI. A failure prints the smallest input that fails after `minimal failing
+  input:`, as `n = 111` or `given = [(0, true, 3, true, 0), (0, true, 1, true, 0)]`; put that
+  case in a plain test beside the property when it marks a rule worth keeping by name.
 
 ## Build artifacts
 
