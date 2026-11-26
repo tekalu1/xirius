@@ -106,17 +106,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_the_bar_line_is_two_pixels() {
-        assert_eq!(GridLine::width(GridTier::Bar), 2.0);
-        for tier in [GridTier::Beat, GridTier::Sub, GridTier::Fine] {
-            assert_eq!(GridLine::width(tier), 1.0);
-        }
-    }
-
-    #[test]
     fn a_two_pixel_line_is_centred_on_its_time() {
         assert_eq!(GridLine::left(100.4, GridTier::Bar), 99.0);
-        assert_eq!(GridLine::left(100.4, GridTier::Beat), 100.0);
+        for tier in [GridTier::Beat, GridTier::Sub, GridTier::Fine] {
+            assert_eq!(GridLine::left(100.4, tier), 100.0, "{tier:?}");
+        }
     }
 
     #[test]

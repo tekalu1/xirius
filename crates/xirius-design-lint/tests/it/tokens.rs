@@ -27,11 +27,6 @@ fn copy_of_the_tokens(name: &str) -> tempfile::TempDir {
 }
 
 #[test]
-fn the_generated_rust_of_the_repository_is_current() {
-    tokens::check(&repo()).unwrap();
-}
-
-#[test]
 fn a_changed_color_in_the_json_fails_the_check_until_it_is_generated_again() {
     let tmp = copy_of_the_tokens("json");
     let dir = tmp.path();

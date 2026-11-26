@@ -106,12 +106,3 @@ fn only_the_two_fonts_are_named() {
         }
     }
 }
-
-#[test]
-fn palette_is_not_reachable_from_outside() {
-    // `Palette` は pub(crate)。外から名前が引けないことは、ここでは文字列で確かめる。
-    let lib = fs::read_to_string(src_dir().join("lib.rs")).unwrap();
-    assert!(!lib.contains("pub use palette::Palette"));
-    let palette = fs::read_to_string(src_dir().join("palette.rs")).unwrap();
-    assert!(palette.contains("pub(crate) struct Palette"));
-}

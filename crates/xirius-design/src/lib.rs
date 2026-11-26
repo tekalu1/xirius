@@ -14,6 +14,11 @@
 //!
 //! 色の値は、`Surface`・`Ink`・`Accent`・`TrackColor` などを通してだけ取り出せる
 //! （パレットの欄は外から見えない）。コード側に生の色を書くことは、`xirius-design-lint` が止める。
+//!
+//! ```compile_fail
+//! // The palette is crate-private: its fields cannot be named from outside.
+//! use xirius_design::Palette;
+//! ```
 
 #[macro_use]
 #[rustfmt::skip]

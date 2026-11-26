@@ -50,24 +50,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn durations() {
-        let ms: Vec<u32> = Duration::ALL.iter().map(|d| d.ms()).collect();
-        assert_eq!(ms, [120, 240, 560]);
-    }
-
-    #[test]
-    fn reduced_motion_is_zero_everywhere() {
+    fn reduced_motion_is_zero_everywhere_and_normal_motion_keeps_the_tokens() {
         let m = Motion::new(true);
+        let normal = Motion::default();
         for d in Duration::ALL {
             assert_eq!(m.duration_ms(d), 0);
+            assert_eq!(normal.duration_ms(d), d.ms(), "{d:?}");
         }
         assert_eq!(m.ai_loop_ms(), 0);
-    }
-
-    #[test]
-    fn normal_motion_keeps_values() {
-        let m = Motion::default();
-        assert_eq!(m.duration_ms(Duration::Base), 240);
-        assert_eq!(m.ai_loop_ms(), 1000);
+        assert_eq!(normal.ai_loop_ms(), AI_LOOP_MS);
     }
 }

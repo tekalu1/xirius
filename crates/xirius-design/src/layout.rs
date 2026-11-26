@@ -23,17 +23,13 @@ mod tests {
     use super::*;
     use crate::{Radius, StructureLine};
 
-    #[test]
-    fn rows_fit_their_contents() {
-        // 札 2 つ分の高さの行に、名前の行と札の行が入る。
-        const { assert!(Layout::TRACK_ROW_H >= Layout::ROW_ICON + Layout::TOGGLE) };
-        const { assert!(Layout::FOLDER_ROW_H >= Layout::ROW_ICON) };
-    }
-
-    #[test]
-    fn indent_leaves_room_for_a_structure_line() {
-        const { assert!(Layout::INDENT >= StructureLine::THICKNESS * 4.0) };
-    }
+    // Checked when the tests compile: 札 2 つ分の高さの行に、名前の行と札の行が入り、
+    // 字下げには構造線が入る。
+    const _: () = {
+        assert!(Layout::TRACK_ROW_H >= Layout::ROW_ICON + Layout::TOGGLE);
+        assert!(Layout::FOLDER_ROW_H >= Layout::ROW_ICON);
+        assert!(Layout::INDENT >= StructureLine::THICKNESS * 4.0);
+    };
 
     #[test]
     fn the_head_widens_only_for_indents_past_its_room() {

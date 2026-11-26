@@ -11,3 +11,9 @@ fn colors() {
     let not_a_color = "#12";
     let also_not = "#ghijkl";
 }
+
+// テストの外（cfg(not(test))）のコードは検査する。
+#[cfg(not(test))]
+fn not_test() {
+    let a = rgb(0x1); //~ raw-color
+}
