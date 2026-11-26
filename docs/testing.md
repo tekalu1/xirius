@@ -143,6 +143,18 @@ new test, and a row left without them fails the run, naming the row.
   with each line that went and came, as `tests/default-keys.txt:<line>: 消えた  keys ableton
   global F9 …` and `表の <line> 行め: 増えた  …`. A test then needs no copy of a default key; it
   checks what a key does, or a rule the table must keep (`session::no_preset_leaves_more_clashes_than_studio_pro`).
+- **A preference** (`xirius_prefs::prefs::PREFS`): a row added there is in
+  `settings::tests::every_setting_is_there_the_next_launch` with no line to add. It sets every
+  value of a choice, both ends of a number and the opposite of a switch, through the settings
+  screen when a page shows it (its switch or segment, its menu, its folder list) and through the
+  `prefs.set` the screen runs when none does, then relaunches and reads it back; a last round puts
+  every one back. A family (`….`) needs a name in `MEMBERS` and a free text a value in `TEXTS`,
+  or it fails as `<key>: no name to try it with in MEMBERS` / `<key>: no value to try (a text
+  needs one in TEXTS)`. A preference the studio works by goes in `lives` with what shows it, and
+  must then be offered on the screen. A failure names the row, the value, the round and the way,
+  as `audio.count-in = 8 (round 0, prefs.set): the studio has 0`, `edit.snap.roll.mode = bar
+  (round 0, prefs.set): the next launch reads "adaptive"` or `edit.cursor.crosshair = true (round
+  0): at once the studio does not work by it`.
 
 ## Build artifacts
 
