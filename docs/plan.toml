@@ -8772,7 +8772,7 @@ source = "2026-11-26 の持ち主の承認（試験の監査の §7 の 4・判�
 after = ["ARC-048"]
 done_when = "まず xirius-core の tests/ の統合試験を tests/it/main.rs の mod にまとめ（1 ファイル 1 モジュール、試験の名前は <ファイル>::<試験>）、手元のビルドとリンクの時間・試験の実行ファイルの数と大きさ・main の rust の build と shard の時間を前後で測る。縮むなら、実行ファイルの多いクレートから同じ形に広げる。窓を開く試験・別のプロセスを起こして互いに邪魔する試験・harness = false の試験は分けたまま残し、理由を書く。試験の名前を指す所（scripts/ci_tests.py・scripts/release_ci_gate.py・docs）は名前で直す。試験は減らさない"
 status = "partial"
-remaining = "xirius-core・xirius-session・xirius-engine・xirius-ui・xirius-cli のほかのクレート"
+remaining = "xirius-core・xirius-session・xirius-engine・xirius-ui・xirius-cli・xirius-vst3 のほかのクレート"
 
 [[item]]
 id = "UI-371"
