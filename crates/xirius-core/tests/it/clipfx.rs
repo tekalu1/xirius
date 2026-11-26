@@ -549,24 +549,12 @@ fn trimming_keeps_the_line_in_place_and_the_fade_on_the_edge() {
 }
 
 #[test]
-fn the_song_keeps_them_through_saving_and_a_song_without_them_writes_nothing() {
+fn a_song_without_them_writes_nothing() {
+    // That the song keeps them through saving: `every_history_command_undoes_and_redoes`.
     let mut s = Session::new("save");
-    let (_, a) = one(&mut s, 960);
+    one(&mut s, 960);
     let plain = serde_json::to_value(s.project()).unwrap();
     assert!(plain.get("clip_fx").is_none());
-    run(
-        &mut s,
-        "clip.fade.set",
-        json!({"ids": [a], "in": 100, "curve": 0.5}),
-    );
-    run(
-        &mut s,
-        "clip.gain.point.add",
-        json!({"id": a, "at": 300, "db": -3.0}),
-    );
-    let v = serde_json::to_value(s.project()).unwrap();
-    let back: Project = serde_json::from_value(v).unwrap();
-    assert_eq!(back.clip_fx, s.project().clip_fx);
 }
 
 #[test]

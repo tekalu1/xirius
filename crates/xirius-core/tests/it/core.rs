@@ -1,15 +1,16 @@
 //! Tests of the core through its public API: invariants, every command's undo /
 //! redo round trip, files, versions, AI permission and the speed budget.
 
-use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde_json::{Value, json};
 use xirius_core::command::Author;
 use xirius_core::error::ErrorCode;
-use xirius_core::model::PluginIsolation;
+use xirius_core::model::{PluginIsolation, Project};
 use xirius_core::session::{AiPermission, RunOptions, RunResult, Session};
+use xirius_core::store::Store;
 use xirius_core::{CmdError, Registry};
 
 /// A song folder named `tag`, not made yet, in a folder of the test's own that goes when the
@@ -304,6 +305,10 @@ fn the_master_cannot_be_removed_moved_or_sent_from() {
 struct Rig {
     s: Session,
     covered: BTreeSet<String>,
+    /// The song each step made, by its state number, kept as it was in memory: the session
+    /// drops old states from memory and reads them from its files, so they are not the
+    /// song before a save.
+    made: BTreeMap<u64, (String, Project)>,
 }
 
 impl Rig {
@@ -330,6 +335,10 @@ impl Rig {
         assert_eq!(hash(&self.s), after, "{name} {args}: redo");
         // A dry run of the same thing would change nothing in the song.
         self.covered.insert(name.to_string());
+        self.made.insert(
+            self.s.cursor(),
+            (name.to_string(), self.s.project().clone()),
+        );
         r
     }
 
@@ -349,6 +358,82 @@ impl Rig {
         );
         r
     }
+
+    /// Drops the song saved in `dir` and opens the folder again. project.json holds the song,
+    /// and every state of the history that a step made, read back from the disk, is the song
+    /// the step made: a value that one command sets and a later one takes away is still
+    /// checked in the states between. The run goes on with the reopened song.
+    fn reopen(&mut self, dir: &Path, at: &str) {
+        let (first, last, cursor) = (self.s.first_step(), self.s.last_step(), self.s.cursor());
+        let saved = self.s.project().clone();
+        self.s = Session::new("dropped");
+        let mut s = Session::open(dir).unwrap_or_else(|e| panic!("{at}: reopen: {e:?}"));
+        s.project()
+            .validate_deep()
+            .unwrap_or_else(|e| panic!("{at}: the reopened song is broken: {e:?}"));
+        assert_eq!(
+            (s.first_step(), s.last_step(), s.cursor()),
+            (first, last, cursor),
+            "{at}: the history and the place in it"
+        );
+        // The first state that differs names the command whose value did not come back.
+        let mut wrong = Vec::new();
+        let made = self.made.range(first..=last);
+        let checked = made.clone().count();
+        for (&n, (by, want)) in made {
+            let got = s.peek(n).unwrap();
+            if *got != *want {
+                let differ = differences(&json!(want), &json!(*got));
+                wrong.push(format!("state {n}, made by {by}: {differ:?}"));
+            }
+        }
+        let count = wrong.len();
+        wrong.truncate(5);
+        assert!(
+            wrong.is_empty(),
+            "{at}: {count} of {checked} states differ after a reopen, the first (an empty \
+             list of paths is a field that is not written):\n{}",
+            wrong.join("\n")
+        );
+        let file = Store::new(dir).read_project().unwrap();
+        let differ = differences(&json!(saved), &json!(file));
+        assert!(
+            file == saved,
+            "{at}: project.json differs from the saved song at {differ:?}"
+        );
+        s.jump(first).unwrap();
+        let start = &self.made[&first].1;
+        assert_eq!(hash(&s), start.content_hash(), "{at}: undo after a reopen");
+        s.jump(cursor).unwrap();
+        assert_eq!(hash(&s), saved.content_hash(), "{at}: redo after a reopen");
+        self.s = s;
+    }
+}
+
+/// The JSON paths where `a` and `b` differ (the first few), with both values.
+fn differences(a: &Value, b: &Value) -> Vec<String> {
+    fn walk(a: &Value, b: &Value, at: String, out: &mut Vec<String>) {
+        match (a, b) {
+            (Value::Object(x), Value::Object(y)) => {
+                for k in x.keys().chain(y.keys().filter(|k| !x.contains_key(*k))) {
+                    let none = Value::Null;
+                    let (u, v) = (x.get(k).unwrap_or(&none), y.get(k).unwrap_or(&none));
+                    walk(u, v, format!("{at}/{k}"), out);
+                }
+            }
+            (Value::Array(x), Value::Array(y)) if x.len() == y.len() => {
+                for (i, (u, v)) in x.iter().zip(y).enumerate() {
+                    walk(u, v, format!("{at}/{i}"), out);
+                }
+            }
+            _ if a != b => out.push(format!("{at}: {a} != {b}")),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(a, b, String::new(), &mut out);
+    out.truncate(8);
+    out
 }
 
 #[test]
@@ -357,8 +442,11 @@ fn every_history_command_undoes_and_redoes() {
     let mut rig = Rig {
         s: Session::new("all"),
         covered: BTreeSet::new(),
+        made: BTreeMap::new(),
     };
     let start = hash(&rig.s);
+    let empty = ("(the start)".to_string(), rig.s.project().clone());
+    rig.made.insert(rig.s.cursor(), empty);
 
     // tracks, buses, folders
     let kick = id_of(&rig.step("track.add.audio", json!({"name": "Kick"})));
@@ -399,6 +487,11 @@ fn every_history_command_undoes_and_redoes() {
         json!({"ids": [kick], "input": "Input 1"}),
     );
     rig.step("track.output.set", json!({"ids": [kick], "to": bus}));
+    rig.step(
+        "track.output.set",
+        json!({"ids": [lead], "to": "midi:A", "channel": 2}),
+    );
+    rig.step("track.output.set", json!({"ids": [lead], "to": "master"}));
     rig.step("folder.bus.set", json!({"id": f, "bus": fx}));
     rig.step("folder.bus.add", json!({"id": g, "name": "Inner bus"}));
     rig.step("track.duplicate", json!({"ids": [kick]}));
@@ -1046,6 +1139,11 @@ fn every_history_command_undoes_and_redoes() {
     );
     rig.step("track.unfreeze", json!({"ids":[edit_track]}));
 
+    // Saved half way, dropped and opened again: the rest of the run is on the reopened song.
+    let (_half_tmp, half) = temp_dir("half-way");
+    rig.s.save_as(&half).unwrap();
+    rig.reopen(&half, "half way");
+
     // song settings
     let marker = id_of(&rig.step("marker.add", json!({"at": 3840})));
     rig.step("marker.add", json!({"at": 7680}));
@@ -1132,7 +1230,7 @@ fn every_history_command_undoes_and_redoes() {
     rig.step("track.delete", json!({"ids": [bus, fx]}));
 
     // versions are history steps too
-    rig.s.save_as(saved).unwrap();
+    rig.s.save_as(&saved).unwrap();
     let v = rig.s.save_version("before restore").unwrap();
     rig.step("track.add.audio", json!({"name": "After"}));
     rig.step("version.restore", json!({"id": v.id}));
@@ -1165,6 +1263,10 @@ fn every_history_command_undoes_and_redoes() {
     assert_eq!(rig.s.cursor(), mid);
     rig.s.jump(rig.s.last_step()).unwrap();
     assert_eq!(hash(&rig.s), end);
+
+    // Saved at the end, dropped and opened again.
+    rig.s.save().unwrap();
+    rig.reopen(&saved, "at the end");
 }
 
 #[test]
@@ -1205,6 +1307,7 @@ fn dry_run_reports_changes_without_editing() {
     let mut rig = Rig {
         s: Session::new("dry"),
         covered: BTreeSet::new(),
+        made: BTreeMap::new(),
     };
     let t = id_of(&rig.step("track.add.instrument", json!({})));
     let c = id_of(&rig.step("clip.add.midi", json!({"track": t, "at": 0})));

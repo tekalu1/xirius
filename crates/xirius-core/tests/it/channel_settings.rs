@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 use xirius_core::error::ErrorCode;
 use xirius_core::id::TrackId;
-use xirius_core::model::{PluginKind, Project};
+use xirius_core::model::PluginKind;
 use xirius_core::session::{RunOptions, Session};
 
 fn run(s: &mut Session, name: &str, args: Value) -> Value {
@@ -253,22 +253,4 @@ fn edit_paste_puts_the_channel_on_the_track_it_names() {
     assert_eq!(kind["kind"], json!("channel"));
     run(&mut s, "edit.paste", json!({ "track": b }));
     assert_eq!(names(&s, &b), ["Compressor", "EQ"]);
-}
-
-#[test]
-fn the_pasted_settings_survive_a_save_and_a_reopen() {
-    let Song { mut s, a, b, .. } = song();
-    run(&mut s, "channel.settings.copy", json!({ "id": a }));
-    run(&mut s, "channel.settings.paste", json!({ "ids": [b] }));
-    let json = serde_json::to_string(s.project()).unwrap();
-    let back: Project = serde_json::from_str(&json).unwrap();
-    let t = &back.tracks[&b.parse::<TrackId>().unwrap()];
-    assert_eq!(
-        t.inserts
-            .iter()
-            .map(|x| x.name.as_str())
-            .collect::<Vec<_>>(),
-        ["Compressor", "EQ"]
-    );
-    assert_eq!((t.volume_db, t.pan, t.sends.len()), (-6.0, 0.5, 1));
 }

@@ -234,7 +234,8 @@ fn the_source_rows_follow_what_happens_to_the_gear() {
 }
 
 #[test]
-fn a_song_without_a_sidechain_saves_and_reads_unchanged() {
+fn a_plugin_written_before_the_sidechain_reads_without_one() {
+    // That a sidechain saves and reads unchanged: `every_history_command_undoes_and_redoes`.
     let (mut s, kick, bass, comp) = song();
     run(
         &mut s,
@@ -242,8 +243,6 @@ fn a_song_without_a_sidechain_saves_and_reads_unchanged() {
         json!({"id": comp.to_string(), "from": kick.to_string(), "level": -8.0}),
     );
     let v = serde_json::to_value(s.project()).unwrap();
-    let back: Project = serde_json::from_value(v.clone()).unwrap();
-    assert_eq!(*s.project(), back);
     // A plug-in written before the field existed (no `sidechain` key) reads.
     let mut x = v["tracks"][bass.to_string().as_str()]["inserts"][0].clone();
     x.as_object_mut().unwrap().remove("sidechain");

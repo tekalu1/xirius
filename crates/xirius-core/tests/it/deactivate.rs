@@ -73,13 +73,11 @@ fn it_is_one_undo_step_each_and_an_unknown_id_fails() {
 }
 
 #[test]
-fn the_song_keeps_it_through_save_and_reopen_and_an_old_song_reads_as_active() {
+fn an_active_plugin_writes_no_switch_and_an_old_song_reads_as_active() {
+    // That the song keeps the switch through saving: `every_history_command_undoes_and_redoes`.
     let (mut s, t, p) = song();
-    run(&mut s, "plugin.deactivate", json!({ "ids": [p] }));
-    let text = serde_json::to_string(&s.project()).expect("serialise");
-    let back: Project = serde_json::from_str(&text).expect("read");
     let tid: TrackId = t.parse().unwrap();
-    assert!(back.tracks[&tid].inserts[0].deactivated);
+    run(&mut s, "plugin.deactivate", json!({ "ids": [p] }));
 
     // A song written before the key existed has none, and an active plugin writes none.
     run(&mut s, "plugin.activate", json!({ "ids": [p] }));

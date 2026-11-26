@@ -74,23 +74,6 @@ fn an_instrument_track_can_send_to_a_midi_port_and_back() {
 }
 
 #[test]
-fn the_port_is_one_history_step_and_saves_with_the_song() {
-    let mut s = Session::new("midi");
-    let t = add(&mut s, "track.add.instrument");
-    run(
-        &mut s,
-        "track.output.set",
-        json!({"ids": [t], "to": "midi:A"}),
-    );
-    let text = serde_json::to_string(s.project()).unwrap();
-    let back: xirius_core::Project = serde_json::from_str(&text).unwrap();
-    let id: TrackId = t.parse().unwrap();
-    assert_eq!(back.track(id).unwrap().midi_out.as_ref().unwrap().port, "A");
-    run(&mut s, "history.undo", json!({}));
-    assert_eq!(midi_out(&s, &t), None);
-}
-
-#[test]
 fn only_instrument_tracks_and_real_channels_are_accepted() {
     let mut s = Session::new("midi");
     let audio = add(&mut s, "track.add.audio");

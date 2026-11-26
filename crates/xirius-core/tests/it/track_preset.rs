@@ -339,16 +339,12 @@ fn a_saved_preset_reads_back_the_same_without_a_row() {
 }
 
 #[test]
-fn the_origin_survives_a_save_and_a_reopen_and_an_old_song_has_none() {
+fn a_song_written_before_the_origin_has_none() {
+    // That the origin survives a save: `every_history_command_undoes_and_redoes`.
     let Song { mut s, a, b, .. } = song();
     let preset = preset_of(&s, &a, "Vocal");
     put(&mut s, &[&b], &preset);
-    let json = serde_json::to_string(s.project()).unwrap();
-    let back: Project = serde_json::from_str(&json).unwrap();
-    let t = &back.tracks[&b.parse::<TrackId>().unwrap()];
-    assert_eq!(t.preset.as_deref(), Some("Vocal"));
-    // a song written before the key existed has no origin
-    let mut v: Value = serde_json::from_str(&json).unwrap();
+    let mut v = serde_json::to_value(s.project()).unwrap();
     for t in v["tracks"].as_object_mut().unwrap().values_mut() {
         t.as_object_mut().unwrap().remove("preset");
     }
