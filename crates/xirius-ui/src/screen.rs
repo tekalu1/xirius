@@ -236,6 +236,17 @@ impl Screen {
         }
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.position);
+        // What covers the body takes the move below, before the press flow: the pointer's
+        // place and shape still follow it.
+        if (studio.saving.is_some()
+            || studio.sound_preparing()
+            || studio.recovery.is_some()
+            || studio.settings.is_some()
+            || studio.palette.is_some())
+            && studio.covered_moved(&g, x, y)
+        {
+            cx.notify();
+        }
         if studio.saving.is_some() {
             if studio.save_hover(&g, x, y) {
                 cx.notify();
