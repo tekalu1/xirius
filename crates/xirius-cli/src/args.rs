@@ -499,28 +499,6 @@ mod tests {
     }
 
     #[test]
-    fn arguments_follow_the_registry_types() {
-        let r = Registry::standard();
-        let def = r.get("note.transpose").unwrap();
-        let m = parse_args(def, &s(&["--by", "-12", "nte_1", "nte_2"])).unwrap();
-        assert_eq!(m["by"], "-12");
-        assert_eq!(m["ids"], "nte_1,nte_2");
-        let m = parse_args(def, &s(&["--ids", "nte_1", "--ids", "nte_3", "--by=3"])).unwrap();
-        assert_eq!(m["ids"], "nte_1,nte_3");
-        assert_eq!(m["by"], "3");
-    }
-
-    #[test]
-    fn a_flag_takes_a_value_only_when_one_follows() {
-        let r = Registry::standard();
-        let def = r.get("track.mute").unwrap();
-        let m = parse_args(def, &s(&["trk_1", "--on"])).unwrap();
-        assert_eq!(m["on"], "true");
-        let m = parse_args(def, &s(&["--on", "false", "trk_1"])).unwrap();
-        assert_eq!(m["on"], "false");
-    }
-
-    #[test]
     fn unknown_options_and_missing_values_are_usage_errors() {
         let r = Registry::standard();
         let def = r.get("note.transpose").unwrap();
@@ -555,5 +533,164 @@ mod tests {
         );
         assert!(split_line("\"open").is_err());
         assert_eq!(split_line("   ").unwrap(), Vec::<String>::new());
+    }
+
+    /// The ID prefix of each kind the song has. A kind none of them is fails the test by its name.
+    const IDS: [&str; 11] = [
+        "trk", "fld", "clp", "nte", "plg", "snd", "sec", "mrk", "tmp", "tsg", "nod",
+    ];
+
+    /// Values of an argument's type, each as an MCP client sends it and as it is typed on the
+    /// command line. A new `ArgType` does not build until it has its row here.
+    fn samples(a: &xirius_core::command::ArgDef) -> Vec<(Value, String)> {
+        use serde_json::json;
+        // Two of each kind, so that a list of one kind has more than one ID.
+        let ids = |kind: xirius_core::id::IdKind| -> Vec<String> {
+            IDS.into_iter()
+                .filter(|p| kind.accepts(&format!("{p}_3").parse().unwrap()))
+                .flat_map(|p| [format!("{p}_3"), format!("{p}_7")])
+                .collect()
+        };
+        let both = |v: Value| (v.clone(), v.as_str().map_or(v.to_string(), str::to_string));
+        match &a.ty {
+            ArgType::Bool => vec![(json!(true), "on".into()), (json!(false), "false".into())],
+            ArgType::Int => {
+                let lo = a.min.map_or(-3, |m| m.ceil() as i64);
+                let hi = a.max.map_or(lo + 12, |m| m.floor() as i64);
+                [lo, hi].map(|n| both(json!(n))).to_vec()
+            }
+            ArgType::Float => {
+                let lo = a.min.unwrap_or(-1.5);
+                let hi = a.max.unwrap_or(lo + 2.25);
+                [lo, (lo + hi) / 2.0, hi].map(|n| both(json!(n))).to_vec()
+            }
+            ArgType::Text => vec![both(json!("Lead Vox")), (json!(12), "12".into())],
+            ArgType::Id(kind) => ids(*kind).into_iter().map(|s| both(json!(s))).collect(),
+            ArgType::Ids(kind) => match ids(*kind) {
+                ids if ids.is_empty() => vec![],
+                ids => vec![
+                    (json!([ids[0]]), ids[0].clone()),
+                    (json!(ids), ids.join(",")),
+                ],
+            },
+            ArgType::Choice(options) => options.iter().map(|o| both(json!(o))).collect(),
+            ArgType::Position => vec![both(json!("2.1.0")), both(json!("960"))],
+            ArgType::Grid => vec![
+                both(json!("1/8t")),
+                both(json!("1/16d")),
+                both(json!("120")),
+            ],
+            ArgType::Pitch => vec![
+                (json!(60), "C3".into()),
+                (json!("F#2"), "F#2".into()),
+                (json!(127), "127".into()),
+            ],
+            ArgType::Objects => {
+                let list = json!([{"pad": "A1", "at": 0}, {"pad": "A2"}]);
+                vec![(list.clone(), list.to_string())]
+            }
+        }
+    }
+
+    /// Every command the program has, every argument and every way of typing it on the command
+    /// line (`--name value`, `--name=value`, an alias, a bare word, a flag alone, an ID list
+    /// given twice) reads as the same arguments as the JSON an MCP client sends for it.
+    #[test]
+    fn every_argument_of_every_command_reads_as_the_mcp_call_does() {
+        let registry = xirius_session::commands::registry();
+        let mut wrong = Vec::new();
+        let mut checked = 0;
+        for def in registry.all() {
+            // Each other required argument is given by name, so the arguments are complete.
+            let first = |a: &xirius_core::command::ArgDef| samples(a).swap_remove(0);
+            for (k, a) in def.args.iter().enumerate() {
+                let samples = samples(a);
+                if samples.is_empty() {
+                    wrong.push(format!(
+                        "{} --{}: no ID of kind {:?}",
+                        def.name, a.name, a.ty
+                    ));
+                    continue;
+                }
+                let others = |before_too: bool| {
+                    let mut tokens = Vec::new();
+                    let mut json = Map::new();
+                    for (j, b) in def.args.iter().enumerate() {
+                        if j != k && (b.required || (before_too && j < k && !b.named_only)) {
+                            let (v, text) = first(b);
+                            tokens.extend([format!("--{}", b.name), text]);
+                            json.insert(b.name.to_string(), v);
+                        }
+                    }
+                    (tokens, json)
+                };
+                for (value, text) in samples {
+                    let mut forms: Vec<(String, Vec<String>, bool)> = vec![
+                        (
+                            "named".into(),
+                            vec![format!("--{}", a.name), text.clone()],
+                            false,
+                        ),
+                        ("inline".into(), vec![format!("--{}={text}", a.name)], false),
+                    ];
+                    for alias in a.aliases {
+                        let tokens = vec![format!("--{alias}"), text.clone()];
+                        forms.push((format!("alias --{alias}"), tokens, false));
+                    }
+                    if a.ty == ArgType::Bool && value == Value::Bool(true) {
+                        forms.push(("a flag alone".into(), vec![format!("--{}", a.name)], false));
+                    }
+                    if let ArgType::Ids(_) = a.ty {
+                        let twice = text
+                            .split(',')
+                            .flat_map(|id| [format!("--{}", a.name), id.to_string()])
+                            .collect();
+                        forms.push(("named once per ID".into(), twice, false));
+                    }
+                    if !a.named_only {
+                        let words = match a.ty {
+                            ArgType::Ids(_) => text.split(',').map(str::to_string).collect(),
+                            _ => vec![text.clone()],
+                        };
+                        forms.push(("a bare word".into(), words, true));
+                    }
+                    for (form, tokens, positional) in forms {
+                        checked += 1;
+                        let (mut line, mut json) = others(positional);
+                        line.extend(tokens);
+                        json.insert(a.name.to_string(), value.clone());
+                        let mcp = registry.normalize(def, &json).map(|a| a.0);
+                        let cli = parse_args(def, &line)
+                            .map_err(|Usage(m)| format!("usage: {m}"))
+                            .and_then(|raw| {
+                                registry
+                                    .normalize(def, &raw)
+                                    .map(|a| a.0)
+                                    .map_err(|e| e.message)
+                            });
+                        match (&mcp, &cli) {
+                            (Ok(m), Ok(c)) if m == c => {}
+                            (Err(e), _) => wrong.push(format!(
+                                "{} --{} ({form}): the sample {value} is refused: {}",
+                                def.name, a.name, e.message
+                            )),
+                            _ => wrong.push(format!(
+                                "{} --{} ({form}): `{}` reads as {cli:?}, the MCP call {} as {mcp:?}",
+                                def.name,
+                                a.name,
+                                line.join(" "),
+                                Value::Object(json)
+                            )),
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} of {checked} command lines read otherwise than the MCP call, the first:\n{}",
+            wrong.len(),
+            wrong[..wrong.len().min(12)].join("\n")
+        );
     }
 }

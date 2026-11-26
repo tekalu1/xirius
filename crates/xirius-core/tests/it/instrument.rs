@@ -52,6 +52,42 @@ fn add_with_instrument_can_insert_before_a_track_inside_a_folder() {
     assert_eq!(s.project().children(parent), &original);
 }
 
+#[test]
+fn add_with_effect_puts_an_audio_track_before_a_track_or_at_an_index_in_a_folder() {
+    use xirius_core::id::Node;
+    use xirius_core::model::{Parent, TrackKind};
+
+    let mut s = Session::new("insert");
+    let folder = id_of(&run(&mut s, "folder.add", json!({"name":"Group"})));
+    let parent = Parent::Folder(folder.parse().unwrap());
+    let anchor = id_of(&run(&mut s, "track.add.audio", json!({"into":folder})));
+    let original = s.project().children(parent).clone();
+    for position in [json!({"before":anchor}), json!({"into":folder,"index":0})] {
+        let mut args = position.clone();
+        args["effect"] = json!("EQ");
+        let new = id_of(&run(&mut s, "track.add.with-effect", args));
+        let children = s.project().children(parent);
+        let at = children
+            .iter()
+            .position(|&n| n == Node::Track(new.parse().unwrap()))
+            .unwrap_or_else(|| panic!("{position}: not in the folder"));
+        assert_eq!(
+            children[at + 1],
+            Node::Track(anchor.parse().unwrap()),
+            "{position}"
+        );
+        assert_eq!(names(&s, &new), [("EQ".to_string(), PluginKind::Effect)]);
+        let track = s
+            .project()
+            .tracks
+            .values()
+            .find(|t| t.id.to_string() == new);
+        assert_eq!(track.unwrap().kind, TrackKind::Audio);
+        run(&mut s, "history.undo", json!({}));
+        assert_eq!(s.project().children(parent), &original, "{position}");
+    }
+}
+
 fn names(s: &Session, track: &str) -> Vec<(String, PluginKind)> {
     let t = s
         .project()
