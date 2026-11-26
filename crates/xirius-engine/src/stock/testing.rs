@@ -98,14 +98,6 @@ pub fn db(ratio: f64) -> f64 {
     20.0 * ratio.max(1e-30).log10()
 }
 
-/// Two seconds of silence come out as silence.
-pub fn assert_silent(p: &mut dyn Processor) {
-    let zero = vec![0.0; RATE as usize * 2];
-    let (l, r) = render(p, &zero, &zero, &[]);
-    assert_eq!(peak(&l), 0.0, "{}: left", p.name());
-    assert_eq!(peak(&r), 0.0, "{}: right", p.name());
-}
-
 /// A unit impulse on both channels, then silence.
 pub fn impulse(frames: usize) -> Vec<f32> {
     let mut x = vec![0.0; frames];

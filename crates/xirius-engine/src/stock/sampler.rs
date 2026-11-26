@@ -472,17 +472,6 @@ mod tests {
         assert_eq!(peak(&x[24_100..]), 0.0, "it played past the file's end");
     }
 
-    /// An empty slot (a file that was not found) stays silent (ENG-077), as does a Sampler
-    /// without files.
-    #[test]
-    fn a_missing_file_opens_silent() {
-        let (mut p, _) = make("sampler");
-        assert_eq!(peak(&play(p.as_mut(), 60, 1.0, 9_600, 9_600)), 0.0);
-        let (mut p, h) = make("sampler");
-        assert!(h.set_files(vec![None]));
-        assert_eq!(peak(&play(p.as_mut(), 60, 1.0, 9_600, 9_600)), 0.0);
-    }
-
     /// A set a full ring turned away (the device not polling) is not lost: once the device
     /// has polled, `resend_files` gets it through without another change (L2-smp-4).
     #[test]
@@ -809,26 +798,5 @@ mod tests {
         assert!(still < 5.0, "{still}");
         // Up to half a semitone either way: close to 100 cents from top to bottom.
         assert!(full > 60.0 && full < 110.0, "{full}");
-    }
-
-    #[test]
-    fn silence_without_notes() {
-        let (mut p, h) = tone();
-        set_plain(&h, "resonance", 100.0);
-        set_plain(&h, "cutoff", 1000.0);
-        set_plain(&h, "drive", 100.0);
-        assert_silent(p.as_mut());
-    }
-
-    /// PLG-066: a note played and let go leaves no voice of the Sampler sounding.
-    #[test]
-    fn a_note_let_go_leaves_no_voice_sounding() {
-        let (mut p, h) = tone();
-        let held = vec![0.0; 4_800];
-        render(p.as_mut(), &held, &held, &[(0, on(60, 0.8))]);
-        assert!(h.probe().sounding() > 0);
-        let after = vec![0.0; 48_000 * 4];
-        render(p.as_mut(), &after, &after, &[(0, off(60))]);
-        assert_eq!(h.probe().sounding(), 0);
     }
 }

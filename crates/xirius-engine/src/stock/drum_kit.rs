@@ -585,27 +585,4 @@ mod tests {
         let x = hits(p.as_mut(), &[], 4_800);
         assert_eq!(peak(&x[1_000..]), 0.0);
     }
-
-    #[test]
-    fn a_note_without_files_is_silent() {
-        let (mut p, _) = make("drum-kit");
-        assert_eq!(peak(&hits(p.as_mut(), &[(0, on(36, 1.0))], 4_800)), 0.0);
-    }
-
-    #[test]
-    fn silence_without_notes() {
-        let (mut p, _) = kit(&[("a.wav", 0.4)], &[]);
-        assert_silent(p.as_mut());
-    }
-
-    /// PLG-066: a hit leaves no voice of the Drum Kit sounding once it has played out.
-    #[test]
-    fn a_note_let_go_leaves_no_voice_sounding() {
-        let (mut p, h) = kit(&[("a.wav", 0.4)], &[]);
-        let short = vec![0.0; 1_000];
-        render(p.as_mut(), &short, &short, &[(0, on(36, 0.8))]);
-        assert!(h.probe().sounding() > 0);
-        hits(p.as_mut(), &[(0, off(36))], 48_000);
-        assert_eq!(h.probe().sounding(), 0);
-    }
 }

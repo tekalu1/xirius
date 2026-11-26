@@ -573,15 +573,6 @@ mod tests {
     }
 
     #[test]
-    fn silence_in_is_silence_out() {
-        let (mut p, h) = make("eq");
-        set_plain(&h, "mid1_gain", 18.0);
-        set_plain(&h, "low_cut_on", 1.0);
-        set_plain(&h, "output", 24.0);
-        assert_silent(p.as_mut());
-    }
-
-    #[test]
     fn the_band_table_is_the_catalogues() {
         for (b, ids) in BANDS.iter().zip(EQ_BANDS) {
             let at = |id| EQ.param(id).unwrap().0;

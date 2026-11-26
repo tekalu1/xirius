@@ -12,6 +12,8 @@ mod delay;
 mod drum_kit;
 pub mod dsp;
 pub mod eq;
+#[cfg(test)]
+mod every;
 pub mod files;
 mod limiter;
 mod pitch_correction;

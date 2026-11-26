@@ -298,13 +298,4 @@ mod tests {
         let (l, _) = render(p.as_mut(), &x, &x, &[]);
         lands_at(&l, 36_000);
     }
-
-    #[test]
-    fn silence_in_is_silence_out() {
-        let (mut p, h) = make("delay");
-        set_plain(&h, "feedback", 95.0);
-        set_plain(&h, "mix", 100.0);
-        set_plain(&h, "ping_pong", 1.0);
-        assert_silent(p.as_mut());
-    }
 }
