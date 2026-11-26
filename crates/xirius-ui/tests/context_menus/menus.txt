@@ -1,0 +1,1374 @@
+empty (the sample song)
+  貼り付け  [empty:000]  (dim)
+  MIDI クリップを作成  [empty:001]
+  再生位置を移動  [empty:002]
+  マーカーを追加  [empty:003]
+  選択
+    すべて選択  [empty:004]
+    トラック上のクリップをすべて選択  [empty:005]
+    ループ範囲のものを選択  [empty:006]  (dim)
+    選択を反転  [empty:007]
+audio (the sample song)
+  クリップを分割  [audio:005]
+  クリップを複製  [audio:007]
+  クリップを削除  [audio:039]
+  ループ範囲を設定  [audio:009]
+  編集
+    名前を変更…  [audio:006]
+    切り取り  [audio:037]
+    コピー  [audio:038]
+  クリップ
+    トランスポーズ  [audio:002]
+    クリップをミュート  [audio:008]
+    クリップをループ  [audio:live-clip-loop]
+  オーディオ
+    テンポ  [audio:000]
+    速さ  [audio:001]
+    微調整  [audio:003]
+    曲のテンポに合わせる  [audio:004]
+    フェードを削除  [audio:027]  (dim)
+    ゲインを戻す  [audio:028]  (dim)
+    ノーマライズ  [audio:029]
+    逆再生  [audio:030]
+    テンポを検出  [audio:031]
+    ARA プラグインを追加…  [audio:032]
+  表示
+    色
+      トラックの色  [audio:010]
+        [audio:011]
+        [audio:012]
+        [audio:013]
+        [audio:014]
+        [audio:015]
+        [audio:016]
+        [audio:017]
+        [audio:018]
+        [audio:019]
+        [audio:020]
+        [audio:021]
+        [audio:022]
+        [audio:023]
+        [audio:024]
+        [audio:025]
+        [audio:026]
+    エクスプローラーで表示  [audio:036]
+  書き出し
+    バウンス
+      クリップをバウンス  [audio:033]
+      新しいトラックにバウンス  [audio:034]
+    選択範囲を書き出す…  [audio:035]
+midi (the sample song)
+  ピアノロールで開く  [midi:001]
+  クリップを分割  [midi:003]
+  クリップを複製  [midi:004]
+  クリップを削除  [midi:035]
+  ループ範囲を設定  [midi:006]
+  色
+    トラックの色  [midi:007]
+      [midi:008]
+      [midi:009]
+      [midi:010]
+      [midi:011]
+      [midi:012]
+      [midi:013]
+      [midi:014]
+      [midi:015]
+      [midi:016]
+      [midi:017]
+      [midi:018]
+      [midi:019]
+      [midi:020]
+      [midi:021]
+      [midi:022]
+      [midi:023]
+  編集
+    名前を変更…  [midi:002]
+    切り取り  [midi:033]
+    コピー  [midi:034]
+  クリップ
+    トランスポーズ  [midi:000]
+    クリップをミュート  [midi:005]
+    クリップをループ  [midi:live-clip-loop]
+    ARA プラグインを追加…  [midi:028]  (dim)
+  MIDI
+    クオンタイズ
+      今のグリッド  [midi:024]
+      50%  [midi:025]
+      元に戻す  [midi:026]  (dim)
+    トランスポーズをノートに反映  [midi:027]  (dim)
+  書き出し
+    バウンス
+      クリップをバウンス  [midi:029]
+      新しいトラックにバウンス  [midi:030]
+    選択範囲を書き出す…  [midi:031]
+    MIDI ファイルとして書き出す…  [midi:032]
+midi (a range over it)
+  ピアノロールで開く  [midi:001]
+  クリップを分割  [midi:003]
+  クリップを複製  [midi:004]
+  クリップを削除  [midi:035]
+  ループ範囲を設定  [midi:006]
+  色
+    トラックの色  [midi:007]
+      [midi:008]
+      [midi:009]
+      [midi:010]
+      [midi:011]
+      [midi:012]
+      [midi:013]
+      [midi:014]
+      [midi:015]
+      [midi:016]
+      [midi:017]
+      [midi:018]
+      [midi:019]
+      [midi:020]
+      [midi:021]
+      [midi:022]
+      [midi:023]
+  編集
+    名前を変更…  [midi:002]
+    切り取り  [midi:033]
+    コピー  [midi:034]
+  クリップ
+    トランスポーズ  [midi:000]
+    クリップをミュート  [midi:005]
+    クリップをループ  [midi:live-clip-loop]
+    ARA プラグインを追加…  [midi:028]  (dim)
+  MIDI
+    クオンタイズ
+      今のグリッド  [midi:024]
+      50%  [midi:025]
+      元に戻す  [midi:026]  (dim)
+    トランスポーズをノートに反映  [midi:027]  (dim)
+  書き出し
+    バウンス
+      選択範囲をバウンス  [midi:live-range-bounce]
+      新しいトラックにバウンス  [midi:live-range-new-bounce]
+    選択範囲を書き出す…  [midi:031]
+    MIDI ファイルとして書き出す…  [midi:032]
+multi-audio (two audio clips)
+  クリップを結合  [multi-audio:000]  (dim)
+  クリップを複製  [multi-audio:006]
+  クリップを削除  [multi-audio:037]
+  ループ範囲を設定  [multi-audio:008]
+  色
+    トラックの色  [multi-audio:009]
+      [multi-audio:010]
+      [multi-audio:011]
+      [multi-audio:012]
+      [multi-audio:013]
+      [multi-audio:014]
+      [multi-audio:015]
+      [multi-audio:016]
+      [multi-audio:017]
+      [multi-audio:018]
+      [multi-audio:019]
+      [multi-audio:020]
+      [multi-audio:021]
+      [multi-audio:022]
+      [multi-audio:023]
+      [multi-audio:024]
+      [multi-audio:025]
+  編集
+    切り取り  [multi-audio:035]
+    コピー  [multi-audio:036]
+  クリップ
+    トランスポーズ  [multi-audio:003]
+    クリップをミュート  [multi-audio:007]
+    クリップをループ  [multi-audio:live-clip-loop]
+  オーディオ
+    テンポ  [multi-audio:001]
+    速さ  [multi-audio:002]
+    微調整  [multi-audio:004]
+    曲のテンポに合わせる  [multi-audio:005]
+    フェードを削除  [multi-audio:026]  (dim)
+    ゲインを戻す  [multi-audio:027]  (dim)
+    クロスフェードを作成  [multi-audio:038]
+    ノーマライズ  [multi-audio:028]
+    逆再生  [multi-audio:029]
+    テンポを検出  [multi-audio:030]
+    ARA プラグインを追加…  [multi-audio:031]
+  書き出し
+    バウンス
+      クリップをバウンス  [multi-audio:032]
+      新しいトラックにバウンス  [multi-audio:033]
+    選択範囲を書き出す…  [multi-audio:034]
+multi-midi (two MIDI clips)
+  クリップを結合  [multi-midi:000]
+  クリップを複製  [multi-midi:002]
+  クリップを削除  [multi-midi:033]
+  ループ範囲を設定  [multi-midi:004]
+  色
+    トラックの色  [multi-midi:005]
+      [multi-midi:006]
+      [multi-midi:007]
+      [multi-midi:008]
+      [multi-midi:009]
+      [multi-midi:010]
+      [multi-midi:011]
+      [multi-midi:012]
+      [multi-midi:013]
+      [multi-midi:014]
+      [multi-midi:015]
+      [multi-midi:016]
+      [multi-midi:017]
+      [multi-midi:018]
+      [multi-midi:019]
+      [multi-midi:020]
+      [multi-midi:021]
+  編集
+    切り取り  [multi-midi:031]
+    コピー  [multi-midi:032]
+  クリップ
+    トランスポーズ  [multi-midi:001]
+    クリップをミュート  [multi-midi:003]
+    クリップをループ  [multi-midi:live-clip-loop]
+    ARA プラグインを追加…  [multi-midi:026]  (dim)
+  MIDI
+    クオンタイズ
+      今のグリッド  [multi-midi:022]  (dim)
+      50%  [multi-midi:023]  (dim)
+      元に戻す  [multi-midi:024]  (dim)
+    トランスポーズをノートに反映  [multi-midi:025]  (dim)
+  書き出し
+    バウンス
+      クリップをバウンス  [multi-midi:027]
+      新しいトラックにバウンス  [multi-midi:028]
+    選択範囲を書き出す…  [multi-midi:029]
+    MIDI ファイルとして書き出す…  [multi-midi:030]
+multi-mixed (a MIDI and an audio clip)
+  クリップを結合  [multi-mixed:000]  (dim)
+  クリップを複製  [multi-mixed:002]
+  クリップを削除  [multi-mixed:028]
+  ループ範囲を設定  [multi-mixed:004]
+  色
+    トラックの色  [multi-mixed:005]
+      [multi-mixed:006]
+      [multi-mixed:007]
+      [multi-mixed:008]
+      [multi-mixed:009]
+      [multi-mixed:010]
+      [multi-mixed:011]
+      [multi-mixed:012]
+      [multi-mixed:013]
+      [multi-mixed:014]
+      [multi-mixed:015]
+      [multi-mixed:016]
+      [multi-mixed:017]
+      [multi-mixed:018]
+      [multi-mixed:019]
+      [multi-mixed:020]
+      [multi-mixed:021]
+  編集
+    切り取り  [multi-mixed:026]
+    コピー  [multi-mixed:027]
+  クリップ
+    トランスポーズ  [multi-mixed:001]
+    クリップをミュート  [multi-mixed:003]
+    クリップをループ  [multi-mixed:live-clip-loop]
+    ARA プラグインを追加…  [multi-mixed:022]  (dim)
+  書き出し
+    バウンス
+      クリップをバウンス  [multi-mixed:023]
+      新しいトラックにバウンス  [multi-mixed:024]
+    選択範囲を書き出す…  [multi-mixed:025]
+track (the sample song)
+  名前を変更…  [track:000]
+  チャンネルエディターを開く  [track:027]
+  オートメーションを表示
+    ボリューム  [track:030]
+    パン  [track:030]
+    ミュート  [track:030]
+    Macro 1  [track:030]
+    Macro 2  [track:030]
+    Macro 3  [track:030]
+    Macro 4  [track:030]
+    Macro 5  [track:030]
+    Macro 6  [track:030]
+    Macro 7  [track:030]
+    Macro 8  [track:030]
+  色
+    既定  [track:001]
+      [track:002]
+      [track:003]
+      [track:004]
+      [track:005]
+      [track:006]
+      [track:007]
+      [track:008]
+      [track:009]
+      [track:010]
+      [track:011]
+      [track:012]
+      [track:013]
+      [track:014]
+      [track:015]
+      [track:016]
+      [track:017]
+  編集
+    トラックを複製
+      中身ごと  [track:018]
+      設定だけ  [track:019]
+    コピー  [track:036]
+    トラックを削除  [track:037]
+  トラック
+    下にトラックを追加
+      オーディオ  [track:020]
+      インストゥルメント  [track:021]
+      フォルダー  [track:022]
+      バス  [track:023]
+    トラックのプリセットとして保存…  [track:028]
+    トラックのプリセットを適用  [track:029]  (dim)
+    フォルダーにまとめる  [track:031]
+    トラックをフリーズ  [track:033]
+  機器
+    エフェクトを追加…  [track:025]
+    スプリッターを追加  [track:026]
+  書き出し
+    新しいトラックにバウンス  [track:032]
+    このトラックのステム…  [track:034]
+    MIDI ファイル…  [track:035]  (dim)
+track (an instrument track)
+  名前を変更…  [track:000]
+  チャンネルエディターを開く  [track:027]
+  オートメーションを表示
+    ボリューム  [track:030]
+    パン  [track:030]
+    ミュート  [track:030]
+    Macro 1  [track:030]
+    Macro 2  [track:030]
+    Macro 3  [track:030]
+    Macro 4  [track:030]
+    Macro 5  [track:030]
+    Macro 6  [track:030]
+    Macro 7  [track:030]
+    Macro 8  [track:030]
+  色
+    既定  [track:001]
+      [track:002]
+      [track:003]
+      [track:004]
+      [track:005]
+      [track:006]
+      [track:007]
+      [track:008]
+      [track:009]
+      [track:010]
+      [track:011]
+      [track:012]
+      [track:013]
+      [track:014]
+      [track:015]
+      [track:016]
+      [track:017]
+  編集
+    トラックを複製
+      中身ごと  [track:018]
+      設定だけ  [track:019]
+    コピー  [track:036]
+    トラックを削除  [track:037]
+  トラック
+    下にトラックを追加
+      オーディオ  [track:020]
+      インストゥルメント  [track:021]
+      フォルダー  [track:022]
+      バス  [track:023]
+    トラックのプリセットとして保存…  [track:028]
+    トラックのプリセットを適用  [track:029]  (dim)
+    フォルダーにまとめる  [track:031]
+    トラックをフリーズ  [track:033]
+  機器
+    レイヤーを追加…  [track:024]
+    エフェクトを追加…  [track:025]
+    スプリッターを追加  [track:026]
+  書き出し
+    新しいトラックにバウンス  [track:032]
+    このトラックのステム…  [track:034]
+    MIDI ファイル…  [track:035]
+track (a saved preset)
+  名前を変更…  [track:000]
+  チャンネルエディターを開く  [track:027]
+  オートメーションを表示
+    ボリューム  [track:030]
+    パン  [track:030]
+    ミュート  [track:030]
+    Macro 1  [track:030]
+    Macro 2  [track:030]
+    Macro 3  [track:030]
+    Macro 4  [track:030]
+    Macro 5  [track:030]
+    Macro 6  [track:030]
+    Macro 7  [track:030]
+    Macro 8  [track:030]
+  色
+    既定  [track:001]
+      [track:002]
+      [track:003]
+      [track:004]
+      [track:005]
+      [track:006]
+      [track:007]
+      [track:008]
+      [track:009]
+      [track:010]
+      [track:011]
+      [track:012]
+      [track:013]
+      [track:014]
+      [track:015]
+      [track:016]
+      [track:017]
+  編集
+    トラックを複製
+      中身ごと  [track:018]
+      設定だけ  [track:019]
+    コピー  [track:036]
+    トラックを削除  [track:037]
+  トラック
+    下にトラックを追加
+      オーディオ  [track:020]
+      インストゥルメント  [track:021]
+      フォルダー  [track:022]
+      バス  [track:023]
+      Chain  [track-states:002]
+    トラックのプリセットとして保存…  [track:028]
+    トラックのプリセットを適用
+      Chain  [track:029]
+    トラックのプリセットを更新  [track-states:001]
+    フォルダーにまとめる  [track:031]
+    トラックをフリーズ  [track:033]
+  機器
+    エフェクトを追加…  [track:025]
+    スプリッターを追加  [track:026]
+  書き出し
+    新しいトラックにバウンス  [track:032]
+    このトラックのステム…  [track:034]
+    MIDI ファイル…  [track:035]  (dim)
+note (three notes)
+  クオンタイズ（今のグリッド）  [note:000]
+  クオンタイズ（50%）  [note:001]
+  トランスポーズ
+    +1  [note:002]
+    −1  [note:003]
+    +12  [note:004]
+    −12  [note:005]
+  ベロシティ
+    値を入力…  [note:006]
+    強く  [note:007]
+    弱く  [note:008]
+    揃える  [note:009]  (dim)
+  長さ
+    次のノートまで  [note:010]
+    グリッド 1 つ分  [note:011]
+    2 倍  [note:012]
+    半分  [note:013]
+  ノートを複製  [note:014]
+  ノートをミュート  [note:015]
+  値を入力
+    位置…  [note:016]
+    長さ…  [note:017]
+    ピッチ…  [note:018]
+    ベロシティ…  [note:019]
+  消しゴムツール  [note:020]
+  切り取り  [note:021]
+  コピー  [note:022]
+  ノートを削除  [note:023]
+other-14 (two takes)
+  このテイクを使用  [other-14:000]
+  選択範囲にこのテイクを使用  [other-14:001]
+  テイクを新しいトラックに展開  [other-14:002]
+  最後の周を取り消す  [other-14:003]
+  未使用のテイクをすべて削除  [other-14:004]
+  テイクを削除  [other-14:005]
+other-16 (a range over a clip)
+  範囲の両端で分割  [other-16:003]  (dim)
+  範囲の中身を切り取り  [other-16:004]  (dim)
+  範囲の中身をコピー  [other-16:005]  (dim)
+  範囲の中身を複製  [other-16:006]  (dim)
+  範囲の中身を削除  [other-16:007]  (dim)
+  ループ範囲を設定  [other-16:008]
+  時間を挿入  [other-16:009]
+  時間を削除  [other-16:010]
+other-16 (the clip selected)
+  選択範囲をバウンス  [other-16:000]
+  新しいトラックにバウンス  [other-16:001]
+  選択範囲を書き出す…  [other-16:002]
+  範囲の両端で分割  [other-16:003]
+  範囲の中身を切り取り  [other-16:004]
+  範囲の中身をコピー  [other-16:005]
+  範囲の中身を複製  [other-16:006]
+  範囲の中身を削除  [other-16:007]
+  ループ範囲を設定  [other-16:008]
+  時間を挿入  [other-16:009]
+  時間を削除  [other-16:010]
+other-17 (a clip and a point)
+  切り取り  [other-17:000]  (dim)
+  コピー  [other-17:001]  (dim)
+  削除  [other-17:002]
+other-18 (two tracks)
+  新しいバスへまとめる  [other-18:000]
+  出力先を設定
+    マスター  [other-18:001]
+  フォルダーにまとめる  [other-18:003]
+  色
+    既定  [other-18:004]
+      [other-18:005]
+      [other-18:006]
+      [other-18:007]
+      [other-18:008]
+      [other-18:009]
+      [other-18:010]
+      [other-18:011]
+      [other-18:012]
+      [other-18:013]
+      [other-18:014]
+      [other-18:015]
+      [other-18:016]
+      [other-18:017]
+      [other-18:018]
+      [other-18:019]
+      [other-18:020]
+  トラックを複製
+    中身ごと  [other-18:021]
+    設定だけ  [other-18:022]
+  ステムを書き出す…  [other-18:024]
+  トラックを削除  [other-18:023]
+other-18 (two tracks and a bus)
+  新しいバスへまとめる  [other-18:000]
+  出力先を設定
+    マスター  [other-18:001]
+    Fx  [other-18:002]
+  フォルダーにまとめる  [other-18:003]
+  色
+    既定  [other-18:004]
+      [other-18:005]
+      [other-18:006]
+      [other-18:007]
+      [other-18:008]
+      [other-18:009]
+      [other-18:010]
+      [other-18:011]
+      [other-18:012]
+      [other-18:013]
+      [other-18:014]
+      [other-18:015]
+      [other-18:016]
+      [other-18:017]
+      [other-18:018]
+      [other-18:019]
+      [other-18:020]
+  トラックを複製
+    中身ごと  [other-18:021]
+    設定だけ  [other-18:022]
+  ステムを書き出す…  [other-18:024]
+  トラックを削除  [other-18:023]
+other-19 (the sample song)
+  名前を変更…  [other-19:000]
+  色
+    既定  [other-19:004]
+      [other-19:005]
+      [other-19:006]
+      [other-19:007]
+      [other-19:008]
+      [other-19:009]
+      [other-19:010]
+      [other-19:011]
+      [other-19:012]
+      [other-19:013]
+      [other-19:014]
+      [other-19:015]
+      [other-19:016]
+      [other-19:017]
+      [other-19:018]
+      [other-19:019]
+      [other-19:020]
+  中のトラックにも塗る
+    既定  [other-19:021]
+      [other-19:022]
+      [other-19:023]
+      [other-19:024]
+      [other-19:025]
+      [other-19:026]
+      [other-19:027]
+      [other-19:028]
+      [other-19:029]
+      [other-19:030]
+      [other-19:031]
+      [other-19:032]
+      [other-19:033]
+      [other-19:034]
+      [other-19:035]
+      [other-19:036]
+      [other-19:037]
+  中のトラックを選択  [other-19:038]
+  フォルダーを複製  [other-19:001]
+  ステムを書き出す
+    このフォルダーを 1 本に…  [other-19:039]  (dim)
+    中のトラックごと…  [other-19:040]
+  まとめを解く  [other-19:041]
+  フォルダーを削除
+    フォルダーだけ  [other-19:002]
+    中のトラックごと  [other-19:003]
+other-20 (the sample song)
+  トラックを追加
+    オーディオ  [other-20:000]
+    インストゥルメント  [other-20:001]
+    フォルダー  [other-20:002]
+    バス  [other-20:003]
+  貼り付け  [other-20:005]  (dim)
+  フォルダー
+    すべて開く  [other-20:006]
+    すべて畳む  [other-20:007]
+other-20 (a saved preset)
+  トラックを追加
+    オーディオ  [other-20:000]
+    インストゥルメント  [other-20:001]
+    フォルダー  [other-20:002]
+    バス  [other-20:003]
+    Chain  [other-20:004]
+  貼り付け  [other-20:005]  (dim)
+  フォルダー
+    すべて開く  [other-20:006]
+    すべて畳む  [other-20:007]
+other-21 (the sample song)
+  ここから再生  [other-21:000]
+  マーカーを追加  [other-21:001]
+  ループの始まりをここに  [other-21:002]
+  ループの終わりをここに  [other-21:003]
+  テンポを設定…  [other-21:004]
+  拍子を設定
+    2/4  [other-21:005]
+    3/4  [other-21:006]
+    4/4  [other-21:007]
+    5/4  [other-21:008]
+    6/8  [other-21:009]
+    7/8  [other-21:010]
+    9/8  [other-21:011]
+    12/8  [other-21:012]
+  目盛り
+    小節と拍  [other-21:013]
+    分と秒  [other-21:014]
+other-22 (a loop)
+  ループ  [other-22:000]
+  ループ範囲のものを選択  [other-22:004]
+  ループの中を書き出す…  [other-22:005]
+  複製  [other-22:006]
+  セクションにする  [other-22:001]  (dim)
+  時間を挿入  [other-22:002]
+  時間を削除  [other-22:003]
+other-23 (a marker)
+  名前を変更…  [other-23:000]
+  次のマーカーまでをループに  [other-23:002]  (dim)
+  色
+    既定  [other-23:003]
+      [other-23:004]
+      [other-23:005]
+      [other-23:006]
+      [other-23:007]
+      [other-23:008]
+      [other-23:009]
+      [other-23:010]
+      [other-23:011]
+      [other-23:012]
+      [other-23:013]
+      [other-23:014]
+      [other-23:015]
+      [other-23:016]
+      [other-23:017]
+      [other-23:018]
+      [other-23:019]
+  マーカーを削除  [other-23:001]
+other-24 (the sample song)
+  セクション名を変更
+    Intro  [other-24:000]
+    Verse  [other-24:001]
+    Pre-Chorus  [other-24:002]
+    Chorus  [other-24:003]
+    Bridge  [other-24:004]
+    Outro  [other-24:005]
+    名前を入力…  [other-24:006]
+  色
+    なし  [other-24:013]
+      [other-24:014]
+      [other-24:015]
+      [other-24:016]
+      [other-24:017]
+      [other-24:018]
+      [other-24:019]
+      [other-24:020]
+      [other-24:021]
+      [other-24:022]
+      [other-24:023]
+      [other-24:024]
+      [other-24:025]
+      [other-24:026]
+      [other-24:027]
+      [other-24:028]
+      [other-24:029]
+  複製  [other-24:007]
+  セクションをループ  [other-24:030]
+  セクションのものを選択  [other-24:032]
+  ここで分割  [other-24:008]  (dim)
+  セクションを書き出す…  [other-24:033]
+  切り取り  [other-24:009]
+  コピー  [other-24:010]
+  貼り付け  [other-24:011]  (dim)
+  削除  [other-24:012]
+  時間を削除  [other-24:031]
+other-25 (a gap between sections)
+  セクションを追加
+    Intro  [other-25:000]
+    Verse  [other-25:001]
+    Pre-Chorus  [other-25:002]
+    Chorus  [other-25:003]
+    Bridge  [other-25:004]
+    Outro  [other-25:005]
+  貼り付け  [other-25:006]  (dim)
+other-26 (two tempo points)
+  BPM を入力…  [other-26:000]
+  次のポイントまでの形  (dim)
+    階段  [other-26:001]  (dim)
+    直線  [other-26:002]  (dim)
+  テンポポイントを削除  [other-26:003]
+other-27 (the sample song)
+  ここにポイントを追加  [other-27:000]
+  貼り付け  [other-27:002]  (dim)
+  テンポの変化をすべて削除  [other-27:001]  (dim)
+other-28 (a range over a tempo change)
+  範囲を直線にする  [other-28:000]
+  範囲を平らにする  [other-28:001]
+  範囲を上げる（+5 bpm）  [other-28:002]
+  範囲を下げる（-5 bpm）  [other-28:003]
+  範囲をトランスフォーム
+    自由変形  [other-28:004]
+    縮小 50%  [other-28:005]
+    拡大 150%  [other-28:006]
+    上下を反転  [other-28:007]
+    右上がりに傾ける（+10 bpm）  [other-28:008]
+    右下がりに傾ける（-10 bpm）  [other-28:009]
+  時間を挿入  [other-28:010]
+  時間を削除  [other-28:011]
+other-29 (two lanes)
+  値を入力…  [other-29:000]
+  次のポイントまでの形
+    直線  [other-29:001]  (dim)
+    曲線  [other-29:002]
+    階段  [other-29:003]
+  切り取り  [other-29:004]
+  コピー  [other-29:005]
+  削除  [other-29:006]
+other-30 (two lanes)
+  ここにポイントを追加  [other-30:000]
+  この線の形  [other-30:001]  (dim)
+  貼り付け  [other-30:006]  (dim)
+  ループの中のポイントを削除  [other-30:004]  (dim)
+  すべてのポイントを削除  [other-30:005]
+other-30 (on a line)
+  ここにポイントを追加  [other-30:000]
+  この線の形
+    直線  [other-30:001]  (dim)
+    曲線  [other-30:002]
+    階段  [other-30:003]
+  貼り付け  [other-30:006]  (dim)
+  ループの中のポイントを削除  [other-30:004]  (dim)
+  すべてのポイントを削除  [other-30:005]
+other-31 (two lanes)
+  レーンを追加
+    ボリューム  [other-31:000]
+    パン  [other-31:000]
+    ミュート  [other-31:000]
+    マクロコントロール
+      Macro 1  [other-31:000]
+      Macro 2  [other-31:000]
+      Macro 3  [other-31:000]
+      Macro 4  [other-31:000]
+      Macro 5  [other-31:000]
+      Macro 6  [other-31:000]
+      Macro 7  [other-31:000]
+      Macro 8  [other-31:000]
+  このレーンを隠す  [other-31:001]
+  すべてのポイントを削除  [other-31:002]
+other-32 (a range over two lanes)
+  コピー  [other-32:000]  (dim)
+  切り取り  [other-32:001]
+  貼り付け  [other-32:002]  (dim)
+  削除  [other-32:003]
+  範囲を直線にする  [other-32:004]
+  範囲をカーブにする  [other-32:005]
+  範囲を平らにする  [other-32:006]
+  範囲を上げる（+10 %）  [other-32:007]
+  範囲を下げる（-10 %）  [other-32:008]
+  範囲をトランスフォーム
+    自由変形  [other-32:009]
+    縮小 50%  [other-32:010]
+    拡大 150%  [other-32:011]
+    上下を反転  [other-32:012]
+    右上がりに傾ける（+20 %）  [other-32:013]
+    右下がりに傾ける（-20 %）  [other-32:014]
+  時間を挿入  [other-32:015]
+  時間を削除  [other-32:016]
+other-33 (three notes)
+  貼り付け  [other-33:000]  (dim)
+  すべて選択  [other-33:001]
+  選択を反転  [other-33:002]
+  グリッド
+    1/4  [other-33:003]
+    1/8  [other-33:004]
+    1/16  [other-33:005]
+    1/32  [other-33:006]
+    3 連  [other-33:007]
+  消しゴムツール  [other-33:008]
+other-34 (the keyboard)
+  同じ高さのノートを選択  [other-34:000]
+  鍵盤の表示
+    音名  [other-34:001]
+    ドラムの名前  [other-34:002]
+other-35 (the drum view)
+  同じ高さのノートを選択  [other-35:000]  (dim)
+  鍵盤の表示
+    音名  [other-35:001]
+    ドラムの名前  [other-35:002]
+  名前を変更…  [other-35:006]
+  隠す  [other-35:003]
+  上へ移動  [other-35:004]
+  下へ移動  [other-35:005]  (dim)
+other-36 (the drum view)
+  ドラムマップ
+    GM ドラム  [other-36:live-map]
+    ドラムキット  [other-36:live-map]
+  隠す
+    ローコンガ  [other-36:000]  (dim)
+    ミュート・ハイコンガ  [other-36:000]  (dim)
+    ハイボンゴ  [other-36:000]  (dim)
+    ライド  [other-36:000]
+    ハイタム  [other-36:000]
+    クラッシュ  [other-36:000]
+    ハイ・ミッドタム  [other-36:000]
+    ロー・ミッドタム  [other-36:000]
+    ハイハット（開）  [other-36:000]
+    ロータム  [other-36:000]
+    ハイハット（ペダル）  [other-36:000]
+    ハイハット（閉）  [other-36:000]
+    ロー・フロアタム  [other-36:000]
+    クラップ  [other-36:000]
+    スネア  [other-36:000]
+    サイドスティック  [other-36:000]
+    キック  [other-36:000]
+  行名を変更
+    ローコンガ  [other-36:001]
+    ミュート・ハイコンガ  [other-36:001]
+    ハイボンゴ  [other-36:001]
+    ライド  [other-36:001]
+    ハイタム  [other-36:001]
+    クラッシュ  [other-36:001]
+    ハイ・ミッドタム  [other-36:001]
+    ロー・ミッドタム  [other-36:001]
+    ハイハット（開）  [other-36:001]
+    ロータム  [other-36:001]
+    ハイハット（ペダル）  [other-36:001]
+    ハイハット（閉）  [other-36:001]
+    ロー・フロアタム  [other-36:001]
+    クラップ  [other-36:001]
+    スネア  [other-36:001]
+    サイドスティック  [other-36:001]
+    キック  [other-36:001]
+  既定に戻す  [other-36:002]  (dim)
+other-38 (a CC1 lane)
+  値を入力…  [other-38:000]
+  次のポイントまでの形
+    直線  [other-38:001]
+    階段  [other-38:002]  (dim)
+  切り取り  [other-38:003]
+  コピー  [other-38:004]
+  削除  [other-38:005]
+other-40 (the velocity tab)
+  種類を変更
+    ピッチベンド  [other-40:000]
+    CC1  [other-40:001]  (dim)
+    CC11  [other-40:002]
+    CC64  [other-40:003]
+    アフタータッチ  [other-40:004]
+    番号で選ぶ
+      CC2  [other-40:005]
+      CC7  [other-40:006]
+      CC10  [other-40:007]
+      CC71  [other-40:008]
+      CC74  [other-40:009]
+      CC91  [other-40:010]
+      CC93  [other-40:011]
+  このレーンを隠す  [other-40:013]  (dim)
+  すべてのポイントを削除  [other-40:012]  (dim)
+other-40 (the CC1 tab)
+  種類を変更
+    ピッチベンド  [other-40:000]
+    CC1  [other-40:001]  (dim)
+    CC11  [other-40:002]
+    CC64  [other-40:003]
+    アフタータッチ  [other-40:004]
+    番号で選ぶ
+      CC2  [other-40:005]
+      CC7  [other-40:006]
+      CC10  [other-40:007]
+      CC71  [other-40:008]
+      CC74  [other-40:009]
+      CC91  [other-40:010]
+      CC93  [other-40:011]
+  このレーンを隠す  [other-40:013]
+  すべてのポイントを削除  [other-40:012]
+other-41 (notes and a point)
+  切り取り  [other-41:000]  (dim)
+  コピー  [other-41:001]  (dim)
+  ノートを削除  [other-41:002]
+other-48 (the mixer)
+  名前を変更…  [other-48:002]
+  チャンネルエディターを開く  [other-48:009]
+  オートメーションを表示
+    ボリューム  [other-48:033]
+    パン  [other-48:033]
+    ミュート  [other-48:033]
+    Macro 1  [other-48:033]
+    Macro 2  [other-48:033]
+    Macro 3  [other-48:033]
+    Macro 4  [other-48:033]
+    Macro 5  [other-48:033]
+    Macro 6  [other-48:033]
+    Macro 7  [other-48:033]
+    Macro 8  [other-48:033]
+  ステムを書き出す…  [other-48:034]
+  編集
+    チャンネルの設定をコピー  [other-48:000]
+    チャンネルの設定を貼り付け  [other-48:001]  (dim)
+    トラックを複製
+      中身ごと  [other-48:003]
+      設定だけ  [other-48:004]
+    トラックを削除  [other-48:005]
+  トラック
+    トラックのプリセットとして保存…  [other-48:028]
+    トラックのプリセットを適用  [other-48:029]  (dim)
+    トラックをフリーズ  [other-48:031]
+  機器
+    エフェクトを追加…  [other-48:007]
+    スプリッターを追加  [other-48:008]
+  表示
+    色
+      既定  [other-48:010]
+        [other-48:011]
+        [other-48:012]
+        [other-48:013]
+        [other-48:014]
+        [other-48:015]
+        [other-48:016]
+        [other-48:017]
+        [other-48:018]
+        [other-48:019]
+        [other-48:020]
+        [other-48:021]
+        [other-48:022]
+        [other-48:023]
+        [other-48:024]
+        [other-48:025]
+        [other-48:026]
+    トラックの列で表示  [other-48:027]
+other-48 (an instrument track)
+  名前を変更…  [other-48:002]
+  チャンネルエディターを開く  [other-48:009]
+  オートメーションを表示
+    ボリューム  [other-48:033]
+    パン  [other-48:033]
+    ミュート  [other-48:033]
+    Macro 1  [other-48:033]
+    Macro 2  [other-48:033]
+    Macro 3  [other-48:033]
+    Macro 4  [other-48:033]
+    Macro 5  [other-48:033]
+    Macro 6  [other-48:033]
+    Macro 7  [other-48:033]
+    Macro 8  [other-48:033]
+  ステムを書き出す…  [other-48:034]
+  編集
+    チャンネルの設定をコピー  [other-48:000]
+    チャンネルの設定を貼り付け  [other-48:001]  (dim)
+    トラックを複製
+      中身ごと  [other-48:003]
+      設定だけ  [other-48:004]
+    トラックを削除  [other-48:005]
+  トラック
+    トラックのプリセットとして保存…  [other-48:028]
+    トラックのプリセットを適用  [other-48:029]  (dim)
+    トラックをフリーズ  [other-48:031]
+  機器
+    レイヤーを追加…  [other-48:006]
+    エフェクトを追加…  [other-48:007]
+    スプリッターを追加  [other-48:008]
+  表示
+    色
+      既定  [other-48:010]
+        [other-48:011]
+        [other-48:012]
+        [other-48:013]
+        [other-48:014]
+        [other-48:015]
+        [other-48:016]
+        [other-48:017]
+        [other-48:018]
+        [other-48:019]
+        [other-48:020]
+        [other-48:021]
+        [other-48:022]
+        [other-48:023]
+        [other-48:024]
+        [other-48:025]
+        [other-48:026]
+    トラックの列で表示  [other-48:027]
+other-48 (a saved preset)
+  名前を変更…  [other-48:002]
+  チャンネルエディターを開く  [other-48:009]
+  オートメーションを表示
+    ボリューム  [other-48:033]
+    パン  [other-48:033]
+    ミュート  [other-48:033]
+    Macro 1  [other-48:033]
+    Macro 2  [other-48:033]
+    Macro 3  [other-48:033]
+    Macro 4  [other-48:033]
+    Macro 5  [other-48:033]
+    Macro 6  [other-48:033]
+    Macro 7  [other-48:033]
+    Macro 8  [other-48:033]
+  ステムを書き出す…  [other-48:034]
+  編集
+    チャンネルの設定をコピー  [other-48:000]
+    チャンネルの設定を貼り付け  [other-48:001]  (dim)
+    トラックを複製
+      中身ごと  [other-48:003]
+      設定だけ  [other-48:004]
+    トラックを削除  [other-48:005]
+  トラック
+    トラックのプリセットとして保存…  [other-48:028]
+    トラックのプリセットを適用
+      Chain  [other-48:029]
+    トラックのプリセットを更新  [other-48:030]
+    トラックをフリーズ  [other-48:031]
+  機器
+    エフェクトを追加…  [other-48:007]
+    スプリッターを追加  [other-48:008]
+  表示
+    色
+      既定  [other-48:010]
+        [other-48:011]
+        [other-48:012]
+        [other-48:013]
+        [other-48:014]
+        [other-48:015]
+        [other-48:016]
+        [other-48:017]
+        [other-48:018]
+        [other-48:019]
+        [other-48:020]
+        [other-48:021]
+        [other-48:022]
+        [other-48:023]
+        [other-48:024]
+        [other-48:025]
+        [other-48:026]
+    トラックの列で表示  [other-48:027]
+other-49 (a bus)
+  名前を変更…  [other-49:002]
+  チャンネルエディターを開く  [other-49:007]
+  送っているチャンネルを選択  [other-49:026]  (dim)
+  オートメーションを表示
+    ボリューム  [other-49:027]
+    パン  [other-49:027]
+    ミュート  [other-49:027]
+    Macro 1  [other-49:027]
+    Macro 2  [other-49:027]
+    Macro 3  [other-49:027]
+    Macro 4  [other-49:027]
+    Macro 5  [other-49:027]
+    Macro 6  [other-49:027]
+    Macro 7  [other-49:027]
+    Macro 8  [other-49:027]
+  このバスを書き出す…  [other-49:028]
+  編集
+    チャンネルの設定をコピー  [other-49:000]
+    チャンネルの設定を貼り付け  [other-49:001]  (dim)
+    トラックを複製  [other-49:003]
+    トラックを削除  [other-49:004]
+  機器
+    エフェクトを追加…  [other-49:005]
+    スプリッターを追加  [other-49:006]
+  表示
+    色
+      既定  [other-49:008]
+        [other-49:009]
+        [other-49:010]
+        [other-49:011]
+        [other-49:012]
+        [other-49:013]
+        [other-49:014]
+        [other-49:015]
+        [other-49:016]
+        [other-49:017]
+        [other-49:018]
+        [other-49:019]
+        [other-49:020]
+        [other-49:021]
+        [other-49:022]
+        [other-49:023]
+        [other-49:024]
+    トラックの列で表示  [other-49:025]
+other-50 (the mixer)
+  チャンネルの設定をコピー  [other-50:000]
+  チャンネルの設定を貼り付け  [other-50:001]  (dim)
+  エフェクトを追加…  [other-50:002]
+  スプリッターを追加  [other-50:003]
+  チャンネルエディターを開く  [other-50:004]
+  ミックスダウンを書き出す…  [other-50:006]  (dim)
+  オートメーションを表示
+    ボリューム  [other-50:005]
+    パン  [other-50:005]
+    ミュート  [other-50:005]
+    マクロコントロール
+      Macro 1  [other-50:005]
+      Macro 2  [other-50:005]
+      Macro 3  [other-50:005]
+      Macro 4  [other-50:005]
+      Macro 5  [other-50:005]
+      Macro 6  [other-50:005]
+      Macro 7  [other-50:005]
+      Macro 8  [other-50:005]
+other-52 (the mixer)
+  既定に戻す  [other-52:000]  (dim)
+  値を入力…  [other-52:001]
+  オートメーションを表示  [other-52:002]
+  マクロコントロールに割り当て
+    Macro 1  [other-52:003]
+    Macro 2  [other-52:004]
+    Macro 3  [other-52:005]
+    Macro 4  [other-52:006]
+    Macro 5  [other-52:007]
+    Macro 6  [other-52:008]
+    Macro 7  [other-52:009]
+    Macro 8  [other-52:010]
+  すべてのポイントを削除  [other-52:011]  (dim)
+  MIDI 学習  [other-52:012]
+  MIDI 割り当てを解除  [other-52:013]  (dim)
+other-53 (a send)
+  0 dB に戻す  [other-53:000]  (dim)
+  値を入力…  [other-53:001]
+  オートメーションを表示  [other-53:002]
+  マクロコントロールに割り当て
+    Macro 1  [other-53:003]
+    Macro 2  [other-53:004]
+    Macro 3  [other-53:005]
+    Macro 4  [other-53:006]
+    Macro 5  [other-53:007]
+    Macro 6  [other-53:008]
+    Macro 7  [other-53:009]
+    Macro 8  [other-53:010]
+  すべてのポイントを削除  [other-53:011]  (dim)
+other-54 (a send)
+  送り先
+    Fx  [other-54:000]
+    新しいバス  [other-54:001]
+  0 dB に戻す  [other-54:002]  (dim)
+  ミュート  [other-54:003]
+  送り先のバスを表示  [other-54:005]
+  オートメーションを表示  [other-54:006]
+  マクロコントロールに割り当て
+    Macro 1  [other-54:007]
+    Macro 2  [other-54:008]
+    Macro 3  [other-54:009]
+    Macro 4  [other-54:010]
+    Macro 5  [other-54:011]
+    Macro 6  [other-54:012]
+    Macro 7  [other-54:013]
+    Macro 8  [other-54:014]
+  センドを削除  [other-54:004]
+other-55 (a bus)
+  Fx  [other-55:000]
+  新しいバス  [other-55:001]
+other-56 (the mixer)
+  エフェクトを追加…  [other-56:000]
+  貼り付け  [other-56:002]  (dim)
+other-56 (an effect added before)
+  エフェクトを追加…  [other-56:000]
+  最近使ったもの
+    EQ  [other-56:001]
+  貼り付け  [other-56:002]  (dim)
+other-57 (the mixer)
+  インサートをコピー  [other-57:000]
+  インサートを貼り付け  [other-57:001]  (dim)
+  インサートを後ろに貼り付け  [other-57:002]  (dim)
+  エフェクトを追加…  [other-57:005]
+  スプリッターを追加  [other-57:006]
+  チャンネルの設定をコピー  [other-57:003]
+  チャンネルの設定を貼り付け  [other-57:004]  (dim)
+other-58 (the mixer)
+  レイヤーを追加…  [other-58:000]
+  エフェクトを追加…  [other-58:001]
+  スプリッターを追加  [other-58:002]
+  チャンネルエディターを開く  [other-58:003]
+other-62 (a splitter)
+  分岐を追加  [other-62:000]
+  エフェクトを後ろに追加…  [other-62:001]
+  スプリッターを後ろに追加  [other-62:002]
+  エフェクトを追加…  [other-62:004]
+  スプリッターを追加  [other-62:005]
+  チャンネルエディターを開く  [other-62:006]
+other-62 (a splitter on an instrument track)
+  分岐を追加  [other-62:000]
+  エフェクトを後ろに追加…  [other-62:001]
+  スプリッターを後ろに追加  [other-62:002]
+  レイヤーを追加…  [other-62:003]
+  エフェクトを追加…  [other-62:004]
+  スプリッターを追加  [other-62:005]
+  チャンネルエディターを開く  [other-62:006]
+other-69 (the mixer)
+  バスを追加  [other-69:000]
+  トラックを追加
+    オーディオ  [other-69:001]
+    インストゥルメント  [other-69:002]
+  貼り付け  [other-69:004]  (dim)
+  チャンネルの幅
+    細い  [other-69:005]
+    広い  [other-69:006]
+other-69 (a saved preset)
+  バスを追加  [other-69:000]
+  トラックを追加
+    オーディオ  [other-69:001]
+    インストゥルメント  [other-69:002]
+    Chain  [other-69:003]
+  貼り付け  [other-69:004]  (dim)
+  チャンネルの幅
+    細い  [other-69:005]
+    広い  [other-69:006]
+insert (a built-in effect)
+  画面を開く  [insert:000]
+  無効にする  [insert:005]
+  オートメーションを表示
+    threshold  [insert:014]
+    ratio  [insert:014]
+    attack  [insert:014]
+    release  [insert:014]
+    knee  [insert:014]
+    makeup  [insert:014]
+    mix  [insert:014]
+    gain  [insert:014]
+    filter  [insert:014]
+    low_cut  [insert:014]
+    high_cut  [insert:014]
+    listen  [insert:014]
+  チャンネルエディターを開く  [insert:013]
+  編集
+    プラグインを複製  [insert:006]
+    切り取り  [insert:015]
+    コピー  [insert:016]
+    プラグインを削除  [insert:017]
+  機器
+    プリセット
+      Default  [insert:001]
+      ドラムをまとめる  [insert:001]
+      ボーカルを整える  [insert:001]
+      並列で太く  [insert:001]
+      プリセットを読み込む…  [insert:002]
+      プリセットを保存…  [insert:003]
+    再起動  [insert:004]  (dim)
+    別のチャンネルへ移動
+      Drums  [insert:007]
+      Bass  [insert:007]
+      Shaker  [insert:007]
+      Conga  [insert:007]
+      Keys  [insert:007]
+      Guitar  [insert:007]
+      Master  [insert:007]
+    別のチャンネルへコピー
+      Drums  [insert:008]
+      Bass  [insert:008]
+      Shaker  [insert:008]
+      Conga  [insert:008]
+      Keys  [insert:008]
+      Guitar  [insert:008]
+      Master  [insert:008]
+    エフェクトを後ろに追加…  [insert:009]
+    スプリッターを後ろに追加  [insert:010]
+    エフェクトを追加…  [insert:011]
+    スプリッターを追加  [insert:012]
+flow-plugin (a rack with a splitter)
+  画面を開く  [flow-plugin:000]
+  無効にする  [flow-plugin:006]
+  オートメーションを表示
+    low_cut_on  [flow-plugin:015]
+    low_cut_freq  [flow-plugin:015]
+    low_cut_slope  [flow-plugin:015]
+    low_freq  [flow-plugin:015]
+    low_gain  [flow-plugin:015]
+    mid1_freq  [flow-plugin:015]
+    mid1_gain  [flow-plugin:015]
+    mid1_q  [flow-plugin:015]
+    mid2_freq  [flow-plugin:015]
+    mid2_gain  [flow-plugin:015]
+    mid2_q  [flow-plugin:015]
+    high_freq  [flow-plugin:015]
+    high_gain  [flow-plugin:015]
+    high_cut_on  [flow-plugin:015]
+    high_cut_freq  [flow-plugin:015]
+    high_cut_slope  [flow-plugin:015]
+    output  [flow-plugin:015]
+    b1_type  [flow-plugin:015]
+    b1_gain  [flow-plugin:015]
+    b1_q  [flow-plugin:015]
+    b2_on  [flow-plugin:015]
+    b2_type  [flow-plugin:015]
+    b2_q  [flow-plugin:015]
+    b2_slope  [flow-plugin:015]
+    b3_on  [flow-plugin:015]
+    b3_type  [flow-plugin:015]
+    b3_slope  [flow-plugin:015]
+    b4_on  [flow-plugin:015]
+    b4_type  [flow-plugin:015]
+    b4_slope  [flow-plugin:015]
+    b5_on  [flow-plugin:015]
+    b5_type  [flow-plugin:015]
+    b5_q  [flow-plugin:015]
+    b5_slope  [flow-plugin:015]
+    b6_type  [flow-plugin:015]
+    b6_gain  [flow-plugin:015]
+    b6_q  [flow-plugin:015]
+  チャンネルエディターを開く  [flow-plugin:014]
+  編集
+    名前を変更…  [flow-plugin:001]
+    プラグインを複製  [flow-plugin:007]
+    切り取り  [flow-plugin:016]
+    コピー  [flow-plugin:017]
+    プラグインを削除  [flow-plugin:018]
+  機器
+    プリセット
+      Default  [flow-plugin:002]
+      ボーカルを明るく  [flow-plugin:002]
+      低域を締める  [flow-plugin:002]
+      電話の声  [flow-plugin:002]
+      プリセットを読み込む…  [flow-plugin:003]
+      プリセットを保存…  [flow-plugin:004]
+    再起動  [flow-plugin:005]  (dim)
+    別のチャンネルへ移動
+      Drums  [flow-plugin:008]
+      Bass  [flow-plugin:008]
+      Shaker  [flow-plugin:008]
+      Conga  [flow-plugin:008]
+      Keys  [flow-plugin:008]
+      Guitar  [flow-plugin:008]
+      Master  [flow-plugin:008]
+    別のチャンネルへコピー
+      Drums  [flow-plugin:009]
+      Bass  [flow-plugin:009]
+      Shaker  [flow-plugin:009]
+      Conga  [flow-plugin:009]
+      Keys  [flow-plugin:009]
+      Guitar  [flow-plugin:009]
+      Master  [flow-plugin:009]
+    エフェクトを後ろに追加…  [flow-plugin:010]
+    スプリッターを後ろに追加  [flow-plugin:011]
+    エフェクトを追加…  [flow-plugin:012]
+    スプリッターを追加  [flow-plugin:013]

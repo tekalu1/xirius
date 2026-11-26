@@ -419,8 +419,14 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
     verify_live_tree(target, &original, &result, grouped);
     #[cfg(test)]
     verify_shape(target, &caller_tree, &result, grouped);
+    #[cfg(test)]
+    every_row::verify_commands(target, &result);
     Ok(result)
 }
+
+#[cfg(test)]
+#[path = "every_row_tests.rs"]
+mod every_row;
 
 /// The caller's own tree, with each operation replaced by its classified Item (same order).
 /// A row the ledger keeps on the root comes out of its submenu (only the note's quantize).

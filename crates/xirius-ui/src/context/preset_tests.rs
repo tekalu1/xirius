@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 use xirius_core::id::TrackId;
 
-use super::tests::{choose, enabled, labels, steps};
+use super::tests::{choose, enabled, steps};
 use crate::notice::{button_rect, place};
 use crate::studio::{DrawerTab, Geometry, Studio};
 
@@ -276,17 +276,6 @@ fn a_preset_of_another_kind_is_dim_in_the_apply_list() {
     assert!(press_head(&mut s, &g, keys));
     assert!(choose(&mut s, &g, "トラックのプリセットを適用"));
     assert!(!enabled(&s, "ボーカル"));
-}
-
-#[test]
-fn a_bus_and_the_master_have_no_preset_rows() {
-    let (mut s, g) = mix();
-    assert!(s.run_command("track.add.bus", json!({ "name": "Fx", "into": "root" })));
-    let bus = track(&s, "Fx");
-    assert!(press_head(&mut s, &g, bus));
-    assert!(!labels(&s).iter().any(|l| l.contains("プリセット")));
-    assert!(press_head(&mut s, &g, TrackId::MASTER));
-    assert!(!labels(&s).iter().any(|l| l.contains("プリセット")));
 }
 
 #[test]

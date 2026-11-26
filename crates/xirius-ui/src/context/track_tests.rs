@@ -65,22 +65,10 @@ fn name_of(s: &Studio, t: xirius_core::id::TrackId) -> String {
 }
 
 #[test]
-fn a_track_has_its_rows_in_the_order_of_the_mock() {
+fn a_press_on_a_track_selects_it() {
+    // The rows are in tests/context_menus/menus.txt (track).
     let (mut s, g) = studio();
     assert!(press_track(&mut s, &g, "Vocal"));
-    assert_eq!(
-        labels(&s),
-        [
-            "名前を変更…",
-            "チャンネルエディターを開く",
-            "オートメーションを表示",
-            "色",
-            "編集",
-            "トラック",
-            "機器",
-            "書き出し"
-        ]
-    );
     // The press made the track the selection.
     assert_eq!(s.selected_row, Some(RowKind::Track(track(&s, "Vocal"))));
     // A row with rows under it shows no key.
@@ -311,25 +299,6 @@ fn the_output_of_several_rows_is_chosen_for_all_of_them_in_one_step() {
     assert_eq!(
         s.project().tracks[&guitar].output,
         Some(xirius_core::model::Output::Master)
-    );
-}
-
-#[test]
-fn a_folder_has_its_rows_in_the_order_of_the_mock() {
-    let (mut s, g) = studio();
-    assert!(press_folder(&mut s, &g, "Rhythm"));
-    assert_eq!(
-        labels(&s),
-        [
-            "名前を変更…",
-            "色",
-            "中のトラックにも塗る",
-            "中のトラックを選択",
-            "フォルダーを複製",
-            "ステムを書き出す",
-            "まとめを解く",
-            "フォルダーを削除"
-        ]
     );
 }
 

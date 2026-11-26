@@ -28,21 +28,6 @@ fn press_row(s: &mut Studio, g: &Geometry, bar: i64) -> bool {
 }
 
 #[test]
-fn a_tempo_point_has_the_rows_of_the_mock() {
-    let (mut s, g) = two_points();
-    assert!(press_point(&mut s, &g, 1));
-    assert_eq!(
-        labels(&s),
-        [
-            "BPM を入力…",
-            "次のポイントまでの形",
-            "テンポポイントを削除"
-        ]
-    );
-    assert!(enabled(&s, "テンポポイントを削除"));
-}
-
-#[test]
 fn the_first_point_cannot_be_deleted_and_the_last_has_no_shape_to_a_next_point() {
     let (mut s, g) = two_points();
     assert!(press_point(&mut s, &g, 0));

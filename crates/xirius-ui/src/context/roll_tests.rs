@@ -56,27 +56,11 @@ fn empty_at(s: &Studio, g: &Geometry) -> (f32, f32) {
 }
 
 #[test]
-fn a_note_has_the_rows_of_the_mock_and_is_selected_alone() {
+fn a_pressed_note_is_selected_alone_and_shows_the_keys() {
+    // The rows are in tests/context_menus/menus.txt (note).
     let (mut s, g) = roll();
     let (x, y) = note_at(&s, &g, 1);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        [
-            "クオンタイズ（今のグリッド）",
-            "クオンタイズ（50%）",
-            "トランスポーズ",
-            "ベロシティ",
-            "長さ",
-            "ノートを複製",
-            "ノートをミュート",
-            "値を入力",
-            "消しゴムツール",
-            "切り取り",
-            "コピー",
-            "ノートを削除"
-        ]
-    );
     assert_eq!(key(&s, "ノートを複製"), "D");
     assert_eq!(
         key(&s, "ノートをミュート"),
