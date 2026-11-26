@@ -176,132 +176,304 @@ fn empty_space_inside_settings_stays_open_and_only_the_outside_closes_it() {
     assert!(s.settings.is_none());
 }
 
-/// A setting changed on the settings screen reaches the studio at once, is no step of the song,
-/// and is what the next launch starts with. A switch shows the way back there, and that is kept.
+/// Every preference of [`xirius_prefs::prefs::PREFS`] is changed the way the settings screen
+/// offers it (its switch or segment, its menu, its folder list; the `prefs.set` the screen runs
+/// when none shows it), is no step of the song, and is what the next launch reads. The rounds go
+/// through every value of a choice and both ends of a number; a last round puts every one back,
+/// and the next launch has nothing kept away from the defaults. A row of `lives` also checks that
+/// the studio works by its value at once and the next launch, and that the screen offers it
+/// (ARC-054 G12: a preference added to `PREFS` is in here with no line of this test).
 #[test]
-fn a_setting_changed_on_screen_is_there_the_next_launch() {
+fn every_setting_is_there_the_next_launch() {
     use crate::follow::Mode;
+    use serde_json::Value;
     use xirius_design::Theme;
+    use xirius_prefs::prefs::{Kind, PREFS, Pref, schema};
     use xirius_session::update::BETA_PREF;
 
-    /// A switch is a pick of "true" or "false" (`switch` above): each row goes from the
-    /// default to `to` and back.
-    struct Row {
-        name: &'static str,
-        section: Section,
+    /// The studio works by `to` (`live` is true there, false at the default); its page says `says`.
+    struct Live {
         key: &'static str,
         to: &'static str,
-        back: &'static str,
-        /// Whether the studio works by `to` (false at the default).
         live: fn(&Studio) -> bool,
         says: &'static [&'static str],
     }
-    let rows = [
-        Row {
-            name: "automation stops following the clips",
-            section: Section::Edit,
+    let lives = [
+        Live {
             key: "edit.automation.follows-clips",
             to: "false",
-            back: "true",
             live: |s| !s.arrange.follows_clips,
             says: &[],
         },
-        Row {
-            name: "automation is no longer locked to the clips",
-            section: Section::Edit,
+        Live {
             key: "edit.automation.locks-clips",
             to: "false",
-            back: "true",
             live: |s| !s.arrange.locks_clips,
             says: &[],
         },
-        Row {
-            name: "the light theme",
-            section: Section::General,
+        Live {
             key: "ui.theme",
             to: "light",
-            back: "dark",
             live: |s| s.wanted_theme(Theme::Dark) == Theme::Light,
             says: &[],
         },
-        Row {
-            name: "autoscroll in the centre",
-            section: Section::Edit,
+        Live {
             key: "edit.autoscroll",
             to: "center",
-            back: "turn-over",
             live: |s| s.follow.mode == Mode::ContinuousCenter,
             says: &[],
         },
-        Row {
-            name: "autoscroll at the left",
-            section: Section::Edit,
+        Live {
             key: "edit.autoscroll",
             to: "left",
-            back: "turn-over",
             live: |s| s.follow.mode == Mode::ContinuousLeft,
             says: &[],
         },
-        Row {
-            name: "the crosshair",
-            section: Section::Edit,
+        Live {
             key: "edit.cursor.crosshair",
             to: "true",
-            back: "false",
             live: |s| s.crosshair,
             says: &[],
         },
-        Row {
-            name: "the beta channel",
-            section: Section::General,
+        Live {
             key: BETA_PREF,
             to: "true",
-            back: "false",
             live: |s| pref_bool(s, BETA_PREF),
             says: &["更新を確認", "ベータ版も受け取る"],
         },
     ];
-    let mut failures = Vec::new();
-    for (i, row) in rows.into_iter().enumerate() {
-        let dir_tmp = temp(&format!("persist-{i}"));
-        let dir = dir_tmp.path().to_path_buf();
-        let mut check = |ok: bool, what: &str| {
-            if !ok {
-                failures.push(format!("{}: {what}", row.name));
+    /// The name a family is tried with: the port given below, a plugin.
+    const MEMBERS: &[(&str, &str)] = &[
+        ("midi.inputs.", "MIDI Keys"),
+        ("plugins.process.", "com.example.synth"),
+        ("plugins.isolation.", "com.example.synth"),
+    ];
+    /// What a free text is set to: a device of `audioset_shots::simulated`.
+    const TEXTS: &[(&str, &str)] = &[("audio.device", "USB Audio")];
+
+    /// The section whose page shows one of `acts`, left open there (the keys' page shows none).
+    fn offered(s: &mut Studio, g: &Geometry, acts: &[Do]) -> Option<(Section, Do)> {
+        for section in Section::ALL.into_iter().filter(|s| *s != Section::Keys) {
+            s.open_settings(section);
+            let scene = s.settings_scene(g);
+            if let Some(act) = acts.iter().find(|a| scene.find(a).is_some()) {
+                return Some((section, act.clone()));
             }
-        };
-        let pick = |value: &str| Do::Pref(row.key.into(), value.into());
-        let (mut s, g) = launch(&dir);
-        check(!(row.live)(&s), "not so at the default");
-        s.open_settings(row.section);
-        let scene = s.settings_scene(&g);
-        check(scene.find(&pick(row.to)).is_some(), "offered on the screen");
-        for text in row.says {
-            check(scene.has_text(text), &format!("the page says {text}"));
         }
-        press(&mut s, &g, &pick(row.to));
+        None
+    }
+
+    let mut failures = Vec::new();
+    // Each preference by the name it is tried with, and the values away from its default.
+    let mut rows: Vec<(&Pref, String, Vec<String>)> = Vec::new();
+    for pref in PREFS {
+        let key = match MEMBERS.iter().find(|(f, _)| *f == pref.key) {
+            Some((family, name)) => format!("{family}{name}"),
+            None if pref.is_family() => {
+                failures.push(format!("{}: no name to try it with in MEMBERS", pref.key));
+                continue;
+            }
+            None => pref.key.to_string(),
+        };
+        let away = |v: &String| v != pref.default;
+        let values: Vec<String> = match pref.kind {
+            Kind::Bool => vec![(pref.default != "true").to_string()],
+            Kind::Choice(list) => list.iter().map(|v| v.to_string()).filter(away).collect(),
+            Kind::Int(lo, hi) => [lo, hi]
+                .map(|n| n.to_string())
+                .into_iter()
+                .filter(away)
+                .collect(),
+            Kind::Float(lo, hi) => [lo, hi]
+                .map(|n| n.to_string())
+                .into_iter()
+                .filter(away)
+                .collect(),
+            Kind::Text => TEXTS
+                .iter()
+                .filter(|(k, _)| *k == pref.key)
+                .map(|(_, v)| v.to_string())
+                .collect(),
+            // A folder of the round's own (added as the folder list adds it).
+            Kind::List => vec![String::new()],
+        };
+        if values.is_empty() {
+            failures.push(format!(
+                "{key}: no value to try (a text needs one in TEXTS)"
+            ));
+            continue;
+        }
+        rows.push((pref, key, values));
+    }
+    for live in &lives {
+        if !rows
+            .iter()
+            .any(|(_, k, v)| k == live.key && v.iter().any(|v| v == live.to))
+        {
+            failures.push(format!(
+                "lives: {} = {} is tried in no round",
+                live.key, live.to
+            ));
+        }
+    }
+
+    let rounds = rows.iter().map(|(_, _, v)| v.len()).max().unwrap_or(0);
+    let mut folder = None;
+    for round in 0..=rounds {
+        // The last round puts back what the one before it changed, in the same folder.
+        let back = round == rounds;
+        if !back {
+            folder = Some(temp(&format!("every-{round}")));
+        }
+        let dir = folder.as_ref().unwrap().path().to_path_buf();
+        let plugins = dir.join("plugins").display().to_string();
+        let (mut s, g) = launch(&dir);
+        crate::audioset_shots::simulated(&mut s);
+        s.song
+            .io
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .view
+            .ports = vec!["MIDI Keys".into()];
+        s.poll_io();
+        if round == 0 {
+            for live in lives.iter().filter(|l| (l.live)(&s)) {
+                failures.push(format!(
+                    "{} = {}: so already at the default",
+                    live.key, live.to
+                ));
+            }
+        }
+        // What was set: the name, the value, the way, and the value it reads as.
+        let mut tried = Vec::new();
+        for (pref, key, values) in &rows {
+            let list = pref.kind == Kind::List;
+            let value = match (back, list) {
+                (true, _) => pref.default.to_string(),
+                (false, true) => plugins.clone(),
+                (false, false) => values[round % values.len()].clone(),
+            };
+            let live = lives
+                .iter()
+                .find(|l| !back && l.key == key && l.to == value);
+            let acts = match (back, list) {
+                (true, true) => vec![Do::ListRemove(key.clone(), plugins.clone())],
+                (false, true) => vec![Do::AddFolder(key.clone())],
+                _ => vec![
+                    Do::Pref(key.clone(), value.clone()),
+                    Do::Menu(MenuKind::Pref(key.clone())),
+                ],
+            };
+            let screen = offered(&mut s, &g, &acts).and_then(|(section, act)| {
+                for text in live.map_or(&[][..], |l| l.says) {
+                    if !s.settings_scene(&g).has_text(text) {
+                        failures.push(format!("{key} = {value}: the page does not say {text}"));
+                    }
+                }
+                press(&mut s, &g, &act);
+                match &act {
+                    // A menu without the value (the devices' has no "none") is no way to it.
+                    Do::Menu(kind) => {
+                        let row = open_pick(&s).is_some_and(|(pick, _)| {
+                            pick.groups.iter().flat_map(|g| &g.rows).any(|r| {
+                                r.enabled
+                                    && matches!(&r.act, Some(crate::popup::Action::Pick(v)) if *v == value)
+                            })
+                        });
+                        if !row {
+                            s.settings.as_mut().unwrap().menu = None;
+                            return None;
+                        }
+                        s.settings_pick(kind, &value);
+                    }
+                    Do::AddFolder(_) => match s.settings_take_ask() {
+                        Some(ask) => s.settings_answer(ask, std::path::Path::new(&plugins)),
+                        None => failures.push(format!("{key}: the folder list asks for none")),
+                    },
+                    _ => {}
+                }
+                Some(format!("the {} page", section.label()))
+            });
+            let way = screen.unwrap_or_else(|| {
+                if live.is_some() {
+                    failures.push(format!("{key} = {value}: not offered on the screen"));
+                }
+                // What the screen runs; going back, the command that puts a setting back.
+                let (command, mut args) = if back {
+                    ("prefs.reset", json!({"key": key}))
+                } else {
+                    ("prefs.set", json!({"key": key, "value": value}))
+                };
+                if list && !back {
+                    args["add"] = json!(true);
+                }
+                s.settings_run(command, args);
+                command.to_string()
+            });
+            let want = match (back, list) {
+                (true, true) => json!([]),
+                (false, true) => json!([value]),
+                _ => pref.read(&Value::String(value.clone())).unwrap(),
+            };
+            let now = s.with_settings(|p| p.prefs.get(key)).unwrap_or(Value::Null);
+            if now != want {
+                failures.push(format!(
+                    "{key} = {value} (round {round}, {way}): the studio has {now}"
+                ));
+            }
+            tried.push((key.clone(), value, way, want));
+        }
         // The idle poll carries a changed preference to the studio.
         s.settings_reload();
-        check((row.live)(&s), "the studio follows the change");
-        check(!s.song.can_undo(), "not a step of the song");
-        check(dir.join("prefs.toml").exists(), "written to prefs.toml");
+        let follows = |s: &Studio, when: &str| {
+            let mut wrong = Vec::new();
+            for live in &lives {
+                let on = !back && tried.iter().any(|(k, v, ..)| k == live.key && v == live.to);
+                if (live.live)(s) != on {
+                    wrong.push(format!(
+                        "{} = {} (round {round}): {when} the studio {}",
+                        live.key,
+                        live.to,
+                        if on {
+                            "does not work by it"
+                        } else {
+                            "still works by it"
+                        }
+                    ));
+                }
+            }
+            wrong
+        };
+        failures.extend(follows(&s, "at once"));
+        if s.song.can_undo() {
+            failures.push(format!(
+                "round {round}: the settings made a step of the song"
+            ));
+        }
+        if !dir.join("prefs.toml").exists() {
+            failures.push(format!("round {round}: nothing written to prefs.toml"));
+        }
         drop(s);
 
-        let (mut s, g) = launch(&dir);
-        s.apply_edit_prefs();
-        check((row.live)(&s), "there the next launch");
-        s.open_settings(row.section);
-        check(
-            s.settings_scene(&g).find(&pick(row.back)).is_some(),
-            "the screen offers the way back",
-        );
-        press(&mut s, &g, &pick(row.back));
-        s.settings_reload();
-        check(!(row.live)(&s), "going back reaches the studio");
-        drop(s);
         let (mut s, _) = launch(&dir);
         s.apply_edit_prefs();
-        check(!(row.live)(&s), "going back is kept too");
+        failures.extend(follows(&s, "the next launch"));
+        for (key, value, way, want) in &tried {
+            let got = s.with_settings(|p| p.prefs.get(key)).unwrap_or(Value::Null);
+            if got != *want {
+                failures.push(format!(
+                    "{key} = {value} (round {round}, {way}): the next launch reads {got}"
+                ));
+            }
+        }
+        if back {
+            let kept = s.with_settings(|p| p.prefs.values.clone());
+            for (key, v) in kept {
+                if schema(&key).is_none_or(|p| p.default_value() != v) {
+                    failures.push(format!("{key}: still {v} after every setting went back"));
+                }
+            }
+        }
     }
     assert!(failures.is_empty(), "{failures:#?}");
 }

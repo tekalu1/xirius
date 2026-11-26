@@ -27,6 +27,28 @@ impl AudioInput for Signal {
 pub fn fixture(s: &mut Studio) {
     crate::shot::run_for(s, 15.0, |s| !s.input_blocked());
     assert!(!s.input_blocked(), "startup did not finish");
+    simulated(s);
+    assert!(s.run_command(
+        "audio.set",
+        serde_json::json!({"key":"buffer","value":"128"}),
+    ));
+    crate::shot::run_for(s, 10.0, |s| s.saving.is_none());
+    assert!(s.saving.is_none() && s.error.is_none(), "{:?}", s.error);
+    s.song
+        .io
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .view
+        .ports = vec![
+        "MIDI Keys".into(),
+        "nanoKONTROL2".into(),
+        "MIDI Loop".into(),
+    ];
+    s.poll_io();
+}
+
+/// Silent output and the two made-up interfaces in place of the PC's, with no setting written.
+pub fn simulated(s: &mut Studio) {
     s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
     let devices = vec![
         Device {
@@ -66,23 +88,6 @@ pub fn fixture(s: &mut Studio) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .replace(Box::new(Simulated::new(devices, reports, Box::new(Signal))));
-    assert!(s.run_command(
-        "audio.set",
-        serde_json::json!({"key":"buffer","value":"128"}),
-    ));
-    crate::shot::run_for(s, 10.0, |s| s.saving.is_none());
-    assert!(s.saving.is_none() && s.error.is_none(), "{:?}", s.error);
-    s.song
-        .io
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .view
-        .ports = vec![
-        "MIDI Keys".into(),
-        "nanoKONTROL2".into(),
-        "MIDI Loop".into(),
-    ];
-    s.poll_io();
 }
 
 const fn stage(n: u8) -> Act {
