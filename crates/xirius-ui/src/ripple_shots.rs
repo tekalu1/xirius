@@ -71,6 +71,8 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             s.popup = None;
             s.drawer_open = false;
             s.choose_editor();
+            // Keys is under the drawer until it is shut.
+            let g = &s.geometry(g.size.0, g.size.1);
             let (t, clips) = keys(s);
             let end = clips[0].start + clips[0].length;
             for at in [end + bar, end + 3 * bar] {

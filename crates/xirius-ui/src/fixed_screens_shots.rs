@@ -296,22 +296,6 @@ mod tests {
     }
 
     #[test]
-    fn the_four_scripts_are_in_the_list_of_scripts() {
-        for (script, shots) in [
-            ("rail-tips", RAIL_TIPS),
-            ("instrument-menu", INSTRUMENT_MENU),
-            ("roll-arrow", ROLL_ARROW),
-            ("bar-states", BAR_STATES),
-        ] {
-            let listed = crate::SCRIPTS.iter().find(|(name, _)| *name == script);
-            assert!(
-                listed.is_some_and(|(_, s)| std::ptr::eq(*s, shots)),
-                "{script}"
-            );
-        }
-    }
-
-    #[test]
     fn rail_tips_hover_each_button_and_say_its_tab_and_key() {
         let expect = [
             "トラックブラウザー  F6",

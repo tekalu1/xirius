@@ -30,9 +30,7 @@ pub const SHOTS: &[Shot] = &[
 ];
 
 fn dir() -> PathBuf {
-    std::env::current_dir()
-        .unwrap()
-        .join("target")
+    crate::shot::script_dir(|| std::env::current_dir().unwrap().join("target"))
         .join(format!("overlap2-shots-{}", std::process::id()))
 }
 

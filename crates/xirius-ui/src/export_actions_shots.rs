@@ -42,8 +42,11 @@ pub const SHOTS: &[Shot] = &[
 ];
 
 fn dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "../../target/export-actions-ui-{}",
+    crate::shot::script_dir(|| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")
+    })
+    .join(format!(
+        "export-actions-ui-{}",
         crate::shot::fixture_run_id()
     ))
 }

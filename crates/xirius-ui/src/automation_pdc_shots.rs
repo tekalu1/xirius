@@ -129,6 +129,9 @@ fn prepare(s: &mut Studio, _: u8) {
 fn heard(s: &mut Studio, _: u8) {
     let vocal = track(s, "Vocal");
     let peak = std::cell::Cell::new(0.0f32);
+    let heard = crate::mixer::meters::level_t(0.1);
+    // Until the meter has lit too: on a busy PC its level comes a frame or more after the
+    // half second of the clip that is unmuted.
     crate::shot::run_for(s, 8.0, |s| {
         peak.set(
             peak.get().max(
@@ -138,11 +141,11 @@ fn heard(s: &mut Studio, _: u8) {
                     .hold[0],
             ),
         );
-        s.playhead >= START + 4800
+        s.playhead >= START + 4800 && peak.get() > heard
     });
     assert!(s.playhead >= START + 4800, "{:?}", s.error);
     assert!(
-        peak.get() > crate::mixer::meters::level_t(0.1),
+        peak.get() > heard,
         "silent output held meter {}",
         peak.get()
     );

@@ -39,10 +39,10 @@ pub const SHOTS: &[Shot] = &[
 fn prepare(s: &mut Studio, n: u8) {
     match n {
         0 => {
-            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
-                "../../target/export-selection-ui-{}",
-                std::process::id()
-            ));
+            let dir = crate::shot::script_dir(|| {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")
+            })
+            .join(format!("export-selection-ui-{}", std::process::id()));
             s.command(|song| song.save_as(&dir));
             s.drawer_open = false;
         }

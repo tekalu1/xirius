@@ -69,6 +69,19 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             let (x, y) = row_mid(s, g, RowKind::Track(t));
             assert!(s.scene_context(g, x, y));
             if n == 1 {
+                // A menu of 13 rows or more is grouped (`context::layout`), the row under
+                // トラック then.
+                let shown = s
+                    .popup
+                    .as_ref()
+                    .expect("a menu")
+                    .layout(g.size)
+                    .cells
+                    .iter()
+                    .any(|c| c.text == "下にトラックを追加");
+                if !shown {
+                    choose(s, g, "トラック");
+                }
                 choose(s, g, "下にトラックを追加");
             }
         }

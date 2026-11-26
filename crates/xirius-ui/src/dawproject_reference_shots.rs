@@ -30,10 +30,8 @@ pub const SHOTS: &[Shot] = &[
 ];
 
 fn dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "../../target/dawproject-reference-ui-{}",
-        std::process::id()
-    ))
+    crate::shot::script_dir(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"))
+        .join(format!("dawproject-reference-ui-{}", std::process::id()))
 }
 
 fn reference(name: &str) -> PathBuf {
