@@ -1,7 +1,7 @@
 //! LIC-014: a recording past 4 GiB, written for real (4.3 GiB of disk and a minute or so), is
 //! RF64 and says its true length. Not part of the usual run: it needs the disk space, and
 //! small files already hold the same logic (`wavfile`'s own tests, with the limit lowered).
-//! Run it with `cargo test -p xirius-engine --test rf64_real --release -- --ignored`.
+//! Run it with `cargo test -p xirius-engine --test it --release -- --ignored rf64_real::`.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};

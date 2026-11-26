@@ -34,7 +34,7 @@ fn a_forcibly_ended_recording_can_be_repaired_and_played() {
     let ready = path.with_extension("ready");
     let mut child = Writer(
         Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "writer_child", "--nocapture"])
+            .args(["--exact", "record_crash::writer_child", "--nocapture"])
             .env("XIRIUS_CRASH_TAKE", &path)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
