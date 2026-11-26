@@ -321,6 +321,9 @@ fn opened(open: Open) -> Result<(Studio, Geometry, Vec<Item>), String> {
 
 /// Presses each row of the menus of `target`, each on a song of its own.
 fn press_every_row(target: &str) {
+    // A bounce or a freeze a row starts writes its files and its job under the temporary
+    // folder; this one is the test's own, and waits for them before it goes.
+    let _tmp = crate::shot::TestTemp::new();
     let (_, states) = TARGETS.iter().find(|(t, _)| *t == target).unwrap();
     let mut failed = Vec::new();
     let mut run = 0;
@@ -362,6 +365,15 @@ fn press_every_row(target: &str) {
                 named(&id)
             ));
         }
+    }
+    // The bounces and freezes the presses started run on after their songs went.
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while xirius_core::running::list()
+        .iter()
+        .any(|j| j.pid == std::process::id())
+        && std::time::Instant::now() < end
+    {
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
     let prefix = format!("{target}:");
     for (row, why) in SETS_WHAT_STANDS {
