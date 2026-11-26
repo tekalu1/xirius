@@ -211,7 +211,8 @@ def default_feature_commands():
         ["cargo", "test", "--locked", "-j", "6", "-p", "xirius-core", "--test", "it", "--", "state_hash::",
          "history_writer::"],
         ["cargo", "test", "--locked", "-j", "6", "-p", "xirius-session", "--test", "empty_instrument"],
-        ["cargo", "test", "--locked", "-j", "6", "-p", "xirius-cli", "--test", "song_flow", "--test", "prefs_cli"],
+        ["cargo", "test", "--locked", "-j", "6", "-p", "xirius-cli", "--test", "it", "--", "song_flow::",
+         "prefs_cli::"],
     ]
 
 
