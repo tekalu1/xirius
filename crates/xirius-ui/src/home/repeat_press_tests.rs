@@ -5,7 +5,7 @@
 use super::tests::{centre, row_spot};
 use super::*;
 use crate::song::Song;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Which kind of row is pressed.
 #[derive(Clone, Copy, Debug)]
@@ -15,35 +15,46 @@ enum Kind {
     Sample,
 }
 
-/// How long the window runs (frames and idle polls) between the two presses.
+/// What the window did between the two presses. Nothing on the start screen or in the open
+/// goes by the clock, so the gap is counted in frames (at 60 a second) and in how far the open
+/// has got, not waited out.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Gap {
+    /// At once: no frame between.
     Now,
+    /// A fifth of a second of frames, the open still on its way as a rule.
     Short,
+    /// A second on: the open has finished and the song is up.
     Second,
 }
 
+/// The frames of a fifth of a second, of a third of one (the rest after the song came up), and
+/// of a second.
+const SHORT: usize = 12;
+const REST: usize = 18;
+const SECOND: usize = 60;
+
 impl Gap {
-    fn time(self) -> Duration {
+    fn run(self, s: &mut Studio) {
         match self {
-            Gap::Now => Duration::ZERO,
-            Gap::Short => Duration::from_millis(200),
-            Gap::Second => Duration::from_millis(1000),
+            Gap::Now => {}
+            Gap::Short => frames(s, SHORT),
+            Gap::Second => {
+                s.wait_for_open_for_test();
+                frames(s, SECOND);
+            }
         }
     }
 }
 
-/// Runs the window as it runs while nothing is pressed.
-fn run_for(s: &mut Studio, time: Duration) {
-    let end = Instant::now() + time;
-    loop {
+/// Runs `count` frames of the window as it runs while nothing is pressed, each with a moment
+/// for the open's own thread.
+fn frames(s: &mut Studio, count: usize) {
+    for _ in 0..count {
         s.idle();
         s.tick();
         s.home_tick();
-        if Instant::now() >= end {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -109,10 +120,10 @@ fn twice(
     let at = row_of(&s, &g, kind);
     press(&mut s, &g, at, 1);
     assert!(s.opening.is_some(), "{kind:?}: the first press opens");
-    run_for(&mut s, gap.time());
+    gap.run(&mut s);
     let running = press(&mut s, &g, at, second_clicks);
     s.wait_for_open_for_test();
-    run_for(&mut s, Duration::from_millis(300));
+    frames(&mut s, REST);
     let state = song_of(&s);
     (tmp, running, state, s)
 }
@@ -134,7 +145,7 @@ fn once(kind: Kind) -> (crate::shot::TestFolder, String, Studio) {
     let at = row_of(&s, &g, kind);
     press(&mut s, &g, at, 1);
     s.wait_for_open_for_test();
-    run_for(&mut s, Duration::from_millis(300));
+    frames(&mut s, REST);
     let state = song_of(&s);
     (tmp, state, s)
 }
@@ -200,8 +211,7 @@ fn a_press_on_the_song_that_came_up_at_the_rows_place_adds_no_step() {
         let (_tmp, mut s, g) = listing();
         let at = row_of(&s, &g, kind);
         press(&mut s, &g, at, 1);
-        s.wait_for_open_for_test();
-        run_for(&mut s, Duration::from_millis(1000));
+        Gap::Second.run(&mut s);
         let g = s.geometry(1280.0, 720.0);
         let (steps, tempo) = (s.song.steps(), s.project().tempo.len());
         press(&mut s, &g, at, 1);
@@ -217,7 +227,7 @@ fn up_under_the_top_row() -> (crate::shot::TestFolder, Studio, Geometry, (f32, f
     let at = row_of(&s, &g, Kind::Draft);
     press(&mut s, &g, at, 1);
     s.wait_for_open_for_test();
-    run_for(&mut s, Duration::from_millis(300));
+    frames(&mut s, REST);
     let g = s.geometry(1280.0, 720.0);
     (tmp, s, g, at)
 }

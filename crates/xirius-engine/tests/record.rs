@@ -413,11 +413,24 @@ fn midi_lands_on_the_song_frames_it_was_played_at() {
 }
 
 #[test]
+fn a_minute_at_full_speed_never_holds_the_audio_thread() {
+    at_full_speed_never_hold_the_audio_thread(60, 8);
+}
+
+/// The same over ten minutes, for a run by hand: the minute above holds every check.
+#[test]
+#[ignore = "slow: about 15 seconds; the one-minute test holds the same checks"]
 fn ten_minutes_at_full_speed_never_hold_the_audio_thread() {
+    at_full_speed_never_hold_the_audio_thread(600, 20);
+}
+
+/// Records `secs` seconds as fast as the render goes, with the disk hung for the first
+/// `hold_secs` (longer than the 2-second ring).
+fn at_full_speed_never_hold_the_audio_thread(secs: usize, hold_secs: usize) {
     let d = Dir::new("long");
     let (mut audio, mut c) = engine_with(Timeline::default(), RenderMode::Realtime);
-    // The disk hangs for the first 20 seconds: the writer stops in the first file's name until
-    // it is let go. A callback that waited for the writer would never get to the 20th second.
+    // The disk hangs at first: the writer stops in the first file's name until it is let go. A
+    // callback that waited for the writer would never get to the end of the hold.
     let (go, held) = std::sync::mpsc::channel::<()>();
     let (stuck, writer_stuck) = std::sync::mpsc::channel::<()>();
     let mut gate = Some((stuck, held));
@@ -459,8 +472,8 @@ fn ten_minutes_at_full_speed_never_hold_the_audio_thread() {
     );
     send(&mut c, Command::Record(Some(capture)));
     send(&mut c, Command::Play);
-    let frames = RATE as usize * 600;
-    let hold = RATE as usize * 20;
+    let frames = RATE as usize * secs;
+    let hold = RATE as usize * hold_secs;
     let calls = frames / BLOCK;
     let mut out = vec![0.0f32; BLOCK * 2];
     let budget = Duration::from_secs_f64(BLOCK as f64 / f64::from(RATE));
@@ -485,7 +498,7 @@ fn ten_minutes_at_full_speed_never_hold_the_audio_thread() {
         progress.store(k + 1, Ordering::SeqCst);
         c.poll(|_| {});
         // The writer takes the first block and gets stuck in its file's name; from there the
-        // ring fills and the rest of the 20 seconds is dropped, however late the writer started.
+        // ring fills and the rest of the hold is dropped, however late the writer started.
         if k == 0 {
             writer_stuck
                 .recv_timeout(Duration::from_secs(60))
@@ -510,12 +523,12 @@ fn ten_minutes_at_full_speed_never_hold_the_audio_thread() {
     let mut wav = hound::WavReader::open(&a.path).unwrap();
     let file_frames = u64::from(wav.duration());
     eprintln!(
-        "10 min: rendered in {rendered:?}, median callback {median:?}, slowest {slowest:?} \
+        "{secs} s: rendered in {rendered:?}, median callback {median:?}, slowest {slowest:?} \
          (budget {budget:?}), {over} of {calls} over budget, {misses} deadline misses, \
          dropped {} frames, back at {back:?}, file {file_frames} frames",
         r.dropped
     );
-    // A callback never waits for the disk: all 20 held seconds were rendered while the writer
+    // A callback never waits for the disk: all the held seconds were rendered while the writer
     // was stuck, and it was let go by the render, not by the watchdog.
     assert!(
         !rescued.load(Ordering::SeqCst),
@@ -556,7 +569,12 @@ fn ten_minutes_at_full_speed_never_hold_the_audio_thread() {
     };
     let rate = RATE as usize;
     assert!(loudest(rate) > 0.4, "the first second is in the ring");
-    assert_eq!(loudest(rate * 10), 0.0, "the 10th second was dropped");
+    let mid = hold_secs / 2;
+    assert_eq!(
+        loudest(rate * mid),
+        0.0,
+        "second {mid} of the hold was dropped"
+    );
     assert!(
         loudest(back) > 0.4,
         "the input after the hang is in its place"
@@ -567,7 +585,10 @@ fn ten_minutes_at_full_speed_never_hold_the_audio_thread() {
     // clock also holds the time the OS gives to other work, which on a busy machine lands on
     // one callback of every time slice, however short the callbacks are.
     assert!(median * 4 < budget, "median callback {median:?}");
-    assert!(rendered < Duration::from_secs(600), "faster than real time");
+    assert!(
+        rendered < Duration::from_secs(secs as u64),
+        "faster than real time"
+    );
 }
 
 /// Every channel of a file.

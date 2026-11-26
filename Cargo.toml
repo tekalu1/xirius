@@ -20,5 +20,10 @@ todo = "warn"
 [profile.dev]
 debug = "line-tables-only"
 
+# An update's installer is checked by its SHA-256. Unoptimized, hashing the test executable
+# that stands in for one takes seconds. The test profile inherits this.
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.test]
 debug = "line-tables-only"

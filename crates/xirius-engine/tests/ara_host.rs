@@ -13,6 +13,10 @@ mod crash_records;
 use crash_records::CrashRecords;
 
 const WAIT: Duration = Duration::from_secs(20);
+/// The watches of the slow workers below, in place of their 30 seconds, and a delay well past
+/// them: what is not cut off at this watch is not cut off at the real one.
+const WATCH_MS: u64 = 1_000;
+const PAST_WATCH_MS: u64 = 3 * WATCH_MS;
 
 fn host() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_xirius-plugin-host"))
@@ -68,7 +72,8 @@ fn a_slow_ara_worker_open_reply_is_not_cut_off() {
     let remote = open_remote(
         None,
         fake::Config {
-            open_reply_ms: 31_000,
+            open_reply_ms: PAST_WATCH_MS,
+            watch_ms: WATCH_MS,
             ..Default::default()
         },
     );
@@ -90,7 +95,8 @@ fn slow_ara_document_preparation_survives_the_analysis_watch() {
     let remote = open_remote(
         None,
         fake::Config {
-            prepare_ms: 31_000,
+            prepare_ms: PAST_WATCH_MS,
+            watch_ms: WATCH_MS,
             ..Default::default()
         },
     );
@@ -128,7 +134,8 @@ fn an_unresponsive_ara_worker_after_preparation_is_stopped() {
     let remote = open_remote(
         None,
         fake::Config {
-            stalled_poll_ms: 31_000,
+            stalled_poll_ms: 10 * WATCH_MS,
+            watch_ms: WATCH_MS,
             ..Default::default()
         },
     );
@@ -149,7 +156,8 @@ fn a_slow_ara_editor_is_not_cut_off() {
     let remote = open_remote(
         None,
         fake::Config {
-            editor_ms: 31_000,
+            editor_ms: PAST_WATCH_MS,
+            watch_ms: WATCH_MS,
             ..Default::default()
         },
     );

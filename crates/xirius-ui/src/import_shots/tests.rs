@@ -83,6 +83,14 @@ fn the_import_script_puts_real_files_and_takes_them_back() {
             .filter(|c| matches!(&c.body, xirius_core::model::ClipBody::Audio { file, .. } if dir.join(file) == copy))
             .count()
     };
+    // Its stage waits for the copy's peaks; a wait that ran out would leave a flat clip.
+    let peaks = |s: &Studio, name: &str| {
+        let store = s.song().peak_store();
+        matches!(
+            crate::wave::look(&imported(s, name), &store),
+            crate::wave::Look::Ready(_)
+        )
+    };
     let mut played = false;
     for shot in IMPORT {
         for &act in shot.acts {
@@ -116,10 +124,14 @@ fn the_import_script_puts_real_files_and_takes_them_back() {
             "m06-dropped" => {
                 assert_eq!(on(&s), 1);
                 assert!(imported(&s, "loop_120bpm.wav").is_file(), "copied");
+                assert!(peaks(&s, "loop_120bpm.wav"), "its waveform drawn");
                 assert_eq!(s.project().tracks.len(), tracks, "on a track it had");
             }
             "m07-undo" => assert_eq!(on(&s), 0),
-            "m08-from-file" => assert_eq!(s.project().tracks.len(), tracks + 2),
+            "m08-from-file" => {
+                assert_eq!(s.project().tracks.len(), tracks + 2);
+                assert!(peaks(&s, "pad_44k.wav"), "its waveform drawn");
+            }
             "m09-tab-added" => assert_eq!(s.browser.locations().len(), 3),
             "m10-tab-removed" => assert_eq!(s.browser.locations().len(), 2),
             _ => {}

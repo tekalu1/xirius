@@ -559,80 +559,118 @@ mod tests {
         s
     }
 
+    /// The screens [`scan`] walks. Each is made on the thread that walks it.
+    fn states(w: f32, h: f32) -> Vec<Box<dyn Fn() -> Studio + Send>> {
+        let mut states: Vec<Box<dyn Fn() -> Studio + Send>> = Vec::new();
+        // The roll, the mixer, and each tab of the browser.
+        states.push(Box::new(Studio::sample));
+        states.push(Box::new(move || {
+            let mut mixer = Studio::sample();
+            let g = mixer.geometry(w, h);
+            mixer.press(&g, Hit::Tab(crate::studio::DrawerTab::Mixer));
+            mixer
+        }));
+        for tab in RailTab::ALL {
+            states.push(Box::new(move || {
+                let mut s = Studio::sample();
+                s.browser.open = true;
+                s.browser.tab = tab;
+                s
+            }));
+        }
+        // Every track widened: its output shows in its head too.
+        states.push(Box::new(move || {
+            let mut wide = Studio::sample();
+            let g = wide.geometry(w, h);
+            let tracks: Vec<_> = wide
+                .tree()
+                .rows
+                .iter()
+                .filter_map(|r| match r.kind {
+                    RowKind::Track(t) => Some(t),
+                    RowKind::Folder(_) => None,
+                })
+                .collect();
+            for t in tracks {
+                wide.press(&g, Hit::Widen(t));
+            }
+            wide
+        }));
+        // The head column dragged wide: the volume fader shows on the second line.
+        states.push(Box::new(|| {
+            let mut column = Studio::sample();
+            column.side_size.head = Some(340.0);
+            column
+        }));
+        // The record panel, with auto-punch on so that the post-roll shows too.
+        states.push(Box::new(|| {
+            let mut rec = Studio::sample();
+            rec.rec_panel.open = true;
+            rec.rec_set("record.punch", serde_json::json!({ "on": true }));
+            rec
+        }));
+        // The entrance of the empty song.
+        states.push(Box::new(|| Studio::new(Song::empty())));
+        // The start screen (UI-350), with a song in its list.
+        states.push(Box::new(home_state));
+        // The arrangement as the editor: its bar has the ▾ of the alternative tool and the
+        // ripple switch (EDT-135).
+        states.push(Box::new(|| {
+            let mut arrange = Studio::sample();
+            arrange.arrange.focus = true;
+            arrange.choose_editor();
+            arrange
+        }));
+        // Scrolled to the end with a solo and a mute on: the last row clears the column's foot,
+        // whose M and S then turn them all off (UI-376).
+        states.push(Box::new(move || {
+            let mut foot = Studio::sample();
+            let first = foot
+                .project()
+                .tracks
+                .keys()
+                .copied()
+                .find(|t| !t.is_master())
+                .expect("a track");
+            for name in ["track.solo", "track.mute"] {
+                foot.song
+                    .run(name, serde_json::json!({ "ids": [first.to_string()] }))
+                    .unwrap();
+            }
+            let g = foot.geometry(w, h);
+            foot.scroll.1 = foot.max_scroll(&g).1;
+            foot
+        }));
+        states
+    }
+
     fn found() -> Vec<Found> {
         let mut seen = Seen::new();
         let (w, h) = (1600.0, 900.0);
-        let mut states: Vec<Studio> = Vec::new();
-        // The roll, the mixer, and each tab of the browser.
-        let roll = Studio::sample();
-        let mut mixer = Studio::sample();
-        let g = mixer.geometry(w, h);
-        mixer.press(&g, Hit::Tab(crate::studio::DrawerTab::Mixer));
-        states.push(roll);
-        states.push(mixer);
-        for tab in RailTab::ALL {
-            let mut s = Studio::sample();
-            s.browser.open = true;
-            s.browser.tab = tab;
-            states.push(s);
-        }
-        // Every track widened: its output shows in its head too.
-        let mut wide = Studio::sample();
-        let g = wide.geometry(w, h);
-        let tracks: Vec<_> = wide
-            .tree()
-            .rows
-            .iter()
-            .filter_map(|r| match r.kind {
-                RowKind::Track(t) => Some(t),
-                RowKind::Folder(_) => None,
-            })
-            .collect();
-        for t in tracks {
-            wide.press(&g, Hit::Widen(t));
-        }
-        states.push(wide);
-        // The head column dragged wide: the volume fader shows on the second line.
-        let mut column = Studio::sample();
-        column.side_size.head = Some(340.0);
-        states.push(column);
-        // The record panel, with auto-punch on so that the post-roll shows too.
-        let mut rec = Studio::sample();
-        rec.rec_panel.open = true;
-        rec.rec_set("record.punch", serde_json::json!({ "on": true }));
-        states.push(rec);
-        // The entrance of the empty song.
-        states.push(Studio::new(Song::empty()));
-        // The start screen (UI-350), with a song in its list.
-        states.push(home_state());
-        // The arrangement as the editor: its bar has the ▾ of the alternative tool and the
-        // ripple switch (EDT-135).
-        let mut arrange = Studio::sample();
-        arrange.arrange.focus = true;
-        arrange.choose_editor();
-        states.push(arrange);
-        // Scrolled to the end with a solo and a mute on: the last row clears the column's foot,
-        // whose M and S then turn them all off (UI-376).
-        let mut foot = Studio::sample();
-        let first = foot
-            .project()
-            .tracks
-            .keys()
-            .copied()
-            .find(|t| !t.is_master())
-            .expect("a track");
-        for name in ["track.solo", "track.mute"] {
-            foot.song
-                .run(name, serde_json::json!({ "ids": [first.to_string()] }))
-                .unwrap();
-        }
-        let g = foot.geometry(w, h);
-        foot.scroll.1 = foot.max_scroll(&g).1;
-        states.push(foot);
-        for s in &mut states {
-            s.settle_pool();
-            let g = s.geometry(w, h);
-            scan(s, &g, &mut seen);
+        // The screens are walked side by side: the same grid on each, merged after.
+        let walked: Vec<Seen> = std::thread::scope(|t| {
+            let walks: Vec<_> = states(w, h)
+                .into_iter()
+                .map(|make| {
+                    t.spawn(move || {
+                        let mut s = make();
+                        s.settle_pool();
+                        let g = s.geometry(w, h);
+                        let mut seen = Seen::new();
+                        scan(&s, &g, &mut seen);
+                        seen
+                    })
+                })
+                .collect();
+            walks
+                .into_iter()
+                .map(|walk| walk.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+                .collect()
+        });
+        for part in walked {
+            for (op, places) in part {
+                seen.entry(op).or_default().extend(places);
+            }
         }
         // Every pop-over a press opens.
         let sample = Studio::sample();

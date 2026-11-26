@@ -317,6 +317,9 @@ pub fn run_worker() -> io::Result<()> {
         return Ok(());
     }
     let stalled_poll_ms = fixture.map_or(0, |config| config.stalled_poll_ms);
+    let limit = fixture.map_or(service::CALL_LIMIT, |config| {
+        config.watch_or(service::CALL_LIMIT)
+    });
     let service_id = id.clone();
     let loader: service::Loader = match format.as_str() {
         "vst3" => Box::new(move || {
@@ -337,7 +340,8 @@ pub fn run_worker() -> io::Result<()> {
             return Ok(());
         }
     };
-    let service = service::Service::start_shared(&service_id, loader, archive, Arc::new(|| {}));
+    let service =
+        service::Service::start_shared_with(&service_id, loader, archive, Arc::new(|| {}), limit);
     send(&mut output, &Reply::Ack)?;
     let mut sources: HashMap<String, (Arc<SharedAudio>, Arc<SourceAudio>)> = HashMap::new();
     let mut renders: HashMap<u64, (Arc<Rendered>, String, SharedAudio)> = HashMap::new();
