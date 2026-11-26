@@ -88,98 +88,130 @@ fn clips(s: &Session) -> Vec<(Tick, Tick)> {
 // 6240 and the bar at 6720, where the song's own multiples of 960 are 3840,
 // 4800, 5760 and 6720.
 
-#[test]
-fn in_seven_eight_a_quantize_puts_notes_on_the_lines_of_their_bar() {
-    let (mut s, t) = song(7, 8);
-    let c = clip(&mut s, &t, 0, 6720, &[3360, 4320, 3400, 5300]);
-    run(
-        &mut s,
-        "note.quantize",
-        json!({ "ids": [c], "grid": "1/4" }),
-    );
-    assert_eq!(starts(&s, &c), [3360, 3360, 4320, 5280]);
+/// What a row looks at after its command: the clip's notes or the song's clips.
+#[derive(Clone, Copy)]
+enum Look {
+    Notes,
+    Clips,
+}
+
+struct BarRow {
+    name: &'static str,
+    /// Meter changes after the first bar's 7/8, as (bar, num, den).
+    meters: &'static [(u32, u32, u32)],
+    /// The clip, as (start, length), and its notes as (song tick, length).
+    clip: (Tick, Tick),
+    notes: &'static [(Tick, Tick)],
+    cmd: &'static str,
+    args: fn(&str) -> Value,
+    look: Look,
+    want: &'static [(Tick, Tick)],
 }
 
 #[test]
-fn in_seven_eight_the_panel_and_aq_count_from_the_bar_too() {
-    // AQ runs the same command with the panel's settings.
-    let (mut s, t) = song(7, 8);
-    let c = clip(&mut s, &t, 0, 6720, &[3400, 4300, 6300]);
-    run(
-        &mut s,
-        "note.quantize",
-        json!({ "ids": [c], "grid": "1/4", "range": 100 }),
-    );
-    // 6300 is 60 from 6240 and 420 from the next bar.
-    assert_eq!(starts(&s, &c), [3360, 4320, 6240]);
-}
-
-#[test]
-fn a_clip_inside_a_bar_quantizes_on_the_songs_lines() {
-    // A clip from 3400: its note at 4340 goes to the song's 4320, not to the
-    // clip's own 960 (4360).
-    let (mut s, t) = song(7, 8);
-    let c = clip(&mut s, &t, 3400, 3000, &[4340]);
-    run(
-        &mut s,
-        "note.quantize",
-        json!({ "ids": [c], "grid": "1/4" }),
-    );
-    assert_eq!(starts(&s, &c), [4320]);
-    // The clip's own start, too.
-    run(
-        &mut s,
-        "clip.quantize",
-        json!({ "ids": [c], "grid": "1/4" }),
-    );
-    assert_eq!(clips(&s)[0].0, 3360);
-}
-
-#[test]
-fn in_seven_eight_the_grid_splits_notes_on_the_lines_of_their_bar() {
-    let (mut s, t) = song(7, 8);
-    let c = clip(&mut s, &t, 3360, 3360, &[]);
-    note(&mut s, &c, 5860, 1500);
-    run(
-        &mut s,
-        "note.split.grid",
-        json!({ "ids": [c], "grid": "1/4" }),
-    );
-    // At 6240 and at the next bar, 6720.
-    assert_eq!(notes(&s, &c), [(5860, 380), (6240, 480), (6720, 640)]);
-}
-
-#[test]
-fn in_seven_eight_the_grid_splits_clips_on_the_lines_of_their_bar() {
-    let (mut s, t) = song(7, 8);
-    let c = clip(&mut s, &t, 2000, 3000, &[]);
-    run(
-        &mut s,
-        "clip.split.grid",
-        json!({ "ids": [c], "grid": "1/4" }),
-    );
-    assert_eq!(
-        clips(&s),
-        [(2000, 880), (2880, 480), (3360, 960), (4320, 680)]
-    );
-}
-
-#[test]
-fn a_meter_change_starts_the_grid_again_at_its_bar() {
-    // Bar 1 in 7/8, then 4/4 from 3360: the 1/4 lines go on at 3360 + 960 k.
-    let (mut s, t) = song(7, 8);
-    run(
-        &mut s,
-        "timesig.set",
-        json!({ "bar": 2, "num": 4, "den": 4 }),
-    );
-    let c = clip(&mut s, &t, 0, 7200, &[4300, 6200]);
-    run(
-        &mut s,
-        "note.quantize",
-        json!({ "ids": [c], "grid": "1/4" }),
-    );
-    assert_eq!(starts(&s, &c), [4320, 6240]);
+fn outside_four_four_every_grid_edit_counts_from_the_start_of_each_bar() {
+    let rows = [
+        BarRow {
+            name: "in 7/8 a quantize puts notes on the lines of their bar",
+            meters: &[],
+            clip: (0, 6720),
+            notes: &[(3360, 100), (4320, 100), (3400, 100), (5300, 100)],
+            cmd: "note.quantize",
+            args: |c| json!({ "ids": [c], "grid": "1/4" }),
+            look: Look::Notes,
+            want: &[(3360, 100), (3360, 100), (4320, 100), (5280, 100)],
+        },
+        BarRow {
+            // AQ runs the same command with the panel's settings. 6300 is 60 from 6240 and
+            // 420 from the next bar.
+            name: "in 7/8 the panel and AQ count from the bar too",
+            meters: &[],
+            clip: (0, 6720),
+            notes: &[(3400, 100), (4300, 100), (6300, 100)],
+            cmd: "note.quantize",
+            args: |c| json!({ "ids": [c], "grid": "1/4", "range": 100 }),
+            look: Look::Notes,
+            want: &[(3360, 100), (4320, 100), (6240, 100)],
+        },
+        BarRow {
+            // A clip from 3400: its note at 4340 goes to the song's 4320, not to the clip's
+            // own 960 (4360).
+            name: "a clip inside a bar quantizes its notes on the song's lines",
+            meters: &[],
+            clip: (3400, 3000),
+            notes: &[(4340, 100)],
+            cmd: "note.quantize",
+            args: |c| json!({ "ids": [c], "grid": "1/4" }),
+            look: Look::Notes,
+            want: &[(4320, 100)],
+        },
+        BarRow {
+            name: "a clip inside a bar quantizes its own start on the song's lines",
+            meters: &[],
+            clip: (3400, 3000),
+            notes: &[],
+            cmd: "clip.quantize",
+            args: |c| json!({ "ids": [c], "grid": "1/4" }),
+            look: Look::Clips,
+            want: &[(3360, 3000)],
+        },
+        BarRow {
+            // At 6240 and at the next bar, 6720.
+            name: "in 7/8 the grid splits notes on the lines of their bar",
+            meters: &[],
+            clip: (3360, 3360),
+            notes: &[(5860, 1500)],
+            cmd: "note.split.grid",
+            args: |c| json!({ "ids": [c], "grid": "1/4" }),
+            look: Look::Notes,
+            want: &[(5860, 380), (6240, 480), (6720, 640)],
+        },
+        BarRow {
+            name: "in 7/8 the grid splits clips on the lines of their bar",
+            meters: &[],
+            clip: (2000, 3000),
+            notes: &[],
+            cmd: "clip.split.grid",
+            args: |c| json!({ "ids": [c], "grid": "1/4" }),
+            look: Look::Clips,
+            want: &[(2000, 880), (2880, 480), (3360, 960), (4320, 680)],
+        },
+        BarRow {
+            // Bar 1 in 7/8, then 4/4 from 3360: the 1/4 lines go on at 3360 + 960 k.
+            name: "a meter change starts the grid again at its bar",
+            meters: &[(2, 4, 4)],
+            clip: (0, 7200),
+            notes: &[(4300, 100), (6200, 100)],
+            cmd: "note.quantize",
+            args: |c| json!({ "ids": [c], "grid": "1/4" }),
+            look: Look::Notes,
+            want: &[(4320, 100), (6240, 100)],
+        },
+    ];
+    let mut failures = Vec::new();
+    for r in &rows {
+        let (mut s, t) = song(7, 8);
+        for &(bar, num, den) in r.meters {
+            run(
+                &mut s,
+                "timesig.set",
+                json!({ "bar": bar, "num": num, "den": den }),
+            );
+        }
+        let c = clip(&mut s, &t, r.clip.0, r.clip.1, &[]);
+        for &(at, length) in r.notes {
+            note(&mut s, &c, at, length);
+        }
+        run(&mut s, r.cmd, (r.args)(&c));
+        let got = match r.look {
+            Look::Notes => notes(&s, &c),
+            Look::Clips => clips(&s),
+        };
+        if got != r.want {
+            failures.push(format!("{}: got {got:?}, want {:?}", r.name, r.want));
+        }
+    }
+    assert!(failures.is_empty(), "grid edits by the bar: {failures:#?}");
 }
 
 /// The grids of the list that divide a 4/4 bar.
@@ -188,13 +220,22 @@ const DIVIDING: [&str; 13] = [
     "1/64t",
 ];
 
+/// In a 4/4 song a grid that divides the bar has a line on every multiple of itself, so
+/// counting from each bar gives what counting from the song's start gave before UI-339. Each
+/// row is one grid and one setting, against what that older rule gives.
 #[test]
-fn a_four_four_song_quantizes_notes_as_before() {
-    // Before UI-339 each start, in clip time, went to the nearest multiple of
-    // the grid, pulled by the strength; the length too with `lengths`. The
-    // clips start on the grid, where clip time and song time agree.
+fn a_four_four_song_on_a_dividing_grid_keeps_every_result_it_had() {
+    let mut failures = Vec::new();
+    // Notes: each start, in clip time, went to the nearest multiple of the grid, pulled by
+    // the strength; the length too with `lengths`. The clips start on the grid, where clip
+    // time and song time agree. All the notes go in with one command.
     let at: Vec<Tick> = (0..90).map(|k| k * 97 + (k % 7) * 13).collect();
     let length = |k: usize| 37 + k as Tick * 11;
+    let put: Vec<Value> = at
+        .iter()
+        .enumerate()
+        .map(|(k, a)| json!({ "at": a, "pitch": 60, "length": length(k), "velocity": 90 }))
+        .collect();
     for grid in DIVIDING {
         let g = parse_grid(grid, 960).unwrap();
         for strength in [100_u32, 50, 33] {
@@ -202,9 +243,7 @@ fn a_four_four_song_quantizes_notes_as_before() {
                 for head in [0, 3840, 7 * g] {
                     let (mut s, t) = song(4, 4);
                     let c = clip(&mut s, &t, head, 9000, &[]);
-                    for (k, a) in at.iter().enumerate() {
-                        note(&mut s, &c, head + a, length(k));
-                    }
+                    run(&mut s, "note.put", json!({ "clip": c, "notes": put }));
                     let mut want: Vec<(Tick, Tick)> = at
                         .iter()
                         .enumerate()
@@ -225,39 +264,43 @@ fn a_four_four_song_quantizes_notes_as_before() {
                         json!({ "ids": [c], "grid": grid, "strength": strength,
                                 "lengths": lengths }),
                     );
-                    assert_eq!(notes(&s, &c), want, "{grid} {strength} {lengths} {head}");
+                    if notes(&s, &c) != want {
+                        failures.push(format!(
+                            "note.quantize {grid} strength {strength} lengths {lengths} head {head}"
+                        ));
+                    }
                 }
             }
         }
     }
-}
-
-#[test]
-fn a_four_four_song_quantizes_clips_as_before() {
-    // Two bars apart, so no two land on one place.
-    let at = [100, 8980, 17279, 25940, 34559];
+    // Clips, two bars apart so no two land on one place.
+    let clip_at = [100, 8980, 17279, 25940, 34559];
     for grid in DIVIDING {
         let g = parse_grid(grid, 960).unwrap();
         for strength in [100_u32, 50] {
             let (mut s, t) = song(4, 4);
-            let ids: Vec<_> = at.iter().map(|a| clip(&mut s, &t, *a, 700, &[])).collect();
+            let ids: Vec<_> = clip_at
+                .iter()
+                .map(|a| clip(&mut s, &t, *a, 700, &[]))
+                .collect();
             run(
                 &mut s,
                 "clip.quantize",
                 json!({ "ids": ids, "grid": grid, "strength": strength }),
             );
-            let want: Vec<_> = at
+            let want: Vec<_> = clip_at
                 .iter()
                 .map(|a| (quantize_tick(*a, g, strength).max(0), 700))
                 .collect();
-            assert_eq!(clips(&s), want, "{grid} {strength}");
+            let got = clips(&s);
+            if got != want {
+                failures.push(format!(
+                    "clip.quantize {grid} strength {strength}: got {got:?}, want {want:?}"
+                ));
+            }
         }
     }
-}
-
-#[test]
-fn a_four_four_song_splits_on_the_grid_as_before() {
-    // Before UI-339 the cuts were every multiple of the grid inside.
+    // Splits: the cuts were every multiple of the grid inside.
     for grid in DIVIDING {
         let g = parse_grid(grid, 960).unwrap();
         let multiples = |from: Tick, to: Tick| -> Vec<Tick> {
@@ -273,7 +316,11 @@ fn a_four_four_song_splits_on_the_grid_as_before() {
         let mut want = vec![1234];
         want.extend(multiples(1234, 6234));
         let have: Vec<_> = clips(&s).iter().map(|c| c.0).collect();
-        assert_eq!(have, want, "{grid}");
+        if have != want {
+            failures.push(format!(
+                "clip.split.grid {grid}: got {have:?}, want {want:?}"
+            ));
+        }
 
         let (mut s, t) = song(4, 4);
         let c = clip(&mut s, &t, 20_000, 9000, &[]);
@@ -285,6 +332,15 @@ fn a_four_four_song_splits_on_the_grid_as_before() {
         );
         let mut want = vec![20_333];
         want.extend(multiples(20_333, 24_333));
-        assert_eq!(starts(&s, &c), want, "{grid}");
+        let have = starts(&s, &c);
+        if have != want {
+            failures.push(format!(
+                "note.split.grid {grid}: got {have:?}, want {want:?}"
+            ));
+        }
     }
+    assert!(
+        failures.is_empty(),
+        "4/4 grid edits as before: {failures:#?}"
+    );
 }
