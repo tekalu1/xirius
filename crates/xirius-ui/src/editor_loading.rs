@@ -244,8 +244,24 @@ struct LoadingWindow {
     since: Instant,
 }
 
+impl LoadingWindow {
+    fn bar(&self, window: &Window) -> title_bar::Bar {
+        let width = f32::from(window.viewport_size().width);
+        title_bar::layout(
+            Rect::new(0.0, 0.0, width, title_bar::BAR_H),
+            &self.pending.track,
+            &self.pending.device,
+            title_bar::Seats {
+                power: true,
+                channel: true,
+                ..Default::default()
+            },
+        )
+    }
+}
+
 impl Render for LoadingWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let id = self.pending.id;
         let entity = cx.entity();
         let surface = canvas(
@@ -318,22 +334,24 @@ impl Render for LoadingWindow {
             },
         )
         .size_full();
+        // Only the close button is pressable here; the rest of the bar moves the window.
+        let at = window.mouse_position();
+        let over_close = self
+            .bar(window)
+            .close
+            .contains(f32::from(at.x), f32::from(at.y));
         div()
             .size_full()
+            .cursor(if over_close {
+                gpui::CursorStyle::PointingHand
+            } else {
+                gpui::CursorStyle::Arrow
+            })
+            .on_mouse_move(cx.listener(|_, _: &gpui::MouseMoveEvent, _, cx| cx.notify()))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
-                    let width = f32::from(window.viewport_size().width);
-                    let bar = title_bar::layout(
-                        Rect::new(0.0, 0.0, width, title_bar::BAR_H),
-                        &this.pending.track,
-                        &this.pending.device,
-                        title_bar::Seats {
-                            power: true,
-                            channel: true,
-                            ..Default::default()
-                        },
-                    );
+                    let bar = this.bar(window);
                     let x = f32::from(e.position.x);
                     let y = f32::from(e.position.y);
                     if bar.close.contains(x, y) {
