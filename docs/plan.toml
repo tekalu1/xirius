@@ -8792,7 +8792,7 @@ source = "2026-11-27 の持ち主の承認（試験の監査の G1・G5〜G8・G
 after = ["ARC-053"]
 done_when = "表ごとの PR で、表の行から試験を作り、その試験が同じ値を守る手書きの試験を消す（PR の本文に、消した試験と代わりに守る行の表）。表に行を足すと試験が増え、確かめを足し忘れると行の名前で落ちる。わざと壊して、落ちたときの言葉が行を名指すことを確かめる。G1: 履歴のコマンドを全部通す試験（every_history_command_undoes_and_redoes）が途中と最後に保存し、セッションを捨てて開き直し、各段の曲がメモリーにあったとおりにファイルから読み戻り、最初と最後へ飛べることを確かめる（作った段のコマンドとフィールドの道を名指す）。開き直すまでキーの綴りが直らなかった plugin.preset.load を直す。docs/testing.md に機能を足すときの流れを書く。G5（CLI と MCP の同じさ）・G8（BUILTINS の装置ごと）・G6（mapping.json の行ごと）・G7（SCRIPTS の台本の段ごと）・G10〜G12（デザインの語と lint・既定のキー・設定の再起動）と、rack の枝と端・context::layout::build・viewport の proptest（dev-dependency だけ）を続ける"
 status = "partial"
-remaining = "G5・G8・G6・G7・G10〜G12・proptest"
+remaining = "G8・G6・G7・G10〜G12・proptest"
 
 [[item]]
 id = "UI-371"

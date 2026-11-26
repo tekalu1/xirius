@@ -70,6 +70,16 @@ new test, and a row left without them fails the run, naming the row.
   come back by jumping. A command's own test then checks what the command does, and needs no
   save-and-reopen of its own; it keeps one only for a song the steps do not make (an old file, a
   field that is not written).
+- **A command or an argument**: nothing to add for the command line and MCP.
+  `args::tests::every_argument_of_every_command_reads_as_the_mcp_call_does`
+  (`crates/xirius-cli/src/args.rs`) types every argument of every registered command on the
+  command line in each way it can be typed (`--name value`, `--name=value`, each alias, a bare
+  word, a flag alone, an ID list named once per ID) and reads it as the JSON an MCP client sends;
+  a difference fails as `<command> --<arg> (<way>): <line> reads as …, the MCP call … as …`. A new
+  `ArgType` does not build until it has sample values in `samples()` there and an index in
+  `interfaces::the_script_has_a_call_of_every_argument_type`, which then fails until
+  `interfaces.rs`'s script has a call with it. A test that a command is reachable from both
+  entrances is not needed.
 
 ## Build artifacts
 

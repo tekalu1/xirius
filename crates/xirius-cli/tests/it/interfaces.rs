@@ -1,16 +1,20 @@
-//! One editing contract, exercised through the real CLI and MCP tool dispatcher.
+//! One script of calls, run through the real CLI program and the MCP tool dispatcher: each
+//! call answers the same through both. How each argument is read is checked for every command
+//! by `args::tests::every_argument_of_every_command_reads_as_the_mcp_call_does`; this checks
+//! the way between (one process per call, the song saved and read again between calls, the
+//! JSON written out) on a call of every argument type.
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,
     process::Command,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
 };
-use xirius_core::{Session, session::AiPermission};
+use xirius_core::Session;
+use xirius_core::command::ArgType;
 use xirius_mcp::{Gateway, Scope};
 
 trait Endpoint {
-    fn run(&self, name: &str, args: Value) -> Value;
+    fn run(&self, name: &str, args: &Value) -> Value;
 }
 struct Cli(PathBuf);
 impl Cli {
@@ -35,7 +39,7 @@ impl Drop for Cli {
     }
 }
 impl Endpoint for Cli {
-    fn run(&self, name: &str, args: Value) -> Value {
+    fn run(&self, name: &str, args: &Value) -> Value {
         let mut command = Command::new(env!("CARGO_BIN_EXE_xirius"));
         command
             .env_remove("XIRIUS_SONG")
@@ -57,324 +61,167 @@ impl Endpoint for Cli {
             command.arg(encoded);
         }
         let output = command.output().unwrap();
-        let result: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
             panic!(
                 "{name}: {}{}",
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             )
-        });
-        assert!(output.status.success(), "{result}");
-        result
+        })
     }
 }
-struct Mcp {
-    gateway: Gateway,
-    session: Arc<Mutex<Session>>,
-}
+struct Mcp(Gateway);
 impl Mcp {
     fn new() -> Self {
         let session = Arc::new(Mutex::new(Session::new("interfaces")));
-        let gateway = Gateway::new(session.clone(), "test", Scope::Edit).with_save(false);
-        Self { gateway, session }
-    }
-    fn expand(&self, value: Value) -> Value {
-        let Some(id) = value["result_id"].as_str() else {
-            return value;
-        };
-        let mut text = String::new();
-        for page in 0..value["pages"].as_u64().unwrap() {
-            let (page, error) = self
-                .gateway
-                .call(
-                    "ops_get-result",
-                    json!({"id": id, "page": page}).as_object().unwrap(),
-                )
-                .unwrap();
-            assert!(!error, "{page}");
-            text.push_str(page["text"].as_str().unwrap());
-        }
-        serde_json::from_str(&text).unwrap()
+        Self(Gateway::new(session, "test", Scope::Edit).with_save(false))
     }
 }
 impl Endpoint for Mcp {
-    fn run(&self, name: &str, args: Value) -> Value {
+    fn run(&self, name: &str, args: &Value) -> Value {
         let tool = name.replace('.', "_");
-        let (mut value, error) = self.gateway.call(&tool, args.as_object().unwrap()).unwrap();
-        assert!(!error, "{value}");
-        if value["confirmation_required"] == true {
-            assert!(matches!(
-                name,
-                "ai.permission.set" | "plugin.note_source.remove"
-            ));
-            assert_eq!(value["receipt"]["state"], "accepted");
-            if name == "ai.permission.set" {
-                assert_eq!(
-                    self.session.lock().unwrap().ai_permission(),
-                    AiPermission::Edit,
-                    "AI cannot raise its own permission"
-                );
-            }
-            let id = value["receipt"]["id"].clone();
-            let token = value["decision"]["token"].clone();
-            let (decision, error) = self
-                .gateway
-                .admin(
-                    "ai.decide",
-                    json!({"token": token, "answer": "yes"})
-                        .as_object()
-                        .unwrap(),
-                )
-                .unwrap();
-            assert!(!error, "{decision}");
-            let deadline = Instant::now() + Duration::from_secs(10);
-            loop {
-                value = self
-                    .gateway
-                    .call("ops_receipt", json!({"id": id}).as_object().unwrap())
-                    .unwrap()
-                    .0;
-                if value["receipt"]["state"] == "completed" {
-                    break;
-                }
-                assert!(Instant::now() < deadline, "{value}");
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            if name == "ai.permission.set" {
-                assert_eq!(
-                    self.session.lock().unwrap().ai_permission(),
-                    AiPermission::Save
-                );
-            }
-        }
-        self.expand(value)
+        self.0.call(&tool, args.as_object().unwrap()).unwrap().0
     }
 }
 
-fn exercise(endpoint: &dyn Endpoint) {
-    const REQUIRED: [&str; 7] = [
-        "note.quantize",
-        "note.velocity.shape",
-        "note.transpose",
-        "history.undo",
-        "history.redo",
-        "ops.list",
-        "ai.permission.set",
-    ];
-    let operations = endpoint.run("ops.list", json!({}));
-    let listed = operations["data"].as_array().unwrap();
-    for name in REQUIRED {
-        assert!(listed.iter().any(|row| row["name"] == name), "{name}");
-    }
-    let track =
-        endpoint.run("track.add.instrument", json!({"name": "Piano"}))["data"]["id"].clone();
-    let clip = endpoint.run(
-        "clip.add.midi",
-        json!({"track": track, "at": 0, "length": 3840}),
-    )["data"]["id"]
-        .clone();
-    endpoint.run(
-        "note.put",
-        json!({"clip": clip, "notes": [
-            {"at": 970, "pitch": 60, "length": 240, "velocity": 70},
-            {"at": 1930, "pitch": 62, "length": 240, "velocity": 90}
-        ]}),
-    );
-    let result = endpoint.run("note.quantize", json!({"ids": [clip], "grid": "1/8"}));
-    assert_eq!(result["changes"]["counts"]["note"]["changed"], 2);
-    endpoint.run(
-        "note.velocity.shape",
-        json!({"ids": [clip], "shape": "stronger", "amount": 10}),
-    );
-    endpoint.run("note.transpose", json!({"ids": [clip], "by": 2}));
-    let notes = endpoint.run("note.list", json!({"clip": clip}))["data"].clone();
-    assert_eq!(notes[0]["start"], 960);
-    assert_eq!(notes[1]["start"], 1920);
-    assert_eq!(notes[0]["velocity"], 80);
-    assert_eq!(notes[1]["velocity"], 100);
-    assert_eq!(notes[0]["pitch"], 62);
-    endpoint.run("history.undo", json!({}));
-    assert_eq!(
-        endpoint.run("note.list", json!({"clip": clip}))["data"][0]["pitch"],
-        60
-    );
-    endpoint.run("history.redo", json!({}));
-    assert_eq!(
-        endpoint.run("note.list", json!({"clip": clip}))["data"][0]["pitch"],
-        62
-    );
-    endpoint.run("ai.permission.set", json!({"level": "save"}));
-    assert_eq!(
-        endpoint.run("ai.permission.get", json!({}))["data"]["level"],
-        "save"
-    );
+/// The calls: `$track` and `$clip` stand for the IDs the first two made.
+fn script() -> Vec<(&'static str, Value)> {
+    vec![
+        ("track.add.instrument", json!({"name": "Piano"})),
+        (
+            "clip.add.midi",
+            json!({"track": "$track", "at": "1.1.0", "length": 3840}),
+        ),
+        (
+            "note.add",
+            json!({"clip": "$clip", "at": "1.2.0", "pitch": "C3"}),
+        ),
+        (
+            "note.put",
+            json!({"clip": "$clip", "notes": [
+                {"at": 970, "pitch": 60, "length": 240, "velocity": 70},
+                {"at": 1930, "pitch": 62, "length": 240, "velocity": 90}
+            ]}),
+        ),
+        ("note.quantize", json!({"ids": ["$clip"], "grid": "1/8"})),
+        (
+            "note.velocity.shape",
+            json!({"ids": ["$clip"], "shape": "stronger", "amount": 10}),
+        ),
+        ("note.transpose", json!({"ids": ["$clip"], "by": 2})),
+        ("track.volume.set", json!({"ids": ["$track"], "db": -6.5})),
+        ("track.mute", json!({"ids": ["$track"], "on": true})),
+        ("history.undo", json!({})),
+        ("history.redo", json!({})),
+        ("note.list", json!({"clip": "$clip"})),
+        ("track.list", json!({})),
+        ("track.add.audio", json!({"name": "Vocal", "index": 99})),
+        // A refusal answers alike too.
+        ("note.transpose", json!({"ids": ["clp_99"], "by": 1})),
+    ]
 }
 
-#[test]
-fn seven_mvp_commands_have_the_same_cli_and_mcp_editing_contract() {
-    exercise(&Cli::new());
-    exercise(&Mcp::new());
-}
-
-#[test]
-fn audio_track_with_an_effect_can_be_positioned_from_cli_and_mcp() {
-    for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
-        let folder = endpoint.run("folder.add", json!({"name":"Group"}))["data"]["id"].clone();
-        let anchor = endpoint.run("track.add.audio", json!({"into":folder}))["data"]["id"].clone();
-        let list = || endpoint.run("track.list", json!({}))["data"].clone();
-        let original = list();
-        for position in [json!({"before":anchor}), json!({"into":folder,"index":0})] {
-            let mut args = position;
-            args["effect"] = json!("EQ");
-            let added = endpoint.run("track.add.with-effect", args)["data"].clone();
-            let current = list();
-            let rows = current.as_array().unwrap();
-            let index = rows
-                .iter()
-                .position(|row| row["id"] == added["id"])
-                .unwrap();
-            assert_eq!(rows[index + 1]["id"], anchor);
-            assert_eq!(rows[index]["parent"], folder);
-            assert_eq!(rows[index]["kind"], "audio");
-            assert_eq!(rows[index]["inserts"], 1);
-            assert!(added["plugin"].as_str().is_some());
-            endpoint.run("history.undo", json!({}));
-            assert_eq!(list(), original);
-        }
-    }
-}
-
-#[test]
-fn note_source_commands_have_the_same_cli_and_mcp_contract() {
-    for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
-        let source =
-            endpoint.run("track.add.instrument", json!({"name":"Melody"}))["data"]["id"].clone();
-        let vocal = endpoint.run("track.add.audio", json!({"name":"Vocal"}))["data"]["id"].clone();
-        let plugin = endpoint.run(
-            "plugin.add",
-            json!({"track":vocal,"name":"Pitch Correction"}),
-        )["data"]["id"]
-            .clone();
-        endpoint.run("plugin.note_source.set", json!({"id":plugin,"from":source}));
-        let value = endpoint.run("plugin.note_source.list", json!({"id":plugin}));
-        assert_eq!(value["data"]["from"], source);
-        endpoint.run(
-            "plugin.note_source.enable",
-            json!({"id":plugin,"state":"off"}),
-        );
-        assert_eq!(
-            endpoint.run("plugin.note_source.list", json!({"id":plugin}))["data"]["on"],
-            false
-        );
-        endpoint.run("plugin.note_source.remove", json!({"id":plugin}));
-        assert!(
-            endpoint.run("plugin.note_source.list", json!({"id":plugin}))["data"]["from"].is_null()
-        );
-    }
-}
-
-#[test]
-fn pitch_key_toggle_is_available_through_cli_and_mcp() {
-    for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
-        let vocal = endpoint.run("track.add.audio", json!({"name":"Vocal"}))["data"]["id"].clone();
-        let plugin = endpoint.run(
-            "plugin.add",
-            json!({"track":vocal,"name":"Pitch Correction"}),
-        )["data"]["id"]
-            .clone();
-        let before = endpoint.run("plugin.param.list", json!({"id":plugin}))["data"].clone();
-        endpoint.run("plugin.pitch_key.toggle", json!({"id":plugin,"relative":4}));
-        let after = endpoint.run("plugin.param.list", json!({"id":plugin}))["data"].clone();
-        assert_ne!(before, after);
-        endpoint.run("history.undo", json!({}));
-        assert_eq!(
-            endpoint.run("plugin.param.list", json!({"id":plugin}))["data"],
-            before
-        );
-    }
-}
-
-#[test]
-fn pitch_range_remains_settable_through_cli_and_mcp() {
-    for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
-        let vocal = endpoint.run("track.add.audio", json!({"name":"Vocal"}))["data"]["id"].clone();
-        let plugin = endpoint.run(
-            "plugin.add",
-            json!({"track":vocal,"name":"Pitch Correction"}),
-        )["data"]["id"]
-            .clone();
-        let before = endpoint.run("plugin.param.list", json!({"id":plugin}))["data"].clone();
-        endpoint.run(
-            "plugin.param.set",
-            json!({"id":plugin,"param":"range","plain":"High"}),
-        );
-        let after = endpoint.run("plugin.param.list", json!({"id":plugin}))["data"].clone();
-        assert_ne!(before, after);
-        endpoint.run("history.undo", json!({}));
-        assert_eq!(
-            endpoint.run("plugin.param.list", json!({"id":plugin}))["data"],
-            before
-        );
-    }
-}
-
-#[test]
-fn pad_output_uses_the_same_cli_and_mcp_command() {
-    for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
-        let track =
-            endpoint.run("track.add.instrument", json!({"name":"Drums"}))["data"]["id"].clone();
-        let kit =
-            endpoint.run("plugin.add", json!({"track":track,"name":"Drum Kit"}))["data"]["id"]
-                .clone();
-        let made = endpoint.run(
-            "plugin.pad_output.set",
-            json!({"id":kit,"pads":[{"pad":"A1"},{"pad":"A2"}],"active":"A2","to":"new"}),
-        );
-        let bus = made["data"]["output"].as_str().unwrap();
-        assert!(bus.starts_with("trk_"), "{made}");
-        endpoint.run("history.undo", json!({}));
-        let main = endpoint.run(
-            "plugin.pad_output.set",
-            json!({"id":kit,"pads":[{"pad":"A1"}],"to":"Main"}),
-        );
-        assert_eq!(main["data"]["output"], "main");
-    }
-}
-
-#[test]
-fn every_solo_turned_off_is_put_back_through_cli_and_mcp() {
-    // UI-376: the column's foot runs these; the CLI and the AI reach the same commands.
-    for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
-        let a = endpoint.run("track.add.audio", json!({"name":"A"}))["data"]["id"].clone();
-        let b = endpoint.run("track.add.audio", json!({"name":"B"}))["data"]["id"].clone();
-        endpoint.run("track.solo", json!({"ids":[a.clone()]}));
-        let soloed = |endpoint: &dyn Endpoint| -> Vec<Value> {
-            endpoint.run("track.list", json!({}))["data"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|t| t["solo"] == true)
-                .map(|t| t["id"].clone())
-                .collect()
-        };
-        assert_eq!(soloed(endpoint), vec![a.clone()]);
-        endpoint.run("track.solo.clear", json!({}));
-        assert!(soloed(endpoint).is_empty());
-        endpoint.run("track.solo.restore", json!({}));
-        assert_eq!(soloed(endpoint), vec![a.clone()]);
-        // A mute set by hand forgets the earlier clear; the last clear is what comes back.
-        endpoint.run("track.mute", json!({"ids":[b.clone()]}));
-        endpoint.run("track.mute.clear", json!({}));
-        endpoint.run("track.mute", json!({"ids":[a]}));
-        endpoint.run("track.mute", json!({"ids":[b]}));
-        endpoint.run("track.mute.clear", json!({}));
-        endpoint.run("track.mute.restore", json!({}));
-        let muted = endpoint.run("track.list", json!({}))["data"]
-            .as_array()
-            .unwrap()
+fn replace(value: &Value, ids: &[(&str, Value)]) -> Value {
+    match value {
+        Value::String(s) => ids
             .iter()
-            .filter(|t| t["mute"] == true)
-            .count();
-        assert_eq!(muted, 2, "the last clear's two come back");
+            .find(|(k, _)| k == s)
+            .map_or_else(|| value.clone(), |(_, v)| v.clone()),
+        Value::Array(a) => Value::Array(a.iter().map(|v| replace(v, ids)).collect()),
+        Value::Object(o) => Value::Object(
+            o.iter()
+                .map(|(k, v)| (k.clone(), replace(v, ids)))
+                .collect(),
+        ),
+        other => other.clone(),
     }
+}
+
+/// What only one entrance says: the MCP call's receipt, the notes an AI wrote (`ai`), and the
+/// song's hash (the songs' names and authors differ).
+fn strip(value: &mut Value) {
+    match value {
+        Value::Object(o) => {
+            for key in ["receipt", "state_hash", "ai"] {
+                o.remove(key);
+            }
+            o.values_mut().for_each(strip);
+        }
+        Value::Array(a) => a.iter_mut().for_each(strip),
+        _ => {}
+    }
+}
+
+fn answers(endpoint: &dyn Endpoint) -> Vec<Value> {
+    let mut ids = Vec::new();
+    let mut out = Vec::new();
+    for (name, args) in script() {
+        let mut answer = endpoint.run(name, &replace(&args, &ids));
+        strip(&mut answer);
+        for (key, made_by) in [
+            ("$track", "track.add.instrument"),
+            ("$clip", "clip.add.midi"),
+        ] {
+            if name == made_by {
+                ids.push((key, answer["data"]["id"].clone()));
+            }
+        }
+        out.push(answer);
+    }
+    out
+}
+
+/// Every argument type is in the script: a new `ArgType` does not build until it has its
+/// index here, and then fails until a call of it is added.
+#[test]
+fn the_script_has_a_call_of_every_argument_type() {
+    let registry = xirius_session::commands::registry();
+    let mut seen = [false; 11];
+    for (name, args) in script() {
+        let def = registry.get(name).unwrap_or_else(|| panic!("{name}"));
+        for key in args.as_object().unwrap().keys() {
+            let arg = def.args.iter().find(|a| a.name == key).unwrap();
+            seen[match arg.ty {
+                ArgType::Bool => 0,
+                ArgType::Int => 1,
+                ArgType::Float => 2,
+                ArgType::Text => 3,
+                ArgType::Id(_) => 4,
+                ArgType::Ids(_) => 5,
+                ArgType::Choice(_) => 6,
+                ArgType::Position => 7,
+                ArgType::Grid => 8,
+                ArgType::Pitch => 9,
+                ArgType::Objects => 10,
+            }] = true;
+        }
+    }
+    const NAMES: [&str; 11] = [
+        "Bool", "Int", "Float", "Text", "Id", "Ids", "Choice", "Position", "Grid", "Pitch",
+        "Objects",
+    ];
+    let missing: Vec<&str> = (0..seen.len())
+        .filter(|&i| !seen[i])
+        .map(|i| NAMES[i])
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "no call of the argument types {missing:?}"
+    );
+}
+
+#[test]
+fn each_call_answers_the_same_through_the_cli_and_mcp() {
+    let cli = answers(&Cli::new());
+    let mcp = answers(&Mcp::new());
+    let wrong: Vec<String> = script()
+        .iter()
+        .zip(cli.iter().zip(&mcp))
+        .enumerate()
+        .filter(|(_, (_, (c, m)))| c != m)
+        .map(|(i, ((name, args), (c, m)))| {
+            format!("call {i}, {name} {args}:\n  cli {c}\n  mcp {m}")
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
