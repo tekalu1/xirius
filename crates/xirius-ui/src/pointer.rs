@@ -107,6 +107,17 @@ pub fn show(want: Want, crosshair: bool, held: bool) -> Pointer {
     }
 }
 
+impl Studio {
+    /// The pointer moves over a card, the settings or the palette, which take the move before
+    /// the press flow does: its place still follows, so the shape answers what is under it.
+    /// True when the shape changed (the window repaints to show it).
+    pub(crate) fn covered_moved(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        let before = of_studio(self, g).style;
+        self.input_map.pointer = (x, y);
+        of_studio(self, g).style != before
+    }
+}
+
 /// The pointer over the window's body: the arrangement's shape where it has one, else the
 /// roll's. Panels that cover the body (a pop-up, the palette, the settings) take the arrow.
 pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {

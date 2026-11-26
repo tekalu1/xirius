@@ -239,7 +239,8 @@ fn the_start_screen() {
 }
 
 /// The main window with a card or the palette over it, which takes every press: each place is
-/// named by `part`, as the card's press reads it.
+/// named by `part`, as the card's press reads it. The move goes where the window sends it
+/// while something covers the body ([`Studio::covered_moved`]), not to the press flow.
 fn sweep_over(
     scene: &str,
     mut s: Studio,
@@ -249,7 +250,7 @@ fn sweep_over(
     let g = s.geometry(SIZE.0, SIZE.1);
     s.resized(&g);
     for (x, y) in grid(SIZE.0, SIZE.1) {
-        s.window_moved(&g, x, y, Mods::NONE);
+        s.covered_moved(&g, x, y);
         table.add(part(&s, &g, x, y), of_studio(&s, &g));
     }
     table.check(scene);
@@ -326,7 +327,7 @@ fn the_palette() {
         .collect();
     let mut table = Table::default();
     for (x, y, place) in places {
-        s.window_moved(&g, x, y, Mods::NONE);
+        s.covered_moved(&g, x, y);
         table.add(place.into(), of_studio(&s, &g));
     }
     table.check("palette");
