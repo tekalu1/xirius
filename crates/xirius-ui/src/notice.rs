@@ -260,19 +260,25 @@ impl Studio {
             .map(|b| b.label.as_str())
     }
 
+    /// Whether (`x`, `y`) of the body is on the notice's button (UI-384: the pointing hand).
+    pub fn over_notice_button(&self, g: &Geometry, x: f32, y: f32) -> bool {
+        self.shown_notice().is_some_and(|n| {
+            n.button.as_ref().is_some_and(|button| {
+                let r = place(self, g, &n.text, Some(&button.label));
+                button_rect(r, &button.label).contains(x, y)
+            })
+        })
+    }
+
     /// A press at (`x`, `y`) of the body: on the notice's button it does what the button
     /// says, and the notice goes. True when the press was the button's.
     pub fn notice_press(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
-        let Some(n) = self.shown_notice() else {
-            return false;
-        };
-        let Some(button) = &n.button else {
-            return false;
-        };
-        let r = place(self, g, &n.text, Some(&button.label));
-        if !button_rect(r, &button.label).contains(x, y) {
+        if !self.over_notice_button(g, x, y) {
             return false;
         }
+        let Some(button) = self.shown_notice().and_then(|n| n.button.as_ref()) else {
+            return false;
+        };
         let press = button.press.clone();
         self.notice = None;
         match press {

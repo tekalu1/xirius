@@ -187,6 +187,10 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
     if studio.mixer.drag.is_some() {
         return Pointer::style(CursorStyle::ResizeUpDown);
     }
+    // The notice's button lies over whatever is under it (UI-384).
+    if studio.over_notice_button(g, x, y) {
+        return Pointer::style(CursorStyle::PointingHand);
+    }
     if studio.text_index(g, x, y, false).is_some() {
         return Pointer::style(CursorStyle::IBeam);
     }
