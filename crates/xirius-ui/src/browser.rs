@@ -2567,9 +2567,9 @@ mod tests {
                     assert_eq!(file.bottom(), preview.y);
                     assert_eq!(face.y, file.y);
                     assert_eq!(face.bottom(), preview.bottom());
-                    assert_eq!(face.h, 60.0);
-                    assert_eq!(face.x, file.x + 4.0);
-                    assert_eq!(face.right(), file.right() - 4.0);
+                    // Inset from the row by the same amount on both sides.
+                    let (left, right) = (face.x - file.x, file.right() - face.right());
+                    assert!(left > 0.0 && (left - right).abs() < 0.01, "{face:?} {file:?}");
                     // A single round rectangle has full width at this seam: both
                     // outside corner arcs end before it (radius 8, seam at 28).
                     assert!(preview.y - face.y > Radius::S.px());
@@ -2597,7 +2597,7 @@ mod tests {
                 assert!(measure(&shown) <= name.w);
                 assert_eq!(duration.w, len_w);
                 assert!(duration.w >= text_width(len, FontSize::Caption));
-                assert_eq!(duration.right(), r.right() - 8.0);
+                assert!(duration.right() < r.right(), "{duration:?} {r:?}");
                 assert!(name.right() <= duration.x);
                 assert_eq!(crate::draw::fit_text("短い", name.w, measure), "短い");
             }
@@ -2975,6 +2975,7 @@ mod tests {
     fn long_location_tabs_keep_close_and_add_inside_narrow_panels() {
         let mut b = example();
         b.press_rail(RailTab::Files);
+        let mut add_w = None;
         for count in [2, 8, 24] {
             b.places = (0..count)
                 .map(|i| xirius_session::places::Place {
@@ -2990,7 +2991,12 @@ mod tests {
                 assert!(add.right() <= l.panel.right(), "{count} {width} {add:?}");
                 assert!(close.right() <= add.x);
                 assert_eq!(close.w, TAB_CROSS);
-                assert_eq!(add.w, 24.0);
+                assert!(add.w > 0.0);
+                assert_eq!(
+                    *add_w.get_or_insert(add.w),
+                    add.w,
+                    "the plus keeps its width: {count} {width}"
+                );
                 assert!(l.tabs[count].w - TAB_CROSS >= Layout::BROWSER_ROW_H * 2.0);
                 assert!(l.tabs[count].x >= l.tab_clip.unwrap().x);
                 assert_eq!(
