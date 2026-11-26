@@ -42,11 +42,11 @@ fn pre(cmd: &'static str, args: Args) -> (&'static str, Args) {
     (cmd, args)
 }
 
-/// Runs the commands, then the edit; checks it is one step and that one undo goes back.
+/// Runs the commands, then the edit; checks it is one step and that one undo goes back. `made`
+/// is the ids and the clip or track the song was made with, as `Args` gets them.
 fn one_step_that_undoes<T: PartialEq + std::fmt::Debug>(
     s: &mut Session,
-    ids: &[String],
-    at: &str,
+    (ids, at): (&[String], &str),
     before: &[(&'static str, Args)],
     cmd: &str,
     args: Args,
@@ -141,7 +141,7 @@ fn note_row(r: &NoteRow) -> Result<(), String> {
         }
         Ok(())
     };
-    one_step_that_undoes(&mut s, &n, &c, &r.before, r.cmd, r.args, look, check)
+    one_step_that_undoes(&mut s, (&n, &c), &r.before, r.cmd, r.args, look, check)
 }
 
 #[test]
@@ -486,7 +486,7 @@ fn clip_row(r: &ClipRow) -> Result<(), String> {
         }
         Ok(())
     };
-    one_step_that_undoes(&mut s, &c, &t, &r.before, r.cmd, r.args, look, check)
+    one_step_that_undoes(&mut s, (&c, &t), &r.before, r.cmd, r.args, look, check)
 }
 
 fn clip_rows(rows: &[ClipRow]) -> Vec<String> {
