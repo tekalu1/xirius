@@ -21,7 +21,7 @@ use xirius_session::host::{
 };
 use xirius_session::plugins::Isolation;
 
-mod crash_records;
+use crate::crash_records;
 use crash_records::CrashRecords;
 
 /// "Latency" 0.5 is a delay of 128, which the fixture saves as 4 little-endian bytes.

@@ -10,7 +10,7 @@ use xirius_session::{
     plugins::Isolation,
 };
 
-mod crash_records;
+use crate::crash_records;
 use crash_records::CrashRecords;
 
 fn run(s: &mut Session, name: &str, args: Value) -> Value {

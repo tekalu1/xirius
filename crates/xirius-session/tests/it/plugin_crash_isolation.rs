@@ -50,7 +50,11 @@ fn plugin(e: &Entry) -> Plugin {
 }
 fn run_child(root: &Path, mode: &str, host: &Path, dll: &Path) -> std::process::Output {
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "fixture_child", "--nocapture"])
+        .args([
+            "--exact",
+            "plugin_crash_isolation::fixture_child",
+            "--nocapture",
+        ])
         .env("XIRIUS_ISOLATE_TEST_CHILD", mode)
         .env("XIRIUS_CONFIG_DIR", root.join("prefs"))
         .env("XIRIUS_CRASH_DIR", root.join("crashes"))

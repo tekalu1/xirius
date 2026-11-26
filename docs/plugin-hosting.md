@@ -113,7 +113,7 @@ CLAP のホストは clack（`clack-host`・`clack-extensions` 0.2、MIT OR Apac
 - `crates/xirius-clap/tests/` は `xirius-test-clap`（自作の CLAP、MIT OR Apache-2.0）で読み込み・パラメーター・状態・音・ノートを確かめる。
 - `crates/xirius-engine/tests/sandbox_clap.rs` は別プロセスのホストで鳴らし、編集の後の状態がホストの再起動で戻ることを確かめる。
 - `crates/xirius-plugins/tests/scan_clap.rs` は `.clap` が一覧に入り、キャッシュから読み直せることを確かめる。
-- `crates/xirius-session/tests/clap.rs` は曲の CLAP を同じプロセスと別プロセスで鳴らし、編集が曲の状態に入り、その曲を開き直すと同じ音になることを確かめる。
+- `crates/xirius-session/tests/it/clap.rs` は曲の CLAP を同じプロセスと別プロセスで鳴らし、編集が曲の状態に入り、その曲を開き直すと同じ音になることを確かめる。
 
 ## ARA のプラグインの置き場所（PLG-025）
 
@@ -127,7 +127,7 @@ ARA の Service とプラグインはホストのプロセスで動く。曲の�
 試験:
 
 - `crates/xirius-plugins/src/ara.rs` はクラスの一覧から見分ける規則を確かめる。
-- `crates/xirius-session/tests/ara.rs` は、ARA の印の付いた曲がホストを必須とし、ホストが無ければ読み込みを失敗させることを確かめる。
+- `crates/xirius-session/tests/it/ara.rs` は、ARA の印の付いた曲がホストを必須とし、ホストが無ければ読み込みを失敗させることを確かめる。
 - `crates/xirius-ui/src/health.rs` の `an_ara_plugin_uses_the_host` は、メニューがホストの選択肢を示すことを確かめる。
 
 ## 試験道具（PLG-042）

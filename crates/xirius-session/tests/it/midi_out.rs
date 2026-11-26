@@ -2,7 +2,7 @@
 //! track makes no sound of its own, and its notes reach the port. The ports are a stand-in; no
 //! MIDI device is opened.
 
-mod support;
+use crate::support;
 
 use std::sync::{Arc, Mutex};
 

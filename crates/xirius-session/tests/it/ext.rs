@@ -1,6 +1,6 @@
 //! The session layer's extension: background exports, the player and VST3 plugins in a song.
 //! The player plays into a silent output; nothing here opens an audio device.
-mod crash_records;
+use crate::crash_records;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

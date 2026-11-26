@@ -8,7 +8,7 @@
 //! The tests skip when kHs Gain is not installed or `xirius-plugin-host` has not been built
 //! (`cargo test --workspace` builds it).
 
-mod crash_records;
+use crate::crash_records;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

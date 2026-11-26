@@ -52,7 +52,7 @@ are `#[ignore]`d; run them on a quiet machine:
 
 ```sh
 cargo test -p xirius-engine --test sandbox -- --ignored
-cargo test -p xirius-session --test isolation -- --ignored
+cargo test -p xirius-session --test it -- --ignored isolation::
 ```
 
 ## Building from source

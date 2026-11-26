@@ -2,7 +2,7 @@
 //! stems the panel offers, and the record of each export kept in the song folder. Every render
 //! is offline; nothing here opens an audio device, a file window or the recycle bin.
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

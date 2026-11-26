@@ -1,4 +1,4 @@
-mod crash_records;
+use crate::crash_records;
 
 use std::{
     collections::{BTreeMap, HashSet},

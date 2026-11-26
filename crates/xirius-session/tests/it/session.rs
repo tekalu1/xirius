@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::support;
 use serde_json::{Map, Value, json};
 use xirius_core::model::Project;
 use xirius_core::session::{RunOptions, RunResult, Session};
@@ -15,7 +16,6 @@ use xirius_session::ext::ExtConfig;
 use xirius_session::graph::{Select, song_end_tick};
 use xirius_session::host::{HostConfig, SessionHost};
 use xirius_session::tempo::TempoMap;
-mod support;
 
 // ---- helpers ------------------------------------------------------------------------------
 

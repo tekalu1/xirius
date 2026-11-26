@@ -1,6 +1,7 @@
 //! The built-in instruments and effects in a song (PLG-016, PLG-045): rendered offline, moved
 //! by automation and by edits while the engine runs. Nothing here opens an audio device.
 
+use crate::support;
 use serde_json::{Map, Value, json};
 use xirius_core::model::Project;
 use xirius_core::session::{RunOptions, RunResult, Session};
@@ -12,7 +13,6 @@ use xirius_session::ext::ExtConfig;
 use xirius_session::graph::{Select, song_end_tick};
 use xirius_session::host::{HostConfig, SessionHost};
 use xirius_session::tempo::TempoMap;
-mod support;
 
 fn song(name: &str) -> Session {
     let mut s = Session::with_registry(Project::new(name), shared_registry());

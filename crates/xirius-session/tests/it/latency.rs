@@ -16,7 +16,7 @@ use xirius_session::{
     plugins::Isolation,
 };
 
-mod crash_records;
+use crate::crash_records;
 use crash_records::CrashRecords;
 
 #[test]
