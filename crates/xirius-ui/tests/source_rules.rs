@@ -1,9 +1,12 @@
-//! UI-337: the rules of the independent windows, read from the sources (so they run on CI).
+//! UI-337: the rules of the independent windows, read from the sources (so they run on CI; no
+//! window opens, and the name does not end in `_window`/`_windows`, which `ci_tests.py` keeps
+//! off CI).
 //!
 //! - one entry opens a window (`independent.rs`); `resize` is asked in few places;
 //! - the old "own place and pin" fields do not spread to more structs;
 //! - what `draw::paint_overlay` paints is a list of modals, popovers, transient shows and
-//!   screen sections (there is no "window" kind: a window is a real window).
+//!   screen sections (there is no "window" kind: a window is a real window);
+//! - no screen script injects OS keyboard or mouse input.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -164,6 +167,8 @@ const OVERLAY: &[(&str, Class)] = &[
     ("paint_playhead", Section),
     ("paint_head_meters", Section),
     ("crate::arrange::paint::overlay", Section),
+    // The see-through clip of an audio file held over the arrangement (UI-381).
+    ("crate::arrange::clip_drop::paint", Transient),
     ("crate::track_name::paint", Popover),
     ("crate::zoom_input::paint", Popover),
     ("crate::ai::overlay", Section),
@@ -336,6 +341,24 @@ fn the_macro_controls_panel_fills_its_window() {
         !paint.contains("pen.floating(") && paint.contains("pen.fill(v.r, c.paper)"),
         "the panel is a plain fill of the window's whole surface"
     );
+}
+
+/// Moved from `quiet_window.rs`, where it never ran on CI.
+#[test]
+fn screen_scripts_cannot_inject_os_keyboard_or_mouse_input() {
+    let mut files = Vec::new();
+    sources(&src(), &mut files);
+    for path in files {
+        // The whole text, comments too, as where it came from.
+        let source = std::fs::read_to_string(&path).unwrap();
+        for forbidden in ["SendInput", "keybd_event", "mouse_event", "SendKeys"] {
+            assert!(
+                !source.contains(forbidden),
+                "{} uses {forbidden}",
+                path.display()
+            );
+        }
+    }
 }
 
 /// The Channel Editor's and the devices' accessibility marks live in their own windows' trees

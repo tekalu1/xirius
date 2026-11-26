@@ -41,7 +41,6 @@ WINDOW_TESTS = {
         "eng067_recapture",
         "eng070_window_moves",
         "eng071_place_moves",
-        "plugin_release_thread",
     },
     "xirius-vst3": {"editor_caption", "editor_resize", "vendor_editor_windows"},
 }
@@ -62,6 +61,14 @@ def opens_windows(package, target):
     return package == "xirius-ui" and (target.endswith("_window") or target.endswith("_windows"))
 
 
+def missing_window_tests(meta):
+    """The names in WINDOW_TESTS that are no test target: a renamed or removed file."""
+    targets = {
+        (p["name"], t["name"]) for p in meta["packages"] for t in p["targets"] if "test" in t["kind"]
+    }
+    return sorted(f"{p} {t}" for p, names in WINDOW_TESTS.items() for t in names if (p, t) not in targets)
+
+
 def commands():
     meta = json.loads(
         subprocess.run(
@@ -71,6 +78,9 @@ def commands():
             encoding="utf-8",
         ).stdout
     )
+    missing = missing_window_tests(meta)
+    if missing:
+        raise RuntimeError("WINDOW_TESTS names no test target (take it off): " + ", ".join(missing))
     members = set(meta["workspace_members"])
     runs = []
     for package in meta["packages"]:
@@ -128,11 +138,12 @@ def nextest_version():
 
 
 def prepare():
-    # --tests unifies the same dev features as the workspace test build, including test DLLs.
-    run(["cargo", "build", "--locked", "--workspace", "--bins", "--tests", "-j", "6"])
-    # The test targets link fixture rlibs, while the host loads their dynamic libraries.
-    # Cargo does not necessarily produce those cdylibs from --tests alone.
-    run(["cargo", "build", "--locked", "-p", "xirius-test-clap", "-p", "xirius-test-vst3", "--lib", "-j", "6"])
+    # --tests unifies the same dev features as the workspace test build. The test targets link
+    # the fixture plugins' rlibs while the host loads their cdylibs, which Cargo makes only for a
+    # library built as a root: --lib makes them in the same build. Building the fixtures on their
+    # own (`-p xirius-test-clap --lib`) resolves other features and rewrites their unhashed
+    # rlibs, so `nextest archive` rebuilt them and every crate above them a second time.
+    run(["cargo", "build", "--locked", "--workspace", "--lib", "--bins", "--tests", "-j", "6"])
 
 
 JUNIT = Path("target/nextest/ci/junit.xml")

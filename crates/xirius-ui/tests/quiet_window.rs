@@ -28,25 +28,5 @@ fn playback_and_clicks_keep_the_parked_window_silent_and_without_os_focus() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-#[test]
-fn screen_scripts_cannot_inject_os_keyboard_or_mouse_input() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    fn scan(dir: &std::path::Path) {
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                scan(&path);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                let source = std::fs::read_to_string(&path).unwrap();
-                for forbidden in ["SendInput", "keybd_event", "mouse_event", "SendKeys"] {
-                    assert!(
-                        !source.contains(forbidden),
-                        "{} uses {forbidden}",
-                        path.display()
-                    );
-                }
-            }
-        }
-    }
-    scan(&root);
-}
+// That screen scripts inject no OS input is read from the sources in `source_rules.rs`, which
+// runs on CI.

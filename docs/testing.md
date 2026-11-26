@@ -181,8 +181,15 @@ An extracted archive does not hide absolute build paths embedded in a test binar
 original build tree still exists. Check for build-time `CARGO_TARGET_TMPDIR` references in a
 new test, and use the separate CI shard jobs to confirm that no build-only path is required.
 
+The fixture plugins are built in the same `cargo build` as the workspace (`--lib` makes their
+cdylibs). Built on their own they get other features and rewrite their unhashed rlibs, and the
+archive then compiles them and every crate above them a second time.
+
+The default-feature checks and the doctests run in their own job per OS (`side`, cache key
+`side`), beside the build instead of before the archive.
+
 Each shard publishes separate JUnit and context observations. The aggregate requires every
-build and shard to succeed and all four observation artifacts to be present before checking
+build, the side job and every shard to succeed and all four observation artifacts to be present before checking
 the complete catalog. Equal filenames in different shards are preserved. The stable
 `check (windows-latest)` and `check (macos-latest)` job names remain release gates.
 
