@@ -89,71 +89,106 @@ impl Rows {
     }
 }
 
+/// Properties over any axis and any rows (ARC-054): proptest makes the values, and a failure
+/// comes back as the smallest case that fails.
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use proptest::test_runner::{Config, RngSeed};
 
-    #[test]
-    fn zoom_keeps_the_anchor_still() {
-        let mut a = Axis::new(10.0, 50.0, 1.0, 400.0);
-        let anchor = 300.0;
-        let unit = a.to_unit(anchor);
-        for factor in [1.5, 0.7, 2.0, 0.1] {
-            a.zoom_at(anchor, factor);
-            assert!((a.to_unit(anchor) - unit).abs() < 1e-9, "factor {factor}");
+    /// The same cases on every run and every machine, and no regression file left behind.
+    fn config() -> Config {
+        Config {
+            cases: 512,
+            failure_persistence: None,
+            rng_seed: RngSeed::Fixed(54),
+            ..Config::default()
         }
     }
 
-    #[test]
-    fn zoom_is_clamped() {
-        let mut a = Axis::new(0.0, 50.0, 2.0, 100.0);
-        a.zoom_at(0.0, 100.0);
-        assert_eq!(a.scale, 100.0);
-        a.zoom_at(0.0, 0.0001);
-        assert_eq!(a.scale, 2.0);
+    /// An axis whose scale is somewhere between its bounds.
+    fn axis() -> impl Strategy<Value = Axis> {
+        (-1e4..1e4f64, 0.01..1e3f64, 1.0..1e3f64, 0.0..1.0f64).prop_map(
+            |(origin, min, span, at)| {
+                let max = min * span;
+                Axis::new(origin, min + (max - min) * at, min, max)
+            },
+        )
     }
 
-    #[test]
-    fn clamp_keeps_the_view_in_the_content() {
-        let mut a = Axis::new(-5.0, 10.0, 1.0, 100.0);
-        a.clamp(500.0, 240.0);
-        assert_eq!(a.origin, 0.0);
-        a.origin = 1000.0;
-        a.clamp(500.0, 240.0);
-        assert_eq!(a.origin, 240.0 - 50.0);
-        // Content shorter than the view.
-        a.origin = 3.0;
-        a.clamp(500.0, 20.0);
-        assert_eq!(a.origin, 0.0);
+    /// A pixel length in quarter pixels, which the sums and products below keep exact.
+    fn px(lo: u32, hi: u32) -> impl Strategy<Value = f64> {
+        (lo * 4..=hi * 4).prop_map(|q| f64::from(q) / 4.0)
     }
 
-    #[test]
-    fn rows_visible_range() {
-        let mut r = Rows {
-            scroll: 0.0,
-            row_h: 40.0,
-            count: 200,
-        };
-        assert_eq!(r.visible(100.0), 0..3);
-        r.scroll_by(50.0, 100.0);
-        assert_eq!(r.visible(100.0), 1..4);
-        r.scroll_by(1e9, 100.0);
-        assert_eq!(r.scroll, 200.0 * 40.0 - 100.0);
-        assert_eq!(r.visible(100.0).end, 200);
-        r.scroll_by(-1e9, 100.0);
-        assert_eq!(r.scroll, 0.0);
-        assert_eq!(r.row_top(2), 80.0);
-    }
+    proptest! {
+        #![proptest_config(config())]
 
-    #[test]
-    fn rows_shorter_than_the_view() {
-        let mut r = Rows {
-            scroll: 10.0,
-            row_h: 40.0,
-            count: 2,
-        };
-        r.clamp(500.0);
-        assert_eq!(r.scroll, 0.0);
-        assert_eq!(r.visible(500.0), 0..2);
+        /// The unit under the pointer stays under it, and the scale stays inside its bounds:
+        /// exactly the product where that is inside them, the bound it passed where it is not.
+        #[test]
+        fn a_zoom_keeps_the_unit_under_the_anchor_and_the_scale_in_bounds(
+            mut a in axis(),
+            anchor in 0.0..4000.0f64,
+            factors in prop::collection::vec(1e-3..1e3f64, 1..8),
+        ) {
+            for factor in factors {
+                let unit = a.to_unit(anchor);
+                let wanted = a.scale * factor;
+                a.zoom_at(anchor, factor);
+                let off = (a.to_unit(anchor) - unit).abs();
+                let room = 1e-9 * (1.0 + unit.abs() + anchor / a.scale);
+                prop_assert!(off <= room, "x{factor}: the anchor moved by {off}");
+                prop_assert_eq!(a.scale, wanted.clamp(a.min_scale, a.max_scale), "x{}", factor);
+            }
+        }
+
+        /// After a clamp the view starts at 0 or later, ends at the content's end or before
+        /// (or starts at 0 where the content is shorter than the view), and a view that was
+        /// already inside does not move.
+        #[test]
+        fn a_clamp_keeps_the_view_inside_the_content(
+            mut a in axis(),
+            view in px(1, 4000),
+            total in 0.0..1e5f64,
+        ) {
+            let was = a.origin;
+            a.clamp(view, total);
+            let visible = view / a.scale;
+            prop_assert!(a.origin >= 0.0, "starts at {}", a.origin);
+            if total > visible {
+                let end = a.to_unit(view);
+                prop_assert!(end <= total + 1e-9 * total, "ends at {end} past {total}");
+                if (0.0..=total - visible).contains(&was) {
+                    prop_assert_eq!(a.origin, was, "a view inside the content moved");
+                }
+            } else {
+                prop_assert_eq!(a.origin, 0.0);
+            }
+        }
+
+        /// Scrolled anywhere, the rows stay inside the content (at 0 when they are shorter
+        /// than the view), and `visible` gives exactly the rows that show some of themselves.
+        #[test]
+        fn scrolled_rows_stay_in_the_content_and_visible_gives_the_rows_that_show(
+            row_h in px(1, 200),
+            count in 0usize..400,
+            view in px(1, 2000),
+            moves in prop::collection::vec(px(0, 20_000), 1..6),
+            back in prop::collection::vec(any::<bool>(), 6),
+        ) {
+            let mut r = Rows { scroll: 0.0, row_h, count };
+            for (dy, back) in moves.into_iter().zip(back) {
+                r.scroll_by(if back { -dy } else { dy }, view);
+                let max = (r.content_h() - view).max(0.0);
+                prop_assert!((0.0..=max).contains(&r.scroll), "scrolled to {} of {max}", r.scroll);
+                let shows: Vec<usize> = (0..count)
+                    .filter(|&i| r.row_top(i) < view && r.row_top(i) + row_h > 0.0)
+                    .collect();
+                let range: Vec<usize> = r.visible(view).collect();
+                prop_assert_eq!(range, shows, "scrolled to {}", r.scroll);
+            }
+        }
     }
 }

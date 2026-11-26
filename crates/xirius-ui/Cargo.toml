@@ -96,6 +96,8 @@ ed25519-dalek = "3"
 encoding_rs = "0.8"
 futures-channel = "0.3"
 proc-macro2 = { version = "1", features = ["span-locations"] }
+# Properties of the viewport and the context menu's layout (ARC-054), as in xirius-core.
+proptest = { version = "1.12", default-features = false, features = ["std"] }
 raw-window-handle = "0.6"
 syn = { version = "3", features = ["full", "visit"] }
 uuid = "1"
