@@ -135,17 +135,6 @@ fn a_double_click_on_the_empty_lane_of_an_audio_track_makes_nothing() {
     assert!(s.error.is_none());
 }
 
-#[test]
-fn the_double_click_on_a_part_still_opens_it() {
-    let (mut s, g) = studio();
-    let at = super::probe::clip_mid(&s, &g, "Drums", 0);
-    let n = clips(&s, "Drums").len();
-    double_click(&mut s, &g, at);
-    assert_eq!(clips(&s, "Drums").len(), n, "no part is made on a part");
-    assert!(s.drawer_open);
-    assert_eq!(s.tab, DrawerTab::Roll);
-}
-
 /// `name`'s first clip and where it is drawn.
 fn first_clip(s: &Studio, g: &Geometry, name: &str) -> (TrackId, ClipId, Rect) {
     let t = track(s, name);
@@ -170,73 +159,9 @@ fn lock(s: &mut Studio, g: &Geometry, t: TrackId) {
     assert!(s.clips_locked(t), "the lanes lock the clips by default");
 }
 
-#[test]
-fn a_double_click_on_a_clip_locked_by_its_automation_opens_it_and_makes_nothing() {
-    let (mut s, g) = studio();
-    let bass = track(&s, "Bass");
-    lock(&mut s, &g, bass);
-    let (_, clip, r) = first_clip(&s, &g, "Bass");
-    let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
-    assert_eq!(
-        s.arrange_spot(&g, at.0, at.1),
-        Spot::Space(RowKind::Track(bass))
-    );
-    let before = clips(&s, "Bass");
-    let takes = stacks(&s, bass);
-    let steps = s.song.steps();
-    double_click(&mut s, &g, at);
-
-    assert_eq!(clips(&s, "Bass"), before, "no part is laid over it");
-    assert_eq!(stacks(&s, bass), takes, "no take is made");
-    assert_eq!(s.song.steps(), steps, "nothing in the history");
-    assert!(s.drawer_open);
-    assert_eq!(s.tab, DrawerTab::Roll);
-    assert_eq!(s.selected_clip, Some((bass, clip)));
-    assert!(s.error.is_none());
-
-    // Opened, it is still locked: a drag does not move it.
-    let g = s.geometry(g.size.0, g.size.1);
-    let (_, _, r) = first_clip(&s, &g, "Bass");
-    let from = (r.x + r.w / 2.0, r.y + r.h / 2.0);
-    super::probe::hold(&mut s, &g, from, (from.0 + 120.0, from.1), Mods::NONE);
-    s.arrange_up(&g, from.0 + 120.0, from.1, Mods::NONE);
-    assert_eq!(clips(&s, "Bass"), before, "the lock still holds the clip");
-}
-
-#[test]
-fn a_double_click_in_the_band_above_or_below_a_clip_opens_it() {
-    for side in ["above", "below"] {
-        let (mut s, g) = studio();
-        let (drums, clip, r) = first_clip(&s, &g, "Drums");
-        let y = if side == "above" {
-            r.y - 2.0
-        } else {
-            r.bottom() + 2.0
-        };
-        let at = (r.x + r.w / 2.0, y);
-        // Still the clip's row, but not the clip.
-        assert_eq!(
-            s.arrange_spot(&g, at.0, at.1),
-            Spot::Space(RowKind::Track(drums)),
-            "{side}"
-        );
-        let before = clips(&s, "Drums");
-        let takes = stacks(&s, drums);
-        let steps = s.song.steps();
-        double_click(&mut s, &g, at);
-
-        assert_eq!(
-            clips(&s, "Drums"),
-            before,
-            "{side}: no part is laid over it"
-        );
-        assert_eq!(stacks(&s, drums), takes, "{side}");
-        assert_eq!(s.song.steps(), steps, "{side}");
-        assert_eq!(s.tab, DrawerTab::Roll, "{side}");
-        assert_eq!(s.selected_clip, Some((drums, clip)), "{side}");
-    }
-}
-
+/// Down the whole row (the clip, and the bands above and below it that are the row's space),
+/// locked by the automation or not: the clip opens in the roll, even from the mixer's tab, and
+/// nothing is laid over it. Opened, a locked clip stays locked.
 #[test]
 fn a_double_click_anywhere_down_a_clip_opens_it_locked_or_not() {
     for locked in [false, true] {
@@ -250,6 +175,10 @@ fn a_double_click_anywhere_down_a_clip_opens_it_locked_or_not() {
         let h = s.tree().row_of(RowKind::Track(drums)).expect("row").h;
         for across in [0.1, 0.5, 0.9] {
             for down in 0..h as u32 {
+                // From the mixer's tab once the drawer is open: the roll takes its place.
+                if s.drawer_open {
+                    s.tab = DrawerTab::Mixer;
+                }
                 // The drawer the first one opens may move the lanes: measured each time.
                 let g = s.geometry(g.size.0, g.size.1);
                 let (_, clip, r) = first_clip(&s, &g, "Drums");
@@ -266,7 +195,9 @@ fn a_double_click_anywhere_down_a_clip_opens_it_locked_or_not() {
                 double_click(&mut s, &g, at);
                 let case = format!("locked {locked}, {across} across, {down} px down");
                 assert_eq!(stacks(&s, drums), takes, "{case}: no part is laid over it");
+                assert!(s.drawer_open, "{case}");
                 assert_eq!(s.tab, DrawerTab::Roll, "{case}");
+                assert!(s.error.is_none(), "{case}: {:?}", s.error);
                 if smart {
                     for _ in 0..2 {
                         if clips(&s, "Drums") != before {
@@ -280,6 +211,15 @@ fn a_double_click_anywhere_down_a_clip_opens_it_locked_or_not() {
                 }
                 assert_eq!(clips(&s, "Drums"), before, "{case}");
             }
+        }
+        if locked {
+            // Opened, it is still locked: a drag does not move it.
+            let g = s.geometry(g.size.0, g.size.1);
+            let (_, _, r) = first_clip(&s, &g, "Drums");
+            let from = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+            super::probe::hold(&mut s, &g, from, (from.0 + 120.0, from.1), Mods::NONE);
+            s.arrange_up(&g, from.0 + 120.0, from.1, Mods::NONE);
+            assert_eq!(clips(&s, "Drums"), before, "the lock still holds the clip");
         }
     }
 }

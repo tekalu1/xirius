@@ -224,61 +224,34 @@ fn the_handles_are_found_where_they_are_drawn() {
     );
 }
 
-#[test]
-fn dragging_the_fade_in_flag_sets_the_fade_in_one_step_and_undoes() {
-    let mut r = rig();
-    let a = r.clip(2 * BAR, 2 * BAR);
-    let n = r.steps();
-    let f = r.handles(a).flag_in.unwrap();
-    let from = centre(f);
-    let to = (from.0 + r.bars(1.0), from.1);
-    hold(&mut r.s, &r.g, from, to, none());
-    // Held: the clip shows the fade, and the balloon says how long.
-    let plan = r.s.plan(&r.g, r.s.arrange.drag.as_ref().unwrap()).unwrap();
-    assert!(matches!(plan.preview, Preview::Fx(_)), "{:?}", plan.preview);
-    assert!(plan.tip.contains("4.00"), "{}", plan.tip);
-    r.s.arrange_up(&r.g, to.0, to.1, none());
-    assert_eq!(r.fx(a).fade_in.length, BAR);
-    assert_eq!(r.steps(), n + 1);
-    // The handle moved with the fade.
-    assert!(r.handles(a).flag_in.unwrap().x > f.x + r.bars(0.9));
-    r.s.undo(&r.g);
-    assert_eq!(r.fx(a).fade_in.length, 0);
-}
-
-#[test]
-fn dragging_the_fade_out_flag_left_sets_the_fade_out() {
-    let mut r = rig();
-    let a = r.clip(2 * BAR, 2 * BAR);
-    let f = r.handles(a).flag_out.unwrap();
-    let from = centre(f);
-    r.drag(from, (from.0 - r.bars(1.0), from.1), none());
-    assert_eq!(r.fx(a).fade_out.length, BAR);
-    assert_eq!(r.fx(a).fade_in.length, 0);
-}
-
-#[test]
-fn a_flag_dragged_past_the_clip_stops_at_its_length() {
-    let mut r = rig();
-    let a = r.clip(2 * BAR, 2 * BAR);
-    let from = centre(r.handles(a).flag_in.unwrap());
-    r.drag(from, (from.0 + r.bars(5.0), from.1), none());
-    assert_eq!(r.fx(a).fade_in.length, 2 * BAR);
-}
-
+/// Each fade flag, linked or not, drags in and out again in one step a drag, stops at the
+/// clip's length, leaves the other fade alone and undoes a step at a time. While the first
+/// drag is held the clip shows the fade and the balloon says how long.
 #[test]
 fn fade_flags_can_be_dragged_again_in_both_directions_and_undone() {
+    let mut failures = Vec::new();
     for (linked, side) in [
         (false, Side::In),
         (false, Side::Out),
         (true, Side::In),
         (true, Side::Out),
     ] {
+        let row = format!("{side:?}, linked {linked}");
         let mut r = rig();
         r.run("view.link", json!({ "on": linked, "off": !linked }));
         let a = r.clip(BAR, 4 * BAR);
         let n = r.steps();
-        for (step, bars) in [1.0, 1.0, -1.0, -1.0].into_iter().enumerate() {
+        let lengths = |r: &Rig| {
+            let fx = r.fx(a);
+            match side {
+                Side::In => (fx.fade_in.length, fx.fade_out.length),
+                Side::Out => (fx.fade_out.length, fx.fade_in.length),
+            }
+        };
+        // The last drag goes past the clip's end and stops at its length.
+        let drags = [1.0, 1.0, -1.0, -1.0, 4.5];
+        let expected = [BAR, 2 * BAR, BAR, 0, 4 * BAR];
+        for (step, bars) in drags.into_iter().enumerate() {
             let h = r.handles(a);
             let flag = match side {
                 Side::In => h.flag_in.unwrap(),
@@ -286,32 +259,45 @@ fn fade_flags_can_be_dragged_again_in_both_directions_and_undone() {
             };
             let from = centre(flag);
             let dx = r.bars(bars) * if side == Side::In { 1.0 } else { -1.0 };
-            r.drag(from, (from.0 + dx, from.1), none());
-            let expected = [BAR, 2 * BAR, BAR, 0][step];
-            let fx = r.fx(a);
-            let fade = if side == Side::In {
-                fx.fade_in
+            let to = (from.0 + dx, from.1);
+            if step == 0 {
+                hold(&mut r.s, &r.g, from, to, none());
+                let plan = r.s.plan(&r.g, r.s.arrange.drag.as_ref().unwrap()).unwrap();
+                if !matches!(plan.preview, Preview::Fx(_)) || !plan.tip.contains("4.00") {
+                    failures.push(format!("{row}: held {:?} {}", plan.preview, plan.tip));
+                }
+                r.s.arrange_up(&r.g, to.0, to.1, none());
+                // The handle moved with the fade.
+                let now = r.handles(a);
+                let moved = match side {
+                    Side::In => now.flag_in.unwrap().x - flag.x,
+                    Side::Out => flag.x - now.flag_out.unwrap().x,
+                };
+                if moved < r.bars(0.9) {
+                    failures.push(format!("{row}: the flag moved {moved}"));
+                }
             } else {
-                fx.fade_out
-            };
-            assert_eq!(
-                fade.length, expected,
-                "{side:?}, step {step}: {:?}",
-                r.s.error
-            );
-            assert_eq!(r.steps(), n + step + 1);
+                r.drag(from, to, none());
+            }
+            if lengths(&r) != (expected[step], 0) {
+                failures.push(format!(
+                    "{row}, step {step}: {:?} {:?}",
+                    lengths(&r),
+                    r.s.error
+                ));
+            }
+            if r.steps() != n + step + 1 {
+                failures.push(format!("{row}, step {step}: steps {}", r.steps() - n));
+            }
         }
-        r.s.undo(&r.g);
-        let fx = r.fx(a);
-        assert_eq!(
-            if side == Side::In {
-                fx.fade_in.length
-            } else {
-                fx.fade_out.length
-            },
-            BAR
-        );
+        for want in [0, BAR] {
+            r.s.undo(&r.g);
+            if lengths(&r).0 != want {
+                failures.push(format!("{row}: undone to {:?}, want {want}", lengths(&r)));
+            }
+        }
     }
+    assert!(failures.is_empty(), "fade flags: {failures:#?}");
 }
 
 #[test]

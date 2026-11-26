@@ -898,16 +898,54 @@ fn bars_of_a_file_kept_or_with_motion_reduced_come_in_whole() {
     );
 }
 
+/// The dots breathe from DOT_MIN to DOT_MAX and back over BREATHE_MS, each one a step after
+/// the one on its left, and keep their phase at the clock's Unix milliseconds.
 #[test]
-fn the_dots_breathe_from_left_to_right() {
+fn the_dots_breathe_from_left_to_right_at_unix_milliseconds() {
+    use xirius_design::WaveColor as W;
+    /// What the dot at a time reads: about a level, or not what another dot or time reads.
+    enum Reads {
+        Near(f32),
+        Unlike(usize, u64),
+    }
+    let unix = 1_792_800_000_480u64;
+    let step = BREATHE_STEP_MS as u64;
+    let rows = [
+        ("the first dot starts low", 0, 0, Reads::Near(W::DOT_MIN)),
+        ("it is full at 480 ms", 0, 480, Reads::Near(W::DOT_MAX)),
+        (
+            "the next is full a step later",
+            1,
+            480 + step,
+            Reads::Near(W::DOT_MAX),
+        ),
+        (
+            "low again after a breath",
+            0,
+            BREATHE_MS as u64,
+            Reads::Near(W::DOT_MIN),
+        ),
+        ("dots apart at Unix ms", 0, unix, Reads::Unlike(10, unix)),
+        (
+            "a dot moves at Unix ms",
+            0,
+            unix,
+            Reads::Unlike(0, unix + 100),
+        ),
+    ];
     let m = xirius_design::Motion::default();
-    assert!((breath(0, 0, m) - xirius_design::WaveColor::DOT_MIN).abs() < 1e-3);
-    assert!((breath(0, 480, m) - xirius_design::WaveColor::DOT_MAX).abs() < 1e-3);
-    assert!(
-        (breath(1, 480 + BREATHE_STEP_MS as u64, m) - xirius_design::WaveColor::DOT_MAX).abs()
-            < 1e-3
-    );
-    assert!((breath(0, BREATHE_MS as u64, m) - xirius_design::WaveColor::DOT_MIN).abs() < 1e-3);
+    let mut failures = Vec::new();
+    for (name, dot, ms, reads) in rows {
+        let got = breath(dot, ms, m);
+        let fails = match reads {
+            Reads::Near(want) => (got - want).abs() >= 1e-3,
+            Reads::Unlike(other, at) => got == breath(other, at, m),
+        };
+        if fails {
+            failures.push(format!("{name}: dot {dot} at {ms} reads {got}"));
+        }
+    }
+    assert!(failures.is_empty(), "the dots: {failures:#?}");
 }
 
 #[test]
@@ -922,19 +960,6 @@ fn peaks_go_in_the_songs_folder_for_its_files_and_elsewhere_otherwise() {
     let other = std::env::temp_dir().join("xirius-ui-audition-peaks");
     b.peak_store = Some(other.clone());
     assert_eq!(store_for(&b, Path::new("D:/elsewhere/b.wav")), other);
-}
-
-#[test]
-fn dots_keep_their_phase_at_unix_milliseconds() {
-    let ms = 1_792_800_000_480u64;
-    assert_ne!(
-        breath(0, ms, xirius_design::Motion::default()),
-        breath(10, ms, xirius_design::Motion::default())
-    );
-    assert_ne!(
-        breath(0, ms, xirius_design::Motion::default()),
-        breath(0, ms + 100, xirius_design::Motion::default())
-    );
 }
 
 #[test]

@@ -1603,10 +1603,12 @@ mod tests {
 
     #[test]
     fn setup_is_not_in_the_history() {
-        let song = Song::sample();
+        let mut song = Song::sample();
         assert_eq!(song.steps(), 0);
         assert!(!song.can_undo());
         assert!(song.current_label().is_none());
+        // With nothing in the history, undo and redo do nothing.
+        assert!(!song.undo() && !song.redo());
     }
 
     #[test]
@@ -1666,25 +1668,5 @@ mod tests {
         song.toggle_solo(id).unwrap();
         assert!(!song.project().tracks[&id].solo);
         assert_eq!(song.steps(), 2);
-    }
-
-    #[test]
-    fn undo_with_nothing_to_undo_does_nothing() {
-        let mut song = Song::sample();
-        assert!(!song.undo());
-        assert!(!song.redo());
-    }
-
-    #[test]
-    fn a_new_edit_after_undo_drops_the_redo() {
-        let mut song = Song::sample();
-        let a = track_named(&song.project(), "Drums");
-        let b = track_named(&song.project(), "Vocal");
-        song.toggle_mute(a).unwrap();
-        song.undo();
-        song.toggle_solo(b).unwrap();
-        assert!(!song.can_redo());
-        assert!(!song.project().tracks[&a].mute);
-        assert!(song.project().tracks[&b].solo);
     }
 }

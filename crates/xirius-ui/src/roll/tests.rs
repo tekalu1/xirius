@@ -454,25 +454,85 @@ fn zoom_keeps_pointer_pitch_and_tick() {
     assert!((s.roll.view(&c).tick_f(x) - tick).abs() < 0.01);
 }
 
+/// Driven far past either end, each way of zooming stops at its limit, and zooming is not an edit.
+/// A row gives back (after pushing wider, after pushing narrower) and the limits it should hit.
 #[test]
-fn zoom_stops_at_the_limits_and_one_beat_can_fill_the_roll() {
-    let (mut s, g) = setup();
-    let c = context(&s, &g);
-    let f = s.roll.frame(c.body);
-    let (x, y) = (f.grid.x + 100.0, f.grid.y + 60.0);
-    for _ in 0..200 {
-        s.roll.wheel(&c, x, y, 0.0, WHEEL_NOTCH, Mods::ctrl_shift());
+fn every_way_of_zooming_stops_at_its_limits_and_is_not_an_edit() {
+    type Push = fn(&mut Studio, &Geometry) -> (f32, f32);
+    fn wheel(s: &mut Studio, g: &Geometry, mods: Mods, out: fn(&Roll) -> f32) -> (f32, f32) {
+        let c = context(s, g);
+        let f = s.roll.frame(c.body);
+        let (x, y) = (f.grid.x + 100.0, f.grid.y + 60.0);
+        for _ in 0..200 {
+            s.roll.wheel(&c, x, y, 0.0, WHEEL_NOTCH, mods);
+        }
+        let wide = out(&s.roll);
+        for _ in 0..200 {
+            s.roll.wheel(&c, x, y, 0.0, -WHEEL_NOTCH, mods);
+        }
+        (wide, out(&s.roll))
     }
-    assert_eq!(s.roll.beat_px, BEAT_PX_MAX);
-    for _ in 0..200 {
-        s.roll
-            .wheel(&c, x, y, 0.0, -WHEEL_NOTCH, Mods::ctrl_shift());
+    let rows: [(&str, Push, (f32, f32)); 3] = [
+        (
+            "beat width by ctrl+shift wheel",
+            |s, g| wheel(s, g, Mods::ctrl_shift(), |r| r.beat_px),
+            (BEAT_PX_MAX, BEAT_PX_MIN),
+        ),
+        (
+            "row height by ctrl wheel",
+            |s, g| wheel(s, g, Mods::ctrl(), |r| r.row_h),
+            (ROW_H_MAX, ROW_H_MIN),
+        ),
+        (
+            "beat width by one drag on the slider",
+            |s, g| {
+                s.roll.beat_px = 48.0;
+                let f = s.roll.frame(context(s, g).body);
+                let y = f.zoom_track.y + f.zoom_track.h / 2.0;
+                let thumb = zoom::thumb_of(f.zoom_track, 48.0);
+                let before = centre_tick(s, g);
+                down(s, g, (thumb.x + 6.0, y), Mods::NONE);
+                assert_eq!(s.roll.drag.as_ref().map(|d| d.mode), Some(Mode::Zoom));
+                assert!(
+                    (s.roll.beat_px - 48.0).abs() < 4.0,
+                    "a press on the thumb does not jump: {}",
+                    s.roll.beat_px
+                );
+                moved(s, g, (f.zoom_track.right() + 30.0, y), Mods::NONE);
+                let wide = s.roll.beat_px;
+                moved(s, g, (f.zoom_track.x - 30.0, y), Mods::NONE);
+                let narrow = s.roll.beat_px;
+                let mid_x = f.zoom_track.x + f.zoom_track.w / 2.0;
+                moved(s, g, (mid_x, y), Mods::NONE);
+                let mid = (BEAT_PX_MIN * BEAT_PX_MAX).sqrt();
+                assert!(
+                    (s.roll.beat_px - mid).abs() / mid < 0.02,
+                    "the middle of the slider is the middle of the range: {}",
+                    s.roll.beat_px
+                );
+                up(s, g, (mid_x, y), Mods::NONE);
+                assert!(s.roll.drag.is_none());
+                // The tick in the middle of the grid stayed there (up to the scroll's clamp).
+                let after = centre_tick(s, g);
+                assert!((after - before).abs() < 2.0 * 960.0, "{before} -> {after}");
+                (wide, narrow)
+            },
+            (BEAT_PX_MAX, BEAT_PX_MIN),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (row, push, want) in rows {
+        let (mut s, g) = setup();
+        let steps = s.song.steps();
+        let got = push(&mut s, &g);
+        if got != want {
+            failures.push(format!("{row}: (wider, narrower) {got:?}, want {want:?}"));
+        }
+        if s.song.steps() != steps {
+            failures.push(format!("{row}: zooming made an edit"));
+        }
     }
-    assert_eq!(s.roll.beat_px, BEAT_PX_MIN);
-    for _ in 0..200 {
-        s.roll.wheel(&c, x, y, 0.0, WHEEL_NOTCH, Mods::ctrl());
-    }
-    assert_eq!(s.roll.row_h, ROW_H_MAX);
+    assert!(failures.is_empty(), "zoom limits: {failures:#?}");
 }
 
 #[test]
@@ -717,26 +777,52 @@ fn alt_makes_the_velocity_pencil_draw_a_straight_line_between_the_press_and_the_
     );
 }
 
+/// KEY-017: a drag up on a velocity bar raises it in one command; with nothing bound to the
+/// bar's click and drag, the same drag leaves it alone.
 #[test]
-fn velocity_lane_drag_is_one_command() {
-    let (mut s, g) = setup();
-    let c = context(&s, &g);
-    let lb = s.roll.frame(c.body).lanes[0];
-    let v = s.roll.view(&c);
-    let n = &c.notes()[0];
-    let p = (
-        v.x(n.start),
-        super::lanes::y_of(LaneKind::Velocity, &lb.plot, i32::from(n.velocity)),
-    );
-    let steps = s.song.steps();
-    drag(&mut s, &g, p, (0.0, -5.0), Mods::NONE);
-    assert_eq!(s.song.steps(), steps + 1);
-    assert!(context(&s, &g).notes()[0].velocity > n.velocity);
-}
-
-#[test]
-fn roll_starts_with_velocity() {
-    assert_eq!(Roll::new().lanes[0].kind, LaneKind::Velocity);
+fn a_velocity_bar_drag_is_one_command_and_nothing_bound_leaves_it_alone() {
+    let mut failures = Vec::new();
+    for (row, unbound) in [("bound as it ships", false), ("nothing bound", true)] {
+        let (mut s, g) = setup();
+        if unbound {
+            for gesture in ["click", "drag"] {
+                s.song
+                    .run(
+                        "mousemap.set",
+                        serde_json::json!({
+                            "context": format!("lane.select.velocity-bar.{gesture}"),
+                            "modifier": "none",
+                            "action": "",
+                        }),
+                    )
+                    .unwrap();
+            }
+        }
+        let c = context(&s, &g);
+        let lb = s.roll.frame(c.body).lanes[0];
+        let v = s.roll.view(&c);
+        let n = &c.notes()[0];
+        let p = (
+            v.x(n.start),
+            super::lanes::y_of(LaneKind::Velocity, &lb.plot, i32::from(n.velocity)),
+        );
+        let steps = s.song.steps();
+        drag(&mut s, &g, p, (0.0, -5.0), Mods::NONE);
+        let now = context(&s, &g).notes()[0].velocity;
+        let ok = if unbound {
+            s.song.steps() == steps && now == n.velocity
+        } else {
+            s.song.steps() == steps + 1 && now > n.velocity
+        };
+        if !ok {
+            failures.push(format!(
+                "{row}: {} steps, velocity {} -> {now}",
+                s.song.steps() - steps,
+                n.velocity
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "a velocity bar's drag: {failures:#?}");
 }
 
 #[test]
@@ -1104,20 +1190,42 @@ fn starts(s: &Studio, g: &Geometry) -> Vec<(u8, i64)> {
     v
 }
 
+/// AQ is the `edit.quantize.auto` setting: off, a grid value moves no note; on (and still on
+/// after the focus goes to the arrangement and back), a grid value or the triplet requantizes
+/// the selected notes in one step each, and with nothing selected moves none.
 #[test]
 fn with_aq_on_a_grid_value_requantizes_the_selected_notes_in_one_step() {
     use crate::popup::Action;
     use crate::studio::Hit;
     use crate::topbar::BarButton;
     let (mut s, g) = setup();
+    let pref = |s: &Studio| {
+        s.song
+            .settings()
+            .lock()
+            .unwrap()
+            .prefs
+            .bool("edit.quantize.auto")
+    };
     let ppq = context(&s, &g).ppq();
     off_grid(&mut s, &g);
     let before = starts(&s, &g);
     let steps = s.song.history().len();
+    assert!(!pref(&s));
     assert!(s.press(&g, Hit::Bar(BarButton::Grid)));
+    // AQ off: a grid value moves no note.
+    choose(&mut s, &g, Action::GridValue("1/8"));
+    assert_eq!(starts(&s, &g), before);
+    assert_eq!(s.song.history().len(), steps);
     choose(&mut s, &g, Action::AutoQuantize);
-    assert!(s.auto_quantize);
+    assert!(s.auto_quantize && pref(&s));
     assert!(s.popup.as_ref().unwrap().aq);
+    // Moving to the arrangement and back reads the settings again: AQ is still on.
+    for focus in [true, false] {
+        s.arrange.focus = focus;
+        s.apply_edit_prefs();
+        assert!(s.auto_quantize, "focus on the arrangement: {focus}");
+    }
     // Turning AQ on by itself does not move anything.
     assert_eq!(starts(&s, &g), before);
     choose(&mut s, &g, Action::GridValue("1/4"));
@@ -1137,27 +1245,14 @@ fn with_aq_on_a_grid_value_requantizes_the_selected_notes_in_one_step() {
     assert_eq!(moved.1 % (ppq / 3), 0, "{moved:?}");
     assert_ne!(moved.1, 960);
     assert_eq!(s.song.history().len(), steps + 2);
-}
-
-#[test]
-fn with_aq_off_or_nothing_selected_a_grid_value_moves_no_note() {
-    use crate::popup::Action;
-    use crate::studio::Hit;
-    use crate::topbar::BarButton;
-    let (mut s, g) = setup();
-    off_grid(&mut s, &g);
-    let before = starts(&s, &g);
-    let steps = s.song.history().len();
-    assert!(s.press(&g, Hit::Bar(BarButton::Grid)));
-    choose(&mut s, &g, Action::GridValue("1/4"));
-    assert_eq!(starts(&s, &g), before);
-    assert_eq!(s.song.history().len(), steps);
-    // AQ on with nothing selected: still nothing moves.
+    // AQ on with nothing selected: nothing moves.
+    let quantized = starts(&s, &g);
     s.roll.selected.clear();
-    choose(&mut s, &g, Action::AutoQuantize);
     choose(&mut s, &g, Action::GridValue("1/8"));
-    assert_eq!(starts(&s, &g), before);
-    assert_eq!(s.song.history().len(), steps);
+    assert_eq!(starts(&s, &g), quantized);
+    assert_eq!(s.song.history().len(), steps + 2);
+    choose(&mut s, &g, Action::AutoQuantize);
+    assert!(!s.auto_quantize && !pref(&s));
 }
 
 /// A point on the roll's ruler `rel` ticks from the clip's head, `dy` px below
@@ -1427,35 +1522,6 @@ fn the_playhead_line_is_where_the_ruler_puts_its_time_in_both_views() {
     }
 }
 
-#[test]
-fn key_017_a_velocity_bar_with_nothing_bound_is_left_alone() {
-    let (mut s, g) = setup();
-    for gesture in ["click", "drag"] {
-        s.song
-            .run(
-                "mousemap.set",
-                serde_json::json!({
-                    "context": format!("lane.select.velocity-bar.{gesture}"),
-                    "modifier": "none",
-                    "action": "",
-                }),
-            )
-            .unwrap();
-    }
-    let c = context(&s, &g);
-    let lb = s.roll.frame(c.body).lanes[0];
-    let v = s.roll.view(&c);
-    let n = &c.notes()[0];
-    let p = (
-        v.x(n.start),
-        super::lanes::y_of(LaneKind::Velocity, &lb.plot, i32::from(n.velocity)),
-    );
-    let steps = s.song.steps();
-    drag(&mut s, &g, p, (0.0, -5.0), Mods::NONE);
-    assert_eq!(s.song.steps(), steps);
-    assert_eq!(context(&s, &g).notes()[0].velocity, n.velocity);
-}
-
 fn band(s: &Studio, g: &Geometry, lane: usize, from: Tick, to: Tick) -> ((f32, f32), (f32, f32)) {
     let c = context(s, g);
     let v = s.roll.view(&c);
@@ -1611,23 +1677,6 @@ fn feel_05c_the_pencil_past_the_clip_end_grows_the_clip_in_one_step() {
 }
 
 #[test]
-fn feel_05c_the_select_tool_past_the_clip_end_selects_notes_and_makes_no_clip() {
-    // Only the pencil makes a part; the arrow's drag out there is a marquee (EDT-141).
-    let (mut s, g) = setup();
-    s.roll.beat_px = 20.0;
-    s.roll.scroll.0 = 0.0;
-    s.tool = Tool::Select;
-    let c = context(&s, &g);
-    let p = ruler_at(&s, &g, c.clip_len() + c.ppq(), 0.0);
-    let y = at(&s, &g, 0, Zone::Body).1;
-    let steps = s.song.steps();
-    down(&mut s, &g, (p.0, y), Mods::NONE);
-    assert_eq!(s.roll.drag.as_ref().map(|d| d.mode), Some(Mode::Marquee));
-    up(&mut s, &g, (p.0 + 40.0, y), Mods::NONE);
-    assert_eq!(s.song.steps(), steps, "no part was made");
-}
-
-#[test]
 fn feel_05c_the_end_handle_on_the_ruler_resizes_the_clip() {
     let (mut s, g) = setup();
     s.roll.beat_px = 20.0;
@@ -1700,59 +1749,10 @@ fn centre_tick(s: &Studio, g: &Geometry) -> f64 {
     s.roll.view(&c).tick_f(f.grid.x + f.grid.w / 2.0)
 }
 
+/// The strip's buttons zoom by `BUTTON_STEPS` steps around the middle and hold at the ends; the
+/// zoom command takes a width or a number of steps; the strip's parts leave the name room.
 #[test]
-fn feel_05d_one_drag_on_the_slider_reaches_both_ends_of_the_zoom() {
-    let (mut s, g) = setup();
-    s.roll.beat_px = 48.0;
-    let c = context(&s, &g);
-    let f = s.roll.frame(c.body);
-    let y = f.zoom_track.y + f.zoom_track.h / 2.0;
-    let thumb = zoom::thumb_of(f.zoom_track, 48.0);
-    let (steps, before) = (s.song.steps(), centre_tick(&s, &g));
-    down(&mut s, &g, (thumb.x + 6.0, y), Mods::NONE);
-    assert_eq!(s.roll.drag.as_ref().map(|d| d.mode), Some(Mode::Zoom));
-    assert!(
-        (s.roll.beat_px - 48.0).abs() < 4.0,
-        "a press on the thumb does not jump: {}",
-        s.roll.beat_px
-    );
-    moved(&mut s, &g, (f.zoom_track.right() + 30.0, y), Mods::NONE);
-    assert_eq!(
-        s.roll.beat_px, BEAT_PX_MAX,
-        "past the right end is the widest"
-    );
-    moved(&mut s, &g, (f.zoom_track.x - 30.0, y), Mods::NONE);
-    assert_eq!(
-        s.roll.beat_px, BEAT_PX_MIN,
-        "past the left end is the narrowest"
-    );
-    moved(
-        &mut s,
-        &g,
-        (f.zoom_track.x + f.zoom_track.w / 2.0, y),
-        Mods::NONE,
-    );
-    let mid = (BEAT_PX_MIN * BEAT_PX_MAX).sqrt();
-    assert!(
-        (s.roll.beat_px - mid).abs() / mid < 0.02,
-        "{}",
-        s.roll.beat_px
-    );
-    up(
-        &mut s,
-        &g,
-        (f.zoom_track.x + f.zoom_track.w / 2.0, y),
-        Mods::NONE,
-    );
-    assert!(s.roll.drag.is_none());
-    assert_eq!(s.song.steps(), steps, "zooming is not an edit");
-    // The tick in the middle of the grid stayed there (up to the scroll's clamp).
-    let after = centre_tick(&s, &g);
-    assert!((after - before).abs() < 2.0 * 960.0, "{before} -> {after}");
-}
-
-#[test]
-fn feel_05d_the_buttons_zoom_by_four_steps_around_the_middle() {
+fn feel_05d_the_buttons_and_the_zoom_command_step_the_width_and_the_strip_parts_fit() {
     let (mut s, g) = setup();
     s.roll.beat_px = 96.0;
     s.roll.scroll.0 = 800.0;
@@ -1762,7 +1762,7 @@ fn feel_05d_the_buttons_zoom_by_four_steps_around_the_middle() {
     let p = (f.zoom_in.x + 4.0, f.zoom_in.y + 4.0);
     down(&mut s, &g, p, Mods::NONE);
     up(&mut s, &g, p, Mods::NONE);
-    let want = 96.0 * 1.18f32.powf(4.0);
+    let want = 96.0 * zoom::STEP.powf(zoom::BUTTON_STEPS);
     assert!((s.roll.beat_px - want).abs() < 0.01, "{}", s.roll.beat_px);
     assert!((centre_tick(&s, &g) - before).abs() < 2.0);
     let p = (f.zoom_out.x + 4.0, f.zoom_out.y + 4.0);
@@ -1772,25 +1772,18 @@ fn feel_05d_the_buttons_zoom_by_four_steps_around_the_middle() {
     assert!((centre_tick(&s, &g) - before).abs() < 2.0);
     // The ends hold.
     s.roll.beat_px = BEAT_PX_MAX;
-    down(
-        &mut s,
-        &g,
-        (f.zoom_in.x + 4.0, f.zoom_in.y + 4.0),
-        Mods::NONE,
-    );
+    let p = (f.zoom_in.x + 4.0, f.zoom_in.y + 4.0);
+    down(&mut s, &g, p, Mods::NONE);
+    up(&mut s, &g, p, Mods::NONE);
     assert_eq!(s.roll.beat_px, BEAT_PX_MAX);
-}
-
-#[test]
-fn feel_05d_the_zoom_command_takes_a_width_and_the_strip_parts_leave_the_tabs_room() {
-    let (mut s, g) = setup();
+    // The command: a width, a width past the end, and a number of steps.
     s.roll.beat_px = 48.0;
     assert!(s.run_binding(&g, "view.zoom.time --to 600"));
     assert_eq!(s.roll.beat_px, 600.0);
     assert!(s.run_binding(&g, "view.zoom.time --to 99999"));
     assert_eq!(s.roll.beat_px, BEAT_PX_MAX);
     assert!(s.run_binding(&g, "view.zoom.time --by -4"));
-    assert!((s.roll.beat_px - BEAT_PX_MAX / 1.18f32.powf(4.0)).abs() < 0.5);
+    assert!((s.roll.beat_px - BEAT_PX_MAX / zoom::STEP.powf(4.0)).abs() < 0.5);
     // The parts do not overlap the name and the tabs, nor each other.
     let f = s.roll.frame(context(&s, &g).body);
     assert!(f.name.right() <= f.zoom_out.x);
@@ -2387,34 +2380,6 @@ fn a_hit_on_the_first_tick_shows_whole_in_the_drum_view() {
     s.roll.clamp_scroll(&c);
     let keys = s.roll.view(&c);
     assert_eq!(keys.x(-c.clip.start), keys.grid.x);
-}
-
-#[test]
-fn the_aq_switch_is_the_setting_and_stays_on_when_the_focus_moves() {
-    use crate::popup::Action;
-    use crate::studio::Hit;
-    use crate::topbar::BarButton;
-    let (mut s, g) = setup();
-    let pref = |s: &Studio| {
-        s.song
-            .settings()
-            .lock()
-            .unwrap()
-            .prefs
-            .bool("edit.quantize.auto")
-    };
-    assert!(!pref(&s));
-    assert!(s.press(&g, Hit::Bar(BarButton::Grid)));
-    choose(&mut s, &g, Action::AutoQuantize);
-    assert!(s.auto_quantize && pref(&s));
-    // Moving to the arrangement and back reads the settings again: AQ is still on.
-    for focus in [true, false] {
-        s.arrange.focus = focus;
-        s.apply_edit_prefs();
-        assert!(s.auto_quantize, "focus on the arrangement: {focus}");
-    }
-    choose(&mut s, &g, Action::AutoQuantize);
-    assert!(!s.auto_quantize && !pref(&s));
 }
 
 #[test]

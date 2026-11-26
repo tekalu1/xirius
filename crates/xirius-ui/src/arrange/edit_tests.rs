@@ -284,31 +284,22 @@ fn feel_06_the_cut_tool_shows_where_a_press_would_split_and_the_press_splits_the
     assert_ne!(at, c.start + c.length / 2 + 37, "it sits on the grid");
     // The same stretch of the grid keeps the line where it is: nothing to redraw.
     assert!(!s.arrange_move(&g, x + 1.5, y, Mods::NONE));
+    // Shift takes the snap off, as it does for the press.
+    s.arrange_move(&g, x, y, Mods::shift());
+    let free = s.cut_preview(&g).unwrap().2;
+    assert_ne!(free, at);
+    assert!((free - s.tick_at(&g, x)).abs() <= 1);
+    // On the clip's head, or off the clip, there is no line.
+    s.arrange_move(&g, s.tick_x(&g, c.start) + 0.5, y, Mods::NONE);
+    assert_eq!(s.cut_preview(&g), None, "a cut at the head splits nothing");
+    s.arrange_move(&g, s.tick_x(&g, c.start + c.length) + 40.0, y, Mods::NONE);
+    assert_eq!(s.cut_preview(&g), None, "off the clip");
+    s.arrange_move(&g, x + 1.5, y, Mods::NONE);
     s.arrange_down(&g, x + 1.5, y, Mods::NONE);
     s.arrange_up(&g, x + 1.5, y, Mods::NONE);
     let clips = &s.project().tracks[&t].clips;
     assert_eq!(clips.len(), 2);
     assert_eq!(clips.iter().map(|c| c.start).max(), Some(at));
-}
-#[test]
-fn feel_06_the_cut_line_follows_shift_and_is_gone_off_the_clip_and_on_its_edge() {
-    let (mut s, g) = setup();
-    let t = track(&s, "Keys");
-    let c = s.project().tracks[&t].clips[0].clone();
-    let y = clip_mid(&s, &g, "Keys", 0).1;
-    s.tool = Tool::Cut;
-    let x = s.tick_x(&g, c.start + c.length / 2 + 37);
-    s.arrange_move(&g, x, y, Mods::NONE);
-    let snapped = s.cut_preview(&g).unwrap().2;
-    // Shift takes the snap off, as it does for the press.
-    s.arrange_move(&g, x, y, Mods::shift());
-    let free = s.cut_preview(&g).unwrap().2;
-    assert_ne!(snapped, free);
-    assert!((free - s.tick_at(&g, x)).abs() <= 1);
-    s.arrange_move(&g, s.tick_x(&g, c.start) + 0.5, y, Mods::NONE);
-    assert_eq!(s.cut_preview(&g), None, "a cut at the head splits nothing");
-    s.arrange_move(&g, s.tick_x(&g, c.start + c.length) + 40.0, y, Mods::NONE);
-    assert_eq!(s.cut_preview(&g), None);
 }
 #[test]
 fn feel_06_the_mute_tool_shows_the_look_a_press_leaves_and_a_muted_clip_shows_the_way_back() {

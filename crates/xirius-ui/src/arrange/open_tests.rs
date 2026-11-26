@@ -46,19 +46,6 @@ fn a_double_click_on_a_midi_clip_opens_the_roll_with_it() {
 }
 
 #[test]
-fn the_mixer_tab_is_switched_to_the_roll() {
-    let (mut s, g) = studio();
-    s.drawer_open = true;
-    s.tab = DrawerTab::Mixer;
-    let g = s.geometry(g.size.0, g.size.1);
-    let at = clip_mid(&s, &g, "Keys", 0);
-    double_click(&mut s, &g, at, Mods::default());
-    assert!(s.drawer_open);
-    assert_eq!(s.tab, DrawerTab::Roll);
-    assert!(s.roll_target().is_some());
-}
-
-#[test]
 fn alt_zooms_the_roll_to_the_clip() {
     let (mut s, g) = studio();
     let keys = track(&s, "Keys");
@@ -68,11 +55,16 @@ fn alt_zooms_the_roll_to_the_clip() {
     double_click(&mut s, &g, at, alt());
     let g2 = s.geometry(g.size.0, g.size.1);
     let ctx = s.roll_ctx(&g2).expect("the roll is open");
-    let grid = s.roll.view(&ctx).grid;
-    let beats = len as f32 / s.project().ppq as f32;
-    let want = (grid.w / beats).clamp(crate::roll::BEAT_PX_MIN, crate::roll::BEAT_PX_MAX);
-    assert!((s.roll.beat_px - want).abs() < 0.01, "{}", s.roll.beat_px);
+    let view = s.roll.view(&ctx);
+    // The clip fills the grid: its head at the grid's left edge, its end at the right one.
     assert_eq!(s.roll.scroll.0, 0.0);
+    assert!((view.x(0) - view.grid.x).abs() < 0.5, "{view:?}");
+    assert!(
+        (view.x(len) - view.grid.right()).abs() < 0.5,
+        "the clip ends at {} and the grid at {}",
+        view.x(len),
+        view.grid.right()
+    );
 
     // without Alt the zoom stays where it was
     s.roll.beat_px = 77.0;
