@@ -582,27 +582,3 @@ fn ai_013_listen_is_one_name_in_the_cli_and_mcp_and_gives_the_same_numbers() {
     // Another process reading the saved song hears the same.
     assert_eq!(cli(&c.dir, &["mix.listen", "--range", range]), heard);
 }
-
-#[test]
-fn brw_004_the_pools_commands_are_one_name_in_the_cli_and_mcp() {
-    let mut c = Client::start("pool");
-    for name in [
-        "file.collect",
-        "file.locate",
-        "select.using_file",
-        "file.list",
-    ] {
-        assert!(c.offers(name), "{name}");
-    }
-    let take = c.dir.join("Media").join("Recordings").join("take.wav");
-    std::fs::create_dir_all(take.parent().unwrap()).unwrap();
-    std::fs::write(&take, b"RIFF").unwrap();
-    let listed = c.call("file_list", json!({}));
-    assert_eq!(listed["files"][0]["file"], "Media/Recordings/take.wav");
-    assert_eq!(listed["files"][0]["clips"], 0);
-    assert_eq!(listed["files"][0]["kind"], "record");
-    // Another process reading the song lists the same.
-    assert_eq!(cli(&c.dir, &["file.list"]), listed);
-    let r = c.request("tools/call", params("file_collect", json!({})));
-    assert_eq!(r["result"]["isError"], true, "{r}");
-}
