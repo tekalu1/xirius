@@ -13,7 +13,7 @@ use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
 const WAIT: Duration = Duration::from_secs(10);
 
-#[path = "support/render_checkpoint.rs"]
+#[path = "../support/render_checkpoint.rs"]
 mod render_checkpoint;
 
 fn tone(rate: f64, seconds: f64, amplitude: f32) -> Arc<SourceAudio> {

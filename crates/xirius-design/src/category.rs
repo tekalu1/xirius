@@ -1,7 +1,7 @@
 //! 操作の分類の 5 色（SET-007）。設定のショートカットの、キーボードの点と凡例だけに使う。
 //!
 //! トラックの色（[`crate::TrackColor`]）とは別の族にしてある（曲の中のトラックと取り違えない）。
-//! 中立の面の上で 3:1 以上（`tests/contrast.rs`）。文字の色には使わない。
+//! 中立の面の上で 3:1 以上（`tests/it/contrast.rs`）。文字の色には使わない。
 
 use crate::color::Color;
 use crate::palette::Palette;

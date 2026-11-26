@@ -1,7 +1,7 @@
 //! メーター（値を表す物）。**色のグラデーションを作れるのは、このモジュールだけ。**
 //!
 //! 面・ヘッダー・波形・クリップのグラデーションは、型に無い（UI-090・UI-105）。
-//! `tests/api_surface.rs` が、`gradient` という語がこのファイルの外に出ないことを確かめる。
+//! `tests/it/api_surface.rs` が、`gradient` という語がこのファイルの外に出ないことを確かめる。
 
 use crate::color::Color;
 use crate::palette::Palette;

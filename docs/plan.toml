@@ -3251,7 +3251,7 @@ title = "編集の設定の既定を合わせ、まだ効かない設定は作�
 area = "SET"
 phase = "v1"
 source = "reports/06-editing-feel.md § 3.7"
-done_when = "xirius-prefs の既定が edit.click-empty.locate＝true・edit.arrange.link＝false で、設定のファイルに書いていない人の画面もそれに従う（xirius-prefs tests/mvp.rs、arrange の the_link_setting と a_click_on_empty_space）。設定の画面に edit.cursor.follows-edit の行、ai.mcp.listen の行と警告、plugins.process.* の列が出ない（値と CLI は残す）。edit.snap.*.events・edit.snap.*.relative は画面に出ていないことを確かめた"
+done_when = "xirius-prefs の既定が edit.click-empty.locate＝true・edit.arrange.link＝false で、設定のファイルに書いていない人の画面もそれに従う（xirius-prefs tests/it/mvp.rs、arrange の the_link_setting と a_click_on_empty_space）。設定の画面に edit.cursor.follows-edit の行、ai.mcp.listen の行と警告、plugins.process.* の列が出ない（値と CLI は残す）。edit.snap.*.events・edit.snap.*.relative は画面に出ていないことを確かめた"
 status = "done"
 [[item]]
 id = "KEY-025"
@@ -7048,7 +7048,7 @@ title = "Windows の exe（xirius-ui・xirius・xirius-engine・xirius-plugin-ho
 area = "LIC"
 phase = "v1"
 source = "reports/02-audio-plugin-license.md § 5.4 プロジェクト自身のライセンス"
-done_when = "5 つの exe のプロパティの「詳細」に、ワークスペースの版、製品名 Xirius、発行元 The Xirius Authors、LICENSE-MIT と同じ著作権の行、exe ごとの説明と元のファイル名が出る。発行元と著作権は packaging/windows/version_info.rs の 1 か所にだけ書き、版は Cargo.toml から取る。xirius-ui.exe の最初のアイコンは assets/brand/xirius.ico。各クレートの tests/version_info.rs が exe から読み戻して確かめる。足した依存（embed-resource、MIT）で cargo deny check が通る"
+done_when = "5 つの exe のプロパティの「詳細」に、ワークスペースの版、製品名 Xirius、発行元 The Xirius Authors、LICENSE-MIT と同じ著作権の行、exe ごとの説明と元のファイル名が出る。発行元と著作権は packaging/windows/version_info.rs の 1 か所にだけ書き、版は Cargo.toml から取る。xirius-ui.exe の最初のアイコンは assets/brand/xirius.ico。各クレートの tests/it/version_info.rs が exe から読み戻して確かめる。足した依存（embed-resource、MIT）で cargo deny check が通る"
 status = "done"
 
 [[item]]
@@ -7319,7 +7319,7 @@ title = "プラグインの全件再スキャンで、スキャン用の子が�
 area = "PLG"
 phase = "v1"
 source = "1.0-msi-checks.md § PLG-060（CLI の plugin.rescan --full で 442 件すべて失敗し、キャッシュが 0 件になった実機の確認）"
-done_when = "xirius.exe 自身が __scan-plugin の子になり（他のファイルを隣に要らない）、スキャン用プログラムの探し方は XIRIUS_PLUGIN_SCAN・自身（CLI・画面が起動時に指定）・隣の xirius-plugin-scan・xirius・xirius-ui の順。子がすべて起動できない、または 8 件以上開いて半数超が失敗したときは、キャッシュを書かずに理由 1 行の Err を返す（tests/scan.rs、xirius-cli の tests/it/cli.rs）。実機の release の CLI で plugin.rescan --full が 441 バンドル・680 件・失敗 12 件（タイムアウト）になる"
+done_when = "xirius.exe 自身が __scan-plugin の子になり（他のファイルを隣に要らない）、スキャン用プログラムの探し方は XIRIUS_PLUGIN_SCAN・自身（CLI・画面が起動時に指定）・隣の xirius-plugin-scan・xirius・xirius-ui の順。子がすべて起動できない、または 8 件以上開いて半数超が失敗したときは、キャッシュを書かずに理由 1 行の Err を返す（tests/it/scan.rs、xirius-cli の tests/it/cli.rs）。実機の release の CLI で plugin.rescan --full が 441 バンドル・680 件・失敗 12 件（タイムアウト）になる"
 status = "done"
 
 [[item]]
@@ -7619,7 +7619,7 @@ title = "画面だけが答えるコマンドを、CLI の MCP では探すこ�
 area = "MCP"
 phase = "v1"
 source = "impl-17-cli-mcp-bugs-report.md § B-1・B-2"
-done_when = "CommandDef に screen_only があり、input.rs と screen_ops.rs の画面専用コマンドに付いている。Gateway は画面があるか（hosted か new か）で tools/list と tools/call を分け、CLI の MCP には project.new・view.mixer・view.zoom.*・edit.nudge.*・loop.selection・transport.start・browser.put・tool.* が出ず、アプリの MCP には出る（MCP-008 から、tools/list はどちらも入口だけで、画面のコマンドは ops_list・ops_schema と入口からの実行で分ける）。browser.put と project.new の readOnlyHint は false。xirius ops list の各行に screen_only が出る。crates/xirius-mcp/tests/screen_tools.rs と crates/xirius-core/tests/it/screen_commands.rs で、直す前のコードで落ちることを確かめる"
+done_when = "CommandDef に screen_only があり、input.rs と screen_ops.rs の画面専用コマンドに付いている。Gateway は画面があるか（hosted か new か）で tools/list と tools/call を分け、CLI の MCP には project.new・view.mixer・view.zoom.*・edit.nudge.*・loop.selection・transport.start・browser.put・tool.* が出ず、アプリの MCP には出る（MCP-008 から、tools/list はどちらも入口だけで、画面のコマンドは ops_list・ops_schema と入口からの実行で分ける）。browser.put と project.new の readOnlyHint は false。xirius ops list の各行に screen_only が出る。crates/xirius-mcp/tests/it/screen_tools.rs と crates/xirius-core/tests/it/screen_commands.rs で、直す前のコードで落ちることを確かめる"
 status = "done"
 
 [[item]]
@@ -7646,7 +7646,7 @@ title = "MCP の書き出しで background: false を守り、承認待ちは ok
 area = "MCP"
 phase = "v1"
 source = "impl-17-cli-mcp-bugs-report.md § B-5"
-done_when = "呼び手が background: false を渡すと export.* は終わるまで待って結果を返す（省略時は今までどおり背景で始める。スキーマの既定もその意味で説明する）。背景で始めるときも、承認が要る操作は受付だけで返さず、confirmation_required と decision を返す。承認されずに終わったら receipt が ok: false・error.code = denied・state = completed になる。crates/xirius-mcp/tests/async_receipt.rs で、承認が要る場合と要らない場合の両方を通す"
+done_when = "呼び手が background: false を渡すと export.* は終わるまで待って結果を返す（省略時は今までどおり背景で始める。スキーマの既定もその意味で説明する）。背景で始めるときも、承認が要る操作は受付だけで返さず、confirmation_required と decision を返す。承認されずに終わったら receipt が ok: false・error.code = denied・state = completed になる。crates/xirius-mcp/tests/it/async_receipt.rs で、承認が要る場合と要らない場合の両方を通す"
 status = "done"
 
 [[item]]
@@ -7681,7 +7681,7 @@ title = "MCP の tools/list を、コマンドごとのツールから risk ご�
 area = "MCP"
 phase = "v1.1"
 source = "2026-11-19 の依頼（MCP のツールの一覧が大きすぎて、AI の文脈を食う）"
-done_when = "tools/list は、Scope が Edit で run_read・run_edit・run_guarded・run_destructive・ops_list・ops_schema・ai_batch の 7 件、Read で run_read・ops_list・ops_schema の 3 件になり、画面の有無で増えない。入口は risk ごとに 1 つ（read は run_read で readOnlyHint、write は run_edit、guarded は run_guarded、destructive は run_destructive で destructiveHint）で、run_edit を常に許しても保存・書き出しは通らない。入口は command と args だけを受け、入口の取り違えと引数の形の誤りは isError の結果（invalid_args。取り違えは正しい入口を tool と本文に書く）で返す。HumanOnly・Scope の外・画面の無いときの screen_only・知らない名前は今までと同じ -32602。AI の権限の段（off・read・edit・save）・保存の許可・request_key・wait_ms・dry_run・受領証は前と同じ道（Gateway::call）を通り、段 × 入口 × risk の表の試験で、入口を通した答えが Gateway::call を直に呼んだ答えと同じことを確かめる。ops_list は group で絞れ、MCP では呼べるコマンドだけを各行の tool（実行に使う入口）付きで返す。ops_schema は note_transpose の形の名前も受け、group で絞れ、MCP では name か group が無いと invalid_args を返す（CLI は今までどおり全部を返す）。initialize の instructions の group の一覧は Gateway を作るときに覚えた値で、曲のロックを取らない。crates/xirius-mcp/tests/mcp.rs・screen_tools.rs と crates/xirius-cli/tests の MCP の試験が入口を通る"
+done_when = "tools/list は、Scope が Edit で run_read・run_edit・run_guarded・run_destructive・ops_list・ops_schema・ai_batch の 7 件、Read で run_read・ops_list・ops_schema の 3 件になり、画面の有無で増えない。入口は risk ごとに 1 つ（read は run_read で readOnlyHint、write は run_edit、guarded は run_guarded、destructive は run_destructive で destructiveHint）で、run_edit を常に許しても保存・書き出しは通らない。入口は command と args だけを受け、入口の取り違えと引数の形の誤りは isError の結果（invalid_args。取り違えは正しい入口を tool と本文に書く）で返す。HumanOnly・Scope の外・画面の無いときの screen_only・知らない名前は今までと同じ -32602。AI の権限の段（off・read・edit・save）・保存の許可・request_key・wait_ms・dry_run・受領証は前と同じ道（Gateway::call）を通り、段 × 入口 × risk の表の試験で、入口を通した答えが Gateway::call を直に呼んだ答えと同じことを確かめる。ops_list は group で絞れ、MCP では呼べるコマンドだけを各行の tool（実行に使う入口）付きで返す。ops_schema は note_transpose の形の名前も受け、group で絞れ、MCP では name か group が無いと invalid_args を返す（CLI は今までどおり全部を返す）。initialize の instructions の group の一覧は Gateway を作るときに覚えた値で、曲のロックを取らない。crates/xirius-mcp/tests/it/mcp.rs・screen_tools.rs と crates/xirius-cli/tests の MCP の試験が入口を通る"
 notes = "前の tools/list は、デスクトップで 511 件・約 500 KB、CLI で 423 件・約 450 KB。コマンド表（メニュー・キー・パレット・CLI の 1 行 = 1 コマンド）は変えない。直接のツールは、入口の前に要るもの（ops_list・ops_schema）と、入口で包むと 1 つの承認にまとめる意味が崩れるもの（ai_batch）だけ。全部のツールを出す昔の形は残さない（使う所が試験だけだった）。前のツール名（note_transpose など）は tools/call で見つからなくなり、クライアントのツールごとの許可は入口ごとになる（次の版のリリースノートに書く）"
 status = "done"
 
@@ -8771,8 +8771,7 @@ phase = "v1.1"
 source = "2026-11-26 の持ち主の承認（試験の監査の §7 の 4・判断 1、推奨どおり）"
 after = ["ARC-048"]
 done_when = "まず xirius-core の tests/ の統合試験を tests/it/main.rs の mod にまとめ（1 ファイル 1 モジュール、試験の名前は <ファイル>::<試験>）、手元のビルドとリンクの時間・試験の実行ファイルの数と大きさ・main の rust の build と shard の時間を前後で測る。縮むなら、実行ファイルの多いクレートから同じ形に広げる。窓を開く試験・別のプロセスを起こして互いに邪魔する試験・harness = false の試験は分けたまま残し、理由を書く。試験の名前を指す所（scripts/ci_tests.py・scripts/release_ci_gate.py・docs）は名前で直す。試験は減らさない"
-status = "partial"
-remaining = "xirius-core・xirius-session・xirius-engine・xirius-ui・xirius-cli・xirius-vst3 のほかのクレート"
+status = "done"
 
 [[item]]
 id = "UI-371"

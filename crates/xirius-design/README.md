@@ -24,7 +24,7 @@ let note = TrackColor::new(3).content(theme);
 ## 規則を型で守る仕組み
 
 - 文字 × 面は `Pair` / `Readable`。一覧（`pair.rs` の `allowed_pairs!`）に無い組は作れない。
-  一覧は両テーマで 4.5:1 以上を `tests/contrast.rs` が確かめる。薄い文字の段は無い。
+  一覧は両テーマで 4.5:1 以上を `tests/it/contrast.rs` が確かめる。薄い文字の段は無い。
 - グラデーションの型は `meter` にしか無い。線の太さの型は無い。
 - パレットの欄は `pub(crate)`。生の色は、`Surface`・`Ink`・`Accent`・`TrackColor` 越しにしか取れない。
 - 書体は `Font` の 2 つだけ。
