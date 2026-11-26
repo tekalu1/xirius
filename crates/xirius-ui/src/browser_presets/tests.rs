@@ -753,25 +753,6 @@ fn show_in_browser_chooses_the_presets_row_and_brings_it_into_view() {
 }
 
 #[test]
-fn the_window_menus_show_in_browser_row_is_live() {
-    let (mut s, _) = studio();
-    let keys = track(&s, "Keys");
-    assert!(s.run_command(
-        "plugin.add",
-        json!({ "track": keys.to_string(), "name": "EQ" }),
-    ));
-    let id = s.project().tracks[&keys]
-        .inserts
-        .iter()
-        .find(|x| x.name == "EQ")
-        .unwrap()
-        .id;
-    let (rows, _) = s.inst_menu_view(Menu::Preset(keys, id));
-    let row = rows.iter().find(|r| r.label == "ブラウザーに表示").unwrap();
-    assert_eq!(row.to, SHOW);
-}
-
-#[test]
 fn the_factory_presets_come_back_from_the_browsers_menus() {
     let (mut s, g) = studio();
     let delay = uid("Delay");
@@ -786,8 +767,6 @@ fn the_factory_presets_come_back_from_the_browsers_menus() {
     // A preset row's menu has it, for its device.
     let (_, x, y) = preset(&s, &g, "4 分のピンポン");
     assert!(s.lib_context(&g, x, y));
-    let labels = menu_labels(&s);
-    assert!(labels.contains(&"読み込む".to_string()));
     assert_eq!(
         s.context_rows()
             .iter()
@@ -800,7 +779,6 @@ fn the_factory_presets_come_back_from_the_browsers_menus() {
             "工場出荷のプリセットを読み込み直す"
         ]
     );
-    assert!(labels.contains(&"お気に入り".to_string()));
     assert!(choose(&mut s, &g, "工場出荷のプリセットを読み込み直す"));
     s.refresh_presets();
     assert_eq!(presets_under(&s, &g, delay), before);

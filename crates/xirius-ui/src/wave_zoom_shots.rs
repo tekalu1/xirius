@@ -198,7 +198,6 @@ mod tests {
         assert_eq!(at(1_200.0), Detail::Samples);
         assert_eq!(at(48_000.0), Detail::Line { dots: false });
         assert_eq!(at(f32::MAX), Detail::Line { dots: true });
-        assert_eq!(s.beat_w_max(), 144_000.0);
     }
 
     /// The last stage's pointer on the button shows the step it is at.

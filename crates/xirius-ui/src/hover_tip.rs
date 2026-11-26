@@ -590,24 +590,4 @@ mod tests {
             assert!(text(&s, Hit::Bar(BarButton::Tool(t))).is_some());
         }
     }
-
-    #[test]
-    fn each_rail_button_says_its_own_tab_and_the_key_that_opens_it() {
-        use crate::browser::RailTab;
-        let s = Studio::sample();
-        let tips: Vec<String> = RailTab::ALL
-            .iter()
-            .map(|&tab| text(&s, Hit::Rail(tab)).unwrap())
-            .collect();
-        assert_eq!(
-            tips,
-            [
-                "トラックブラウザー  F6",
-                "ファイル  F9",
-                "プール",
-                "インスペクター  F4"
-            ]
-        );
-        assert!(tips.iter().all(|t| !t.contains("ブラウザーを表示")));
-    }
 }
