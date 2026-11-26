@@ -207,10 +207,31 @@ fn an_insert_picked_from_the_scan_lands_on_the_strip_and_bypasses() {
     assert_eq!(plugin.kind, PluginKind::Effect);
     assert!(press(&mut s, &g, MixerHit::Bypass(t, plugin.id)));
     assert!(s.project().tracks[&t].inserts[0].bypass);
-    // Its window needs the plugin on this PC; without it the screen says so.
+    // Its window is opened by the player's host; with no audio output there is none, and
+    // the screen says so.
     assert!(press(&mut s, &g, MixerHit::Open(t, plugin.id)));
     assert!(!s.mixer.is_open(plugin.id));
-    assert!(s.error.is_some());
+    assert_eq!(s.error.as_deref(), Some("オーディオ出力がありません"));
+}
+
+#[test]
+fn a_window_that_cannot_open_says_why() {
+    let (mut s, g) = studio();
+    s.use_plugins(Catalog::default());
+    let t = track(&s, "Vocal");
+    // A plugin the song names that this PC does not have.
+    assert!(s.run_command(
+        "plugin.add",
+        json!({ "track": t.to_string(), "name": "Comp", "format": "vst3",
+                "uid": "0123456789ABCDEF0123456789ABCDEF" }),
+    ));
+    let id = s.project().tracks[&t].inserts[0].id;
+    assert!(press(&mut s, &g, MixerHit::Open(t, id)));
+    assert!(!s.mixer.is_open(id));
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Comp がこの PC に見つからないため、窓を開けません")
+    );
 }
 
 #[test]
@@ -391,8 +412,8 @@ fn levels_from_the_player_reach_the_strip_meters() {
     assert!(s.toggle_play());
     let t = Instant::now();
     let mut heard = false;
-    // Until the meter moves; the minute is only a bound for a busy machine.
-    while t.elapsed() < Duration::from_secs(60) {
+    // Until the meter moves, which is a block or two; ten seconds bound a busy machine.
+    while t.elapsed() < Duration::from_secs(10) {
         s.tick();
         let m = s.mixer.meters.get(Strip::Master);
         if m.level[0] > 0.0 || m.level[1] > 0.0 {

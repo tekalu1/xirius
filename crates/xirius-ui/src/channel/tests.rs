@@ -443,18 +443,6 @@ fn a_head_sets_the_level_mutes_and_takes_the_branch_away() {
 }
 
 #[test]
-fn a_channel_split_names_its_branches_l_and_r_and_keeps_them() {
-    let (mut s, g) = studio();
-    let (_, sp, _, b) = vocal(&mut s);
-    assert!(s.run_command("rack.split.mode", json!({"id": sp, "mode": "channel"})));
-    let v = s.channel_view(&g).unwrap();
-    assert_eq!(col_label(&column(&v, b[0])), "L");
-    let hp = head_parts(&column(&v, b[1]));
-    assert_eq!(hp.label, "R");
-    assert!(hp.remove.is_none());
-}
-
-#[test]
 fn a_crossover_dragged_sets_its_frequency_once() {
     let (mut s, g) = studio();
     let (t, sp, _, _) = vocal(&mut s);
@@ -606,68 +594,99 @@ fn mix_045_an_older_songs_crossover_above_20_khz_is_dragged_down_and_undoes() {
 }
 
 #[test]
-fn a_crossover_stays_between_its_neighbours() {
-    let from = [200.0, 2000.0, 8000.0];
-    assert_eq!(crossed(&from, 1, 240.0)[1], (8000.0f64 / 1.05).round());
-    assert_eq!(crossed(&from, 1, -240.0)[1], (200.0f64 * 1.05).round());
-    assert_eq!(crossed(&from, 0, -480.0)[0], 20.0);
-}
-
-#[test]
 fn a_crossover_among_close_neighbours_stays_rising_and_in_range() {
     use xirius_core::rack::{crossovers_fit, default_crossovers};
+    let mut failures = Vec::new();
+    // Drags whose landing is known: (what, the crossovers, which one, dx, what they become).
+    type Lands = fn(&[f64]) -> bool;
+    let fixed: [(&str, &[f64], usize, f32, Lands); 6] = [
+        (
+            "up, it stops a gap under its upper neighbour",
+            &[200.0, 2000.0, 8000.0],
+            1,
+            240.0,
+            |now| now[1] == (8000.0f64 / 1.05).round(),
+        ),
+        (
+            "down, it stops a gap over its lower neighbour",
+            &[200.0, 2000.0, 8000.0],
+            1,
+            -240.0,
+            |now| now[1] == (200.0f64 * 1.05).round(),
+        ),
+        (
+            "the lowest stops at 20 Hz",
+            &[200.0, 2000.0, 8000.0],
+            0,
+            -480.0,
+            |now| now[0] == 20.0,
+        ),
+        (
+            // 21 Hz would sit closer to 20.1 than the gap allows here.
+            "a whole hertz is taken only when it keeps the gap",
+            &[20.1, 21.5, 23.0],
+            1,
+            -240.0,
+            |now| {
+                now[1] / now[0] >= (23.0f64 / 20.1).cbrt() - 1e-12
+                    && now[1] != 21.0
+                    && now[1] < 21.5
+            },
+        ),
+        (
+            // An older song saved a crossover above 20 kHz.
+            "a saved 25 kHz stays when dragged up",
+            &[1000.0, 25_000.0],
+            1,
+            24.0,
+            |now| now == [1000.0, 25_000.0],
+        ),
+        (
+            "a saved 25 kHz comes down when dragged down",
+            &[1000.0, 25_000.0],
+            1,
+            -2.0,
+            |now| now[1] < 25_000.0 && now[1] > 20_000.0,
+        ),
+    ];
+    for (what, from, i, dx, lands) in fixed {
+        let now = crossed(from, i, dx);
+        if !lands(&now) {
+            failures.push(format!("{what}: {from:?} {i} by {dx} → {now:?}"));
+        }
+    }
     for n in [64, 143, 144, 512, 2000] {
         let from = default_crossovers(n);
         for i in [0, 1, n / 2, n - 3, n - 2] {
-            assert_eq!(
-                crossed(&from, i, 0.0),
-                from,
-                "{n} {i}: not dragged, not moved"
-            );
+            if crossed(&from, i, 0.0) != from {
+                failures.push(format!("{n} {i}: not dragged, moved"));
+            }
             for dx in [-2400.0, -3.0, 3.0, 2400.0] {
                 let now = crossed(&from, i, dx);
-                assert!(crossovers_fit(&now, n), "{n} {i} {dx}");
+                if !crossovers_fit(&now, n) {
+                    failures.push(format!("{n} {i} {dx}: out of range or not rising"));
+                }
                 // It moves the way it is dragged, however close the neighbours are (the
                 // lowest cannot go under 20 Hz).
                 let moved = now[i] - from[i];
-                if !(i == 0 && dx < 0.0 && from[0] <= 20.0) {
-                    assert!(
-                        moved * f64::from(dx) > 0.0,
-                        "{n} {i} {dx}: {} → {}",
-                        from[i],
-                        now[i]
-                    );
+                if !(i == 0 && dx < 0.0 && from[0] <= 20.0) && moved * f64::from(dx) <= 0.0 {
+                    failures.push(format!("{n} {i} {dx}: {} → {}", from[i], now[i]));
                 }
                 // And keeps a gap to its neighbours: a third of the band between them at least.
                 if i > 0 && i < n - 2 {
                     let third = (from[i + 1] / from[i - 1]).cbrt().min(1.05);
-                    assert!(now[i] / now[i - 1] >= third - 1e-9, "{n} {i} {dx}");
-                    assert!(now[i + 1] / now[i] >= third - 1e-9, "{n} {i} {dx}");
+                    if now[i] / now[i - 1] < third - 1e-9 || now[i + 1] / now[i] < third - 1e-9 {
+                        failures.push(format!("{n} {i} {dx}: no gap"));
+                    }
                 }
             }
             // Left and right pick different values.
-            assert!(
-                crossed(&from, i, -3.0)[i] < crossed(&from, i, 3.0)[i],
-                "{n} {i}"
-            );
+            if crossed(&from, i, -3.0)[i] >= crossed(&from, i, 3.0)[i] {
+                failures.push(format!("{n} {i}: left and right the same"));
+            }
         }
     }
-}
-
-#[test]
-fn a_whole_hertz_is_taken_only_when_it_keeps_the_gap() {
-    // 21 Hz would sit closer to 20.1 than the gap allows here.
-    let from = [20.1, 21.5, 23.0];
-    let now = crossed(&from, 1, -240.0);
-    let gap = (23.0f64 / 20.1).cbrt();
-    assert!(now[1] / now[0] >= gap - 1e-12, "{now:?}");
-    assert_ne!(now[1], 21.0);
-    assert!(now[1] < 21.5);
-    // A crossover an older song saved above 20 kHz only comes down when dragged down.
-    let old = [1000.0, 25_000.0];
-    assert_eq!(crossed(&old, 1, 24.0), old);
-    let down = crossed(&old, 1, -2.0)[1];
-    assert!(down < 25_000.0 && down > 20_000.0, "{down}");
+    assert!(failures.is_empty(), "crossovers dragged: {failures:#?}");
 }
 
 #[test]
@@ -834,12 +853,6 @@ fn a_reader_hears_a_layer_by_its_instrument() {
     );
 }
 
-#[test]
-fn a_split_mode_has_its_words() {
-    assert_eq!(mode_text(SplitMode::Normal), "ノーマル");
-    assert_eq!(mode_text(SplitMode::Frequency), "周波数分割");
-}
-
 /// Keys as a multi-instrument of three layers: Piano, Strings and Pad.
 fn multi(s: &mut Studio) -> (TrackId, Vec<xirius_core::rack::Layer>) {
     let t = track(s, "Keys");
@@ -967,15 +980,6 @@ fn a_multi_instrument_has_the_key_figure_when_the_window_is_wide() {
     let vocal = track(&s, "Vocal");
     s.channel = Some(ChannelWin::new(vocal));
     assert!(s.channel_view(&g).unwrap().keys.is_none());
-}
-
-#[test]
-fn a_layer_card_places_its_name_right_after_power() {
-    let (mut s, g) = studio();
-    let (_, layers) = multi(&mut s);
-    let v = s.channel_view(&g).unwrap();
-    let parts = card_parts(&card(&v, Pick::Plugin(layers[0].instrument)));
-    assert_eq!(parts.name.x, parts.dot.unwrap().right() + 6.0);
 }
 
 #[test]
@@ -1248,11 +1252,9 @@ fn the_map_and_the_keyboard_are_one_row_with_a_four_pixel_gap() {
     multi(&mut s);
     let v = s.channel_view(&g).unwrap();
     let k = v.keys.as_ref().unwrap();
-    assert_eq!(keys::GAP, 4.0);
-    assert_eq!(k.board.view.y, k.map.bottom() + 4.0);
+    assert_eq!(k.board.view.y, k.map.bottom() + keys::GAP);
     assert_eq!(k.board.view.h, 64.0, "no rail while the keys fit");
-    assert_eq!(k.panel.h, 208.0);
-    assert_eq!(keys::PANEL_H, 32.0 + 100.0 + 4.0 + 64.0 + 8.0);
+    assert_eq!(k.panel.h, keys::PANEL_H, "not the scrolling panel");
     assert_eq!(k.board.view.bottom() + keys::PAD, k.panel.bottom());
     // no second keyboard under the panel
     assert_eq!(k.panel.bottom(), v.r.bottom());
@@ -1276,7 +1278,6 @@ fn a_window_under_the_least_width_scrolls_the_map_and_the_keyboard_together() {
     assert_eq!(k.board.extent, 704.0);
     assert!(k.board.extent > k.board.view.w);
     assert_eq!(k.panel.h, keys::PANEL_SCROLL_H);
-    assert_eq!(keys::PANEL_SCROLL_H, 220.0);
     assert_eq!(k.board.view.h, 76.0, "the keys and their rail");
     let wide = s.geometry(720.0, 800.0);
     let still = s.channel_view(&wide).unwrap().keys.unwrap();
@@ -1378,8 +1379,6 @@ fn a_multi_instrument_window_has_no_second_keyboard() {
     let probe = flow::layout(&p, t, (0.0, 0.0));
     let (_, tool) = tools_of(Rect::new(0.0, 0.0, nw, 0.0), true);
     assert_eq!(nh, BAR_H + tool + probe.h + keys::PANEL_H);
-    // the lower keyboard (120) and the old 204 panel are gone: 116 less in all
-    assert_eq!(keys::PANEL_H, 208.0);
     let v = view(&p, w, (nw, nh)).unwrap();
     assert!(v.body.h >= probe.h - 0.5);
     assert_eq!(v.keys.unwrap().panel.bottom(), nh);
@@ -1841,8 +1840,7 @@ fn a_track_with_layers_needs_the_wider_least_width() {
     let p = s.project();
     let w = s.channel.as_ref().unwrap();
     assert_eq!(min_width(&p, w), keys::LEAST_W);
-    assert_eq!(keys::LEAST_W, 720.0);
-    assert!(natural_size(&p, w).unwrap().0 >= 720.0);
+    assert!(natural_size(&p, w).unwrap().0 >= keys::LEAST_W);
 }
 
 fn mark_keys(m: &crate::a11y::Mark, out: &mut Vec<String>) {

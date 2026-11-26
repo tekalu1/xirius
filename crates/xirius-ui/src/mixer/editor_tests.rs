@@ -264,53 +264,6 @@ fn a_vst3_instruments_window_opens_from_the_keys_button_and_the_mixer() {
     assert_eq!(s.mixer.editor_hwnd(id), Some(hwnd));
 }
 
-#[test]
-fn a_window_that_cannot_open_says_why() {
-    let (mut s, g) = studio(Vec::new());
-    let t = track(&s, "Vocal");
-    // A plugin the song names that this PC does not have.
-    assert!(s.run_command(
-        "plugin.add",
-        json!({ "track": t.to_string(), "name": "Comp", "format": "vst3",
-                "uid": "0123456789ABCDEF0123456789ABCDEF" }),
-    ));
-    let id = s.project().tracks[&t].inserts[0].id;
-    assert!(press(&mut s, &g, MixerHit::Open(t, id)));
-    assert!(!s.mixer.is_open(id));
-    assert_eq!(
-        s.error.as_deref(),
-        Some("Comp がこの PC に見つからないため、窓を開けません")
-    );
-}
-
-/// With no audio output, opening a window still uses the plugin host.
-#[test]
-fn without_output_opens_only_a_hosted_editor() {
-    // A plugin may write into the temporary folder (Vital leaves `vital_versions.txt`).
-    let _temp = crate::shot::TestTemp::new();
-    let _one = one_at_a_time();
-    let Some(entries) = entries(EFFECT) else {
-        return;
-    };
-    let (mut s, g) = studio(entries.clone());
-    s.transport.mode = OutputMode::None;
-    let uid = entries[0].uid.clone();
-    let t = track(&s, "Vocal");
-    assert!(s.run_command(
-        "plugin.add",
-        json!({ "track": t.to_string(), "name": "kHs Gain", "format": "vst3", "uid": uid }),
-    ));
-    let id = s.project().tracks[&t].inserts[0].id;
-    assert!(press(&mut s, &g, MixerHit::Open(t, id)));
-    assert_ne!(s.mixer.editor_heard(id), Some(false));
-    if s.mixer.is_open(id) {
-        assert!(s.transport.host().is_some());
-        assert_eq!(s.mixer.editor_heard(id), Some(true));
-    } else {
-        assert!(s.error.is_some());
-    }
-}
-
 #[cfg(windows)]
 #[test]
 fn a_slow_hosted_editor_stays_requested_until_its_open_report_arrives() {

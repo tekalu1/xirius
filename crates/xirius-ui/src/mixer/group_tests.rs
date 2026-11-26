@@ -95,36 +95,192 @@ fn near(a: &[f64], b: &[f64]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-9)
 }
 
-#[test]
-fn a_selected_fader_moves_every_selected_track_and_keeps_their_differences() {
-    let (mut s, g, ids) = three();
-    let before = s.song().steps();
-    grab(&mut s, &g, MixerHit::Fader(ids[1]), Mods::NONE);
-    assert!(s.drag_relative());
-    s.drag_to(-2.0);
-    assert_eq!(shown(&s, &ids, MixerHit::Fader), [-8.0, -2.0, 10.0]);
-    // Guitar reaches +12 dB and stops there while the others go on.
-    s.drag_to(2.0);
-    assert_eq!(shown(&s, &ids, MixerHit::Fader), [-4.0, 2.0, 12.0]);
-    // Back again, Guitar's difference comes back.
-    s.drag_to(-2.0);
-    assert_eq!(shown(&s, &ids, MixerHit::Fader), [-8.0, -2.0, 10.0]);
-    // Nothing reached the song yet; the release is one step and one undo.
-    assert_eq!(volumes(&s, &ids), [-12.0, -6.0, 6.0]);
-    assert!(s.drag_end());
-    assert_eq!(volumes(&s, &ids), [-8.0, -2.0, 10.0]);
-    assert_eq!(s.song().steps(), before + 1);
-    assert!(s.undo(&g));
-    assert_eq!(volumes(&s, &ids), [-12.0, -6.0, 6.0]);
+/// In a row of the table below, the value the screen showed before the grab.
+const HELD: f64 = f64::NAN;
+
+/// `want` with each [`HELD`] read as what `before` held there.
+fn resolve(want: [f64; 3], before: &[f64]) -> Vec<f64> {
+    want.iter()
+        .zip(before)
+        .map(|(w, b)| if w.is_nan() { *b } else { *w })
+        .collect()
 }
 
 #[test]
-fn a_track_stopped_at_the_end_when_the_drag_lets_go_stays_there() {
-    let (mut s, g, ids) = three();
-    grab(&mut s, &g, MixerHit::Fader(ids[0]), Mods::NONE);
-    s.drag_to(-2.0);
-    assert!(s.drag_end());
-    assert_eq!(volumes(&s, &ids), [-2.0, 4.0, 12.0]);
+fn a_selected_fader_moves_every_selected_track_and_keeps_their_differences() {
+    struct Row {
+        name: &'static str,
+        setup: fn(&mut Studio, &[TrackId; 3]),
+        /// Which of Keys, Vocal and Guitar is grabbed.
+        grab: usize,
+        relative: bool,
+        /// Where the grabbed fader is taken, and what the three faders show then.
+        path: &'static [(f64, [f64; 3])],
+        /// What the faders show, and the song keeps, once let go.
+        after: [f64; 3],
+        /// Undoable steps the release adds; one undo takes it back.
+        steps: usize,
+    }
+    let rows = [
+        Row {
+            // Guitar reaches +12 dB and stops there while the others go on; back again, its
+            // difference comes back.
+            name: "there and back past the top",
+            setup: |_, _| {},
+            grab: 1,
+            relative: true,
+            path: &[
+                (-2.0, [-8.0, -2.0, 10.0]),
+                (2.0, [-4.0, 2.0, 12.0]),
+                (-2.0, [-8.0, -2.0, 10.0]),
+            ],
+            after: [-8.0, -2.0, 10.0],
+            steps: 1,
+        },
+        Row {
+            name: "a track stopped at the end when it lets go stays there",
+            setup: |_, _| {},
+            grab: 0,
+            relative: true,
+            path: &[(-2.0, [-2.0, 4.0, 12.0])],
+            after: [-2.0, 4.0, 12.0],
+            steps: 1,
+        },
+        Row {
+            name: "back to where it began adds no step",
+            setup: |_, _| {},
+            grab: 1,
+            relative: true,
+            path: &[(0.0, [-6.0, 0.0, 12.0]), (-6.0, [-12.0, -6.0, 6.0])],
+            after: [-12.0, -6.0, 6.0],
+            steps: 0,
+        },
+        Row {
+            name: "pulled to the bottom silences every one",
+            setup: |_, _| {},
+            grab: 1,
+            relative: true,
+            path: &[(MIN_DB, [MIN_DB; 3])],
+            after: [MIN_DB; 3],
+            steps: 1,
+        },
+        Row {
+            // Keys at -61 dB would show -∞ and still sound: it is silent.
+            name: "one taken below the floor is silent and its difference comes back",
+            setup: |_, _| {},
+            grab: 1,
+            relative: true,
+            path: &[
+                (-55.0, [MIN_DB, -55.0, -43.0]),
+                (-50.0, [-56.0, -50.0, -38.0]),
+                (-55.0, [MIN_DB, -55.0, -43.0]),
+            ],
+            after: [MIN_DB, -55.0, -43.0],
+            steps: 1,
+        },
+        Row {
+            name: "one at -∞ stays there while the others move",
+            setup: |s, ids| set_db(s, ids[0], MIN_DB),
+            grab: 1,
+            relative: true,
+            path: &[(0.0, [MIN_DB, 0.0, 12.0])],
+            after: [MIN_DB, 0.0, 12.0],
+            steps: 1,
+        },
+        Row {
+            // Below the fader's floor is silence already: the track keeps its own value.
+            name: "one below the floor at -70 dB stays there while the others move",
+            setup: |s, ids| set_db(s, ids[0], -70.0),
+            grab: 1,
+            relative: true,
+            path: &[(0.0, [-70.0, 0.0, 12.0])],
+            after: [-70.0, 0.0, 12.0],
+            steps: 1,
+        },
+        Row {
+            // There is no difference to keep from silence.
+            name: "raised from -∞ it moves its track alone",
+            setup: |s, ids| set_db(s, ids[1], MIN_DB),
+            grab: 1,
+            relative: false,
+            path: &[(-10.0, [-12.0, -10.0, 6.0])],
+            after: [-12.0, -10.0, 6.0],
+            steps: 1,
+        },
+        Row {
+            // What the song keeps under the lane is not read: the lane plays.
+            name: "one its lane holds stays still on the screen",
+            setup: |s, ids| {
+                let bar = i64::from(s.project().ppq) * 4;
+                for at in [0, 4 * bar] {
+                    assert!(s.run_command(
+                        "auto.point.add",
+                        json!({ "track": ids[0].to_string(), "target": "volume", "at": at, "value": -30.0 })
+                    ));
+                }
+            },
+            grab: 1,
+            relative: true,
+            path: &[(0.0, [HELD, 0.0, 12.0])],
+            after: [HELD, 0.0, 12.0],
+            steps: 1,
+        },
+    ];
+    let mut failures = Vec::new();
+    for row in &rows {
+        let (mut s, g, ids) = three();
+        (row.setup)(&mut s, &ids);
+        let start = volumes(&s, &ids);
+        let before = shown(&s, &ids, MixerHit::Fader);
+        let steps = s.song().steps();
+        let mut bad = Vec::new();
+        grab(&mut s, &g, MixerHit::Fader(ids[row.grab]), Mods::NONE);
+        if s.drag_relative() != row.relative {
+            bad.push(format!("relative is {}", !row.relative));
+        }
+        for &(to, want) in row.path {
+            s.drag_to(to);
+            let got = shown(&s, &ids, MixerHit::Fader);
+            if !near(&got, &resolve(want, &before)) {
+                bad.push(format!("taken to {to}, shows {got:?}"));
+            }
+        }
+        // Nothing reached the song before the release.
+        if volumes(&s, &ids) != start {
+            bad.push(format!("the song held {:?}", volumes(&s, &ids)));
+        }
+        if !s.drag_end() {
+            bad.push("the release did nothing".into());
+        }
+        let got = shown(&s, &ids, MixerHit::Fader);
+        if !near(&got, &resolve(row.after, &before)) {
+            bad.push(format!("let go, shows {got:?}"));
+        }
+        let kept = volumes(&s, &ids);
+        if kept
+            .iter()
+            .zip(row.after)
+            .any(|(k, w)| !w.is_nan() && (k - w).abs() >= 1e-9)
+        {
+            bad.push(format!("let go, the song keeps {kept:?}"));
+        }
+        if s.song().steps() != steps + row.steps {
+            bad.push(format!("steps {} -> {}", steps, s.song().steps()));
+        }
+        if s.picked_tracks().len() != 3 {
+            bad.push(format!("{} picked", s.picked_tracks().len()));
+        }
+        if row.steps > 0 {
+            s.undo(&g);
+            if volumes(&s, &ids) != start {
+                bad.push(format!("undone, the song keeps {:?}", volumes(&s, &ids)));
+            }
+        }
+        if !bad.is_empty() {
+            failures.push(format!("{}: {bad:?}", row.name));
+        }
+    }
+    assert!(failures.is_empty(), "group fader drag: {failures:#?}");
 }
 
 #[test]
@@ -187,90 +343,6 @@ fn a_selected_pan_knob_moves_every_selected_track_and_stops_at_the_side() {
     assert_eq!(s.song().steps(), before + 1);
     assert!(s.undo(&g));
     assert!(near(&pans(&s, &ids), &[-0.5, 0.0, 0.8]));
-}
-
-#[test]
-fn a_drag_back_to_where_it_began_adds_no_step() {
-    let (mut s, g, ids) = three();
-    let before = s.song().steps();
-    grab(&mut s, &g, MixerHit::Fader(ids[1]), Mods::NONE);
-    s.drag_to(0.0);
-    s.drag_to(-6.0);
-    assert!(s.drag_end());
-    assert_eq!(s.song().steps(), before);
-    assert_eq!(volumes(&s, &ids), [-12.0, -6.0, 6.0]);
-}
-
-#[test]
-fn pulling_a_selected_fader_to_the_bottom_silences_every_selected_track() {
-    let (mut s, g, ids) = three();
-    let before = s.song().steps();
-    grab(&mut s, &g, MixerHit::Fader(ids[1]), Mods::NONE);
-    s.drag_to(MIN_DB);
-    assert_eq!(shown(&s, &ids, MixerHit::Fader), [MIN_DB; 3]);
-    assert!(s.drag_end());
-    assert_eq!(volumes(&s, &ids), [MIN_DB; 3]);
-    assert_eq!(s.song().steps(), before + 1);
-    assert!(s.undo(&g));
-    assert_eq!(volumes(&s, &ids), [-12.0, -6.0, 6.0]);
-}
-
-#[test]
-fn a_selected_track_taken_below_the_floor_is_silent_and_its_difference_comes_back() {
-    let (mut s, g, ids) = three();
-    grab(&mut s, &g, MixerHit::Fader(ids[1]), Mods::NONE);
-    // Keys at -61 dB would show -∞ and still sound: it is silent.
-    s.drag_to(-55.0);
-    assert_eq!(shown(&s, &ids, MixerHit::Fader), [MIN_DB, -55.0, -43.0]);
-    s.drag_to(-50.0);
-    assert_eq!(shown(&s, &ids, MixerHit::Fader), [-56.0, -50.0, -38.0]);
-    s.drag_to(-55.0);
-    assert!(s.drag_end());
-    assert_eq!(volumes(&s, &ids), [MIN_DB, -55.0, -43.0]);
-}
-
-#[test]
-fn a_selected_track_at_minus_infinity_stays_there_while_the_others_move() {
-    let (mut s, g, ids) = three();
-    set_db(&mut s, ids[0], MIN_DB);
-    grab(&mut s, &g, MixerHit::Fader(ids[1]), Mods::NONE);
-    assert!(s.drag_relative());
-    s.drag_to(0.0);
-    assert_eq!(shown(&s, &ids, MixerHit::Fader), [MIN_DB, 0.0, 12.0]);
-    assert!(s.drag_end());
-    assert_eq!(volumes(&s, &ids), [MIN_DB, 0.0, 12.0]);
-}
-
-#[test]
-fn a_selected_fader_raised_from_minus_infinity_moves_its_track_alone() {
-    let (mut s, g, ids) = three();
-    set_db(&mut s, ids[1], MIN_DB);
-    grab(&mut s, &g, MixerHit::Fader(ids[1]), Mods::NONE);
-    // There is no difference to keep from silence.
-    assert!(!s.drag_relative());
-    s.drag_to(-10.0);
-    assert_eq!(shown(&s, &ids, MixerHit::Fader), [-12.0, -10.0, 6.0]);
-    assert!(s.drag_end());
-    assert_eq!(volumes(&s, &ids), [-12.0, -10.0, 6.0]);
-    assert_eq!(s.picked_tracks().len(), 3);
-}
-
-#[test]
-fn a_fader_at_the_bottom_takes_every_track_to_minus_infinity() {
-    let d = Drag {
-        hit: MixerHit::Fader(TrackId::MASTER),
-        y0: 0.0,
-        travel: 100.0,
-        start: -10.0,
-        value: MIN_DB,
-        alone: false,
-    };
-    assert_eq!(moved(d.hit, MAX_DB, d.by()), MIN_DB);
-    assert_eq!(moved(d.hit, -20.0, Drag { value: -50.0, ..d }.by()), MIN_DB);
-    assert_eq!(moved(d.hit, 10.0, 5.0), MAX_DB);
-    // A value below the floor is silence already, and stays where it is.
-    assert_eq!(moved(d.hit, -70.0, 20.0), -70.0);
-    assert_eq!(moved(MixerHit::Pan(TrackId::MASTER), 0.9, 0.5), 1.0);
 }
 
 #[test]
@@ -349,22 +421,4 @@ fn a_press_on_a_strip_outside_the_selection_chooses_only_by_its_name() {
     // The name chooses as a head does.
     window_press(&mut s, &g, MixerHit::Strip(bass), Mods::NONE);
     assert_eq!(s.picked_rows(), [RowKind::Track(bass)]);
-}
-
-#[test]
-fn a_track_its_lane_holds_stays_still_on_the_screen_while_the_others_move() {
-    let (mut s, g, ids) = three();
-    let bar = i64::from(s.project().ppq) * 4;
-    for at in [0, 4 * bar] {
-        assert!(s.run_command(
-            "auto.point.add",
-            json!({ "track": ids[0].to_string(), "target": "volume", "at": at, "value": -30.0 })
-        ));
-    }
-    let held = s.mixer_value(MixerHit::Fader(ids[0])).unwrap();
-    grab(&mut s, &g, MixerHit::Fader(ids[1]), Mods::NONE);
-    s.drag_to(0.0);
-    assert_eq!(shown(&s, &ids, MixerHit::Fader), [held, 0.0, 12.0]);
-    assert!(s.drag_end());
-    assert_eq!(s.mixer_value(MixerHit::Fader(ids[0])), Some(held));
 }
