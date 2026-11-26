@@ -1881,7 +1881,6 @@ impl Render for Screen {
                 },
             )
             .relative()
-            .cursor(cursor)
             .flex_1()
             .w_full()
             .min_h(px(0.0))
@@ -1923,6 +1922,9 @@ impl Render for Screen {
             .font(ui_font(Weight::Regular, false))
             .text_size(px(FontSize::Small.px()))
             .track_focus(&self.focus)
+            // Over the whole window, the bars too (UI-383): the body, the top bar and the
+            // bottom bar set none of their own.
+            .cursor(cursor)
             .on_mouse_move(cx.listener(Self::moved))
             .on_mouse_exit(cx.listener(Self::exited))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::pressed))

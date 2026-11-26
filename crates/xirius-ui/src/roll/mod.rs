@@ -212,6 +212,8 @@ pub enum Zone {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cursor {
     Arrow,
+    /// A button or a badge: a press does something at once (UI-383).
+    Press,
     Move,
     ResizeH,
     ResizeV,
@@ -557,7 +559,9 @@ impl Roll {
         self.lanes.get(self.active_lane)
     }
 
-    /// The pointer shape for the pointer where it is now.
+    /// The pointer shape for the pointer where it is now. Every match spells out its cases
+    /// (UI-383), so a new tool or drag has to be given a shape.
+    #[deny(clippy::wildcard_enum_match_arm)]
     pub fn cursor(&self, ctx: Option<&Ctx>) -> Cursor {
         use crate::tools::{Area, Tool};
         let Some(ctx) = ctx else {
@@ -582,7 +586,12 @@ impl Roll {
                 {
                     Cursor::ResizeV
                 }
-                _ => Cursor::Cross,
+                Mode::Draw
+                | Mode::Marquee
+                | Mode::Audition
+                | Mode::Part
+                | Mode::Lane
+                | Mode::Loop(_) => Cursor::Cross,
             };
         }
         let Some((x, y)) = self.pointer else {
@@ -606,7 +615,7 @@ impl Roll {
             return match ctx.tools.held(Area::Roll, self.mods) {
                 Tool::Cut | Tool::Mute => Cursor::Blocked,
                 Tool::Draw => Cursor::Pencil,
-                _ => Cursor::Cross,
+                Tool::Select | Tool::Eraser | Tool::Audition | Tool::Range => Cursor::Cross,
             };
         }
         let tool = ctx.tools.held(Area::Roll, self.mods);

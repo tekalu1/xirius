@@ -1362,7 +1362,8 @@ fn the_pointer_shape_says_what_a_press_would_do() {
     s.tool = Tool::Select;
     let y = g.ruler.y + 4.0;
     s.arrange_move(&g, g.lanes.x + 100.0, y, none());
-    assert_eq!(paint::cursor(&s), None, "the ruler's own");
+    // The arrow, which the pointer turns into the ruler's crosshair (UI-383).
+    assert_eq!(paint::cursor(&s), Some(Cursor::Arrow), "the ruler's own");
     let t = s.project().tempo[0].clone();
     let (x, y) = s.tempo_xy(&g, t.tick, t.bpm);
     s.arrange_move(&g, x, y, none());
