@@ -90,17 +90,30 @@ fn wait_released(s: &mut Studio, id: PluginId) {
 
 /// Waits until the voices of `id` meet `predicate`, with a guard for an engine that stops.
 fn wait_sounding(s: &mut Studio, id: PluginId, predicate: impl Fn(u32) -> bool) {
+    if let Err(e) = reach_sounding(s, id, predicate) {
+        panic!("{e}");
+    }
+}
+
+/// [`wait_sounding`] for a table's row, which says its fault instead of ending the test.
+fn reach_sounding(
+    s: &mut Studio,
+    id: PluginId,
+    predicate: impl Fn(u32) -> bool,
+) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut last = None;
     while Instant::now() < deadline {
         s.transport.poll();
         last = sounding(s, id);
         if last.is_some_and(&predicate) {
-            return;
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(16));
     }
-    panic!("the device's voices did not reach the expected count; last: {last:?}");
+    Err(format!(
+        "the device's voices did not reach the expected count; last: {last:?}"
+    ))
 }
 
 fn last_sent(s: &Studio) -> Option<(TrackId, NoteKind)> {
@@ -417,37 +430,47 @@ fn sample_io_transition(device: &str, fail: bool, remove: bool) {
     }
 }
 
+/// A white key, and a black one over the white one under it (the black one wins), sound
+/// while held and stop when let go, nothing recorded.
 #[test]
-fn plg_066_a_key_sounds_while_held_and_stops_when_let_go_unrecorded() {
+fn plg_066_a_white_or_black_key_sounds_while_held_and_stops_when_let_go_unrecorded() {
     let (mut s, g, t, id) = played(DEFAULT);
     let before = clips_in_song(&s);
-    let (x, y) = s.instrument_center(&g, id, Part::Key(60)).unwrap();
-    assert!(s.instrument_down(&g, x, y));
-    assert!(matches!(
-        last_sent(&s),
-        Some((tt, NoteKind::On { pitch: 60, .. })) if tt == t
-    ));
-    assert_eq!(s.instruments.note.map(|n| n.pitch), Some(60));
-    wait_sounding(&mut s, id, |n| n > 0);
-
-    assert!(s.instrument_up());
-    assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 60 })));
-    assert_eq!(s.instruments.note, None);
-    wait_sounding(&mut s, id, |n| n == 0);
+    let mut failures = Vec::new();
+    for (name, pitch) in [("white C3", 60), ("black C#3", 61)] {
+        let mut row = || -> Result<(), String> {
+            let (x, y) = s
+                .instrument_center(&g, id, Part::Key(pitch))
+                .ok_or("not in sight")?;
+            if !s.instrument_down(&g, x, y) {
+                return Err("the press took nothing".into());
+            }
+            let on = matches!(
+                last_sent(&s),
+                Some((tt, NoteKind::On { pitch: p, .. })) if tt == t && p == pitch
+            );
+            if !on || s.instruments.note.map(|n| n.pitch) != Some(pitch) {
+                return Err(format!(
+                    "not its note on: {:?}, {:?}",
+                    last_sent(&s),
+                    s.instruments.note
+                ));
+            }
+            reach_sounding(&mut s, id, |n| n > 0)?;
+            if !s.instrument_up() || last_sent(&s) != Some((t, NoteKind::Off { pitch })) {
+                return Err(format!("not its note off: {:?}", last_sent(&s)));
+            }
+            if s.instruments.note.is_some() {
+                return Err(format!("the note stayed: {:?}", s.instruments.note));
+            }
+            reach_sounding(&mut s, id, |n| n == 0)
+        };
+        if let Err(e) = row() {
+            failures.push(format!("{name}: {e}"));
+        }
+    }
+    assert!(failures.is_empty(), "keys: {failures:#?}");
     assert_eq!(clips_in_song(&s), before);
-}
-
-#[test]
-fn plg_066_a_black_key_wins_over_the_white_one_under_it() {
-    let (mut s, g, t, id) = played(DEFAULT);
-    let (x, y) = s.instrument_center(&g, id, Part::Key(61)).unwrap();
-    assert!(s.instrument_down(&g, x, y));
-    assert!(matches!(
-        last_sent(&s),
-        Some((tt, NoteKind::On { pitch: 61, .. })) if tt == t
-    ));
-    assert!(s.instrument_up());
-    assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 61 })));
 }
 
 #[test]
@@ -485,30 +508,177 @@ fn plg_066_drag_changes_keys_once_and_leaving_the_keyboard_ends_the_note() {
     wait_sounding(&mut s, id, |n| n == 0);
 }
 
-#[test]
-fn plg_066_closing_the_window_ends_the_note() {
-    let (mut s, g, t, id) = played(DEFAULT);
-    let (x, y) = s.instrument_center(&g, id, Part::Key(64)).unwrap();
-    assert!(s.instrument_down(&g, x, y));
-    wait_sounding(&mut s, id, |n| n > 0);
-    let (cx, cy) = s.instrument_center(&g, id, Part::Close).unwrap();
-    // The close is pressed while the key is still held (a second pointer, the keyboard).
-    assert!(s.instrument_down(&g, cx, cy));
-    assert!(!s.instruments.is_open(id));
-    assert!(s.live_midi.sent.contains(&(t, NoteKind::Off { pitch: 64 })));
-    assert_eq!(s.instruments.note, None);
-    wait_sounding(&mut s, id, |n| n == 0);
+/// Something other than letting go that ends a held note: the row presses `part` of
+/// `device`'s window, waits for it to sound, and `end` does the event and checks what else it
+/// must have done.
+struct Ending {
+    name: &'static str,
+    device: &'static str,
+    part: Part,
+    pitch: u8,
+    end: fn(&mut Studio, &Geometry, TrackId, PluginId) -> Result<(), String>,
+    /// Whether the note-off is the last note sent, not only among them.
+    off_last: bool,
+    /// Whether the device is still there to be heard falling silent.
+    silent: bool,
+    /// Checked once the note has ended.
+    after: fn(&mut Studio) -> Result<(), String>,
+}
 
-    // The window shortcut closing it does the same.
-    s.show_instrument(t, id);
-    s.instruments.detached_target = Some(id);
-    let (x, y) = s.instrument_center(&g, id, Part::Key(65)).unwrap();
-    assert!(s.instrument_down(&g, x, y));
-    wait_sounding(&mut s, id, |n| n > 0);
-    assert!(s.toggle_device_shortcut(t, id));
-    assert!(!s.instruments.is_open(id));
-    assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 65 })));
-    wait_sounding(&mut s, id, |n| n == 0);
+/// Runs `command` on `ids` and lets the next frame see what went (L-ui-11).
+fn goes(s: &mut Studio, command: &str, ids: String) -> Result<(), String> {
+    if !s.run_command(command, serde_json::json!({ "ids": [ids] })) {
+        return Err(format!("{command}: {:?}", s.error));
+    }
+    s.poll_probes();
+    Ok(())
+}
+
+/// A let-go after the device went finds nothing held.
+fn nothing_held(s: &mut Studio) -> Result<(), String> {
+    if s.instrument_up() && s.instruments.grab.is_some() {
+        return Err("a let-go still found the pad held".into());
+    }
+    Ok(())
+}
+
+/// One row of [`plg_066_a_held_note_ends_when_its_window_focus_device_track_or_song_goes`].
+fn held_note_ends(row: &Ending) -> Result<(), String> {
+    let (mut s, g, t, id) = played(row.device);
+    let (x, y) = s
+        .instrument_center(&g, id, row.part)
+        .ok_or("the part is not in sight")?;
+    if !s.instrument_down(&g, x, y) {
+        return Err("the press took nothing".into());
+    }
+    reach_sounding(&mut s, id, |n| n > 0)?;
+    (row.end)(&mut s, &g, t, id)?;
+    let off = (t, NoteKind::Off { pitch: row.pitch });
+    let sent = if row.off_last {
+        last_sent(&s) == Some(off)
+    } else {
+        s.live_midi.sent.contains(&off)
+    };
+    if !sent {
+        return Err(format!("no {off:?}: {:?}", s.live_midi.sent));
+    }
+    if s.instruments.note.is_some() {
+        return Err(format!("the note stayed: {:?}", s.instruments.note));
+    }
+    if row.silent {
+        reach_sounding(&mut s, id, |n| n == 0)?;
+    }
+    (row.after)(&mut s)
+}
+
+/// A key or pad held while its window closes (its button, its shortcut), loses the keyboard
+/// (M-ui-3: Alt+Tab, the release goes to the other window), or while its device, its track
+/// (L-ui-11) or the song (L2-ui-4: before the song goes, not only by the transport's reset)
+/// goes, ends its note.
+#[test]
+fn plg_066_a_held_note_ends_when_its_window_focus_device_track_or_song_goes() {
+    let endings = [
+        Ending {
+            name: "the close button",
+            device: DEFAULT,
+            part: Part::Key(64),
+            pitch: 64,
+            end: |s, g, _, id| {
+                let (x, y) = s
+                    .instrument_center(g, id, Part::Close)
+                    .ok_or("no close button")?;
+                // Pressed while the key is still held (a second pointer, the keyboard).
+                if !s.instrument_down(g, x, y) || s.instruments.is_open(id) {
+                    return Err("the window stayed open".into());
+                }
+                Ok(())
+            },
+            off_last: false,
+            silent: true,
+            after: |_| Ok(()),
+        },
+        Ending {
+            name: "the window shortcut",
+            device: DEFAULT,
+            part: Part::Key(65),
+            pitch: 65,
+            end: |s, _, t, id| {
+                if !s.toggle_device_shortcut(t, id) || s.instruments.is_open(id) {
+                    return Err("the window stayed open".into());
+                }
+                Ok(())
+            },
+            off_last: true,
+            silent: true,
+            after: |_| Ok(()),
+        },
+        Ending {
+            name: "the window losing the keyboard",
+            device: "Drum Kit",
+            part: Part::Pad(36),
+            pitch: 36,
+            end: |s, _, _, _| {
+                if !s.device_focus_lost() {
+                    return Err("the focus loss ended nothing".into());
+                }
+                if s.instruments.grab.is_some() {
+                    return Err("the pad stayed grabbed".into());
+                }
+                Ok(())
+            },
+            off_last: true,
+            silent: true,
+            after: |s| {
+                if s.device_focus_lost() {
+                    return Err("a second focus loss still found something held".into());
+                }
+                Ok(())
+            },
+        },
+        Ending {
+            name: "plugin.remove",
+            device: "Drum Kit",
+            part: Part::Pad(36),
+            pitch: 36,
+            end: |s, _, _, id| goes(s, "plugin.remove", id.to_string()),
+            off_last: true,
+            silent: false,
+            after: nothing_held,
+        },
+        Ending {
+            name: "track.delete",
+            device: "Drum Kit",
+            part: Part::Pad(36),
+            pitch: 36,
+            end: |s, _, t, _| goes(s, "track.delete", t.to_string()),
+            off_last: true,
+            silent: false,
+            after: nothing_held,
+        },
+        Ending {
+            name: "the song closing",
+            device: "Drum Kit",
+            part: Part::Pad(36),
+            pitch: 36,
+            end: |s, _, _, _| {
+                s.keep_leaving();
+                Ok(())
+            },
+            off_last: true,
+            silent: false,
+            after: |_| Ok(()),
+        },
+    ];
+    let mut failures = Vec::new();
+    for row in &endings {
+        if let Err(e) = held_note_ends(row) {
+            failures.push(format!("{}: {e}", row.name));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "a held note that did not end: {failures:#?}"
+    );
 }
 
 #[test]
@@ -534,55 +704,6 @@ fn plg_066_a_drum_kit_pad_plays_its_note() {
     assert!(a4.0 > a1.0);
     assert_eq!(a5.0, a1.0);
     assert!(a5.1 < a1.1);
-}
-
-/// M-ui-3: the window losing the keyboard with a pad held (Alt+Tab) ends its note, since
-/// the release goes to the other window.
-#[test]
-fn plg_066_a_pad_held_ends_when_the_window_loses_the_keyboard() {
-    let (mut s, g, t, id) = played("Drum Kit");
-    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).unwrap();
-    assert!(s.instrument_down(&g, x, y));
-    wait_sounding(&mut s, id, |n| n > 0);
-    assert!(s.device_focus_lost());
-    assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 36 })));
-    assert_eq!(s.instruments.note, None);
-    assert!(s.instruments.grab.is_none());
-    wait_sounding(&mut s, id, |n| n == 0);
-    assert!(!s.device_focus_lost(), "nothing is held any more");
-}
-
-/// L-ui-11: a pad held while its device or its track is deleted ends its note; the next
-/// frame sees the window gone.
-#[test]
-fn plg_066_a_pad_held_ends_when_its_device_or_track_goes() {
-    for (command, of_track) in [("plugin.remove", false), ("track.delete", true)] {
-        let (mut s, g, t, id) = played("Drum Kit");
-        let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).unwrap();
-        assert!(s.instrument_down(&g, x, y));
-        wait_sounding(&mut s, id, |n| n > 0);
-        let ids = if of_track {
-            t.to_string()
-        } else {
-            id.to_string()
-        };
-        assert!(
-            s.run_command(command, serde_json::json!({ "ids": [ids] })),
-            "{command}: {:?}",
-            s.error
-        );
-        s.poll_probes();
-        assert_eq!(s.instruments.note, None, "{command}");
-        assert_eq!(
-            last_sent(&s),
-            Some((t, NoteKind::Off { pitch: 36 })),
-            "{command}"
-        );
-        assert!(
-            !s.instrument_up() || s.instruments.grab.is_none(),
-            "{command}"
-        );
-    }
 }
 
 #[test]
@@ -615,17 +736,4 @@ fn plg_066_the_keys_and_the_pads_read_their_notes() {
         .clone();
     assert_eq!(pad.role(), accesskit::Role::Button);
     assert_eq!(pad.label(), Some("A1 C1, tone_C3"));
-}
-
-/// L2-ui-4: a pad held while the song closes ends its note before the song goes, not only
-/// by the transport's reset.
-#[test]
-fn plg_066_a_pad_held_ends_when_the_song_closes() {
-    let (mut s, g, t, id) = played("Drum Kit");
-    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).unwrap();
-    assert!(s.instrument_down(&g, x, y));
-    wait_sounding(&mut s, id, |n| n > 0);
-    s.keep_leaving();
-    assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 36 })));
-    assert_eq!(s.instruments.note, None);
 }

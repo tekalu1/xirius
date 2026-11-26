@@ -526,32 +526,124 @@ fn the_sidechain_seat_is_only_on_the_devices_that_take_a_key() {
     }
 }
 
-#[test]
-fn the_tag_marks_the_preset_the_knobs_moved_off() {
+/// The preset the routes of [`the_tag_names_the_preset_however_it_came_and_marks_a_knob_off_it`]
+/// bring the device to.
+const AT: &str = "ドラムをまとめる";
+
+/// A way for the device to come to [`AT`]; the folder is the row's own.
+type Route = fn(&mut Studio, &Geometry, PluginId, &std::path::Path) -> Result<(), String>;
+
+/// The tag of `id` is `name`, marked or not.
+fn tag_is(s: &Studio, id: PluginId, name: &str, marked: bool) -> Result<(), String> {
+    let tag = s.instruments.tag_of(&insert(s, id));
+    if tag != (name.to_string(), marked) {
+        return Err(format!("the tag is {tag:?}, not ({name}, {marked})"));
+    }
+    Ok(())
+}
+
+/// One row: from the defaults, `route` brings the Compressor to [`AT`].
+fn tag_follows(route: Route, folder: &std::path::Path) -> Result<(), String> {
     let (mut s, g, t, _) = studio();
     let id = compressor(&mut s, t);
     // At the defaults the tag names the preset with no mark.
-    assert_eq!(
-        s.instruments.tag_of(&insert(&s, id)),
-        ("Default".to_string(), false)
-    );
-    // Load another: it names that one; a knob off it marks it.
-    assert!(s.load_preset(id, "ドラムをまとめる"));
-    assert_eq!(
-        s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる".to_string(), false)
-    );
+    tag_is(&s, id, "Default", false)?;
+    route(&mut s, &g, id, folder)?;
+    let g = s.geometry(1600.0, 1000.0);
+    let kept = preset_of(&insert(&s, id)).map(str::to_string);
+    if kept.as_deref() != Some(AT) {
+        return Err(format!("the device keeps {kept:?}"));
+    }
+    tag_is(&s, id, AT, false)?;
+    // The list checks the preset it is at, not the instrument's Default.
+    s.popup = None;
+    s.instruments.detached_target = Some(id);
+    let (x, y) = s
+        .instrument_center(&g, id, Part::Preset)
+        .ok_or("no preset seat")?;
+    if !s.instrument_down(&g, x, y) {
+        return Err("the preset seat took no press".into());
+    }
+    let checked = s.popup.as_ref().map(|p| p.current().to_string());
+    if checked != Some(format!("{}{AT}", super::menu::LOAD)) {
+        return Err(format!("the list checks {checked:?}"));
+    }
+    s.popup = None;
+    // A knob off it marks it; back on a preset's values the mark is gone.
     nudge(&mut s, &g, id, "threshold");
-    assert_eq!(
-        s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる".to_string(), true)
-    );
-    // Back on a preset's values the mark is gone.
-    assert!(s.load_preset(id, "Default"));
-    assert_eq!(
-        s.instruments.tag_of(&insert(&s, id)),
-        ("Default".to_string(), false)
-    );
+    tag_is(&s, id, AT, true)?;
+    if !s.load_preset(id, "Default") {
+        return Err("Default did not load".into());
+    }
+    tag_is(&s, id, "Default", false)
+}
+
+/// However the device came to a preset (its tag, the song opened again, an undo, the CLI and
+/// the MCP sending the command itself), the device keeps it, the tag names it unmarked and the
+/// list checks it; a knob off it marks the tag, and loading another takes the mark away.
+#[test]
+fn the_tag_names_the_preset_however_it_came_and_marks_a_knob_off_it() {
+    let routes: [(&str, Route); 4] = [
+        ("loaded from the tag", |s, _, id, _| {
+            if !s.load_preset(id, AT) {
+                return Err("not loaded".into());
+            }
+            Ok(())
+        }),
+        ("kept in a song opened again", |s, _, id, folder| {
+            if !s.load_preset(id, AT) {
+                return Err("not loaded".into());
+            }
+            let t = keys(s);
+            let dir = folder.join("song");
+            s.command(|song| song.save_as(&dir));
+            if let Some(e) = &s.error {
+                return Err(format!("saving: {e:?}"));
+            }
+            // A fresh start opens the song.
+            *s = Studio::sample();
+            s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
+            if let Some(e) = &s.error {
+                return Err(format!("opening: {e:?}"));
+            }
+            if keys(s) != t {
+                return Err("another track".into());
+            }
+            s.show_instrument(t, id);
+            s.instruments.detached_target = Some(id);
+            Ok(())
+        }),
+        ("gone back to by an undo", |s, g, id, _| {
+            if !(s.load_preset(id, AT) && s.load_preset(id, "ボーカルを整える") && s.undo(g))
+            {
+                return Err("not loaded or not undone".into());
+            }
+            Ok(())
+        }),
+        ("loaded from the CLI", |s, _, id, _| {
+            let def = insert(s, id).builtin().unwrap();
+            let values: Vec<_> = def
+                .params
+                .iter()
+                .zip(preset_values(def, AT).unwrap())
+                .filter(|(p, _)| p.preset)
+                .map(|(p, v)| serde_json::json!({ "param": p.id, "value": v }))
+                .collect();
+            let args = serde_json::json!({ "id": id.to_string(), "preset": AT, "values": values });
+            if !s.run_command("plugin.preset.load", args) {
+                return Err(format!("{:?}", s.error));
+            }
+            Ok(())
+        }),
+    ];
+    let mut failures = Vec::new();
+    for (name, route) in routes {
+        let folder = crate::shot::TestFolder::new("xirius-ui-inst-tag-");
+        if let Err(e) = tag_follows(route, folder.path()) {
+            failures.push(format!("{name}: {e}"));
+        }
+    }
+    assert!(failures.is_empty(), "the tag: {failures:#?}");
 }
 
 /// A Compressor on the track, its window open.
@@ -585,99 +677,6 @@ fn insert(s: &Studio, id: PluginId) -> Plugin {
         .find(|x| x.id == id)
         .cloned()
         .unwrap()
-}
-
-#[test]
-fn an_effects_preset_list_checks_the_preset_it_is_at() {
-    let (mut s, g, t, _) = studio();
-    assert!(s.run_command(
-        "plugin.add",
-        serde_json::json!({ "track": t.to_string(), "name": "Compressor" }),
-    ));
-    let comp = added(&s, t, "Compressor");
-    s.show_instrument(t, comp);
-    s.instruments.detached_target = Some(comp);
-    assert!(s.load_preset(comp, "ドラムをまとめる"));
-    let (x, y) = at(&mut s, &g, comp, Part::Preset);
-    assert!(s.instrument_down(&g, x, y));
-    let popup = s.popup.as_ref().expect("the presets");
-    assert_eq!(
-        popup.current(),
-        format!("{}ドラムをまとめる", super::menu::LOAD),
-        "not the instrument's Default"
-    );
-    assert_eq!(
-        s.instruments.tag_of(&insert(&s, comp)),
-        ("ドラムをまとめる".to_string(), false)
-    );
-}
-
-#[test]
-fn the_tag_keeps_its_preset_in_a_song_opened_again() {
-    let folder = crate::shot::TestFolder::new("xirius-ui-inst-tag-reopen-");
-    let (mut s, _, t, _) = studio();
-    let id = compressor(&mut s, t);
-    assert!(s.load_preset(id, "ドラムをまとめる"));
-    let dir = folder.path().join("song");
-    s.command(|song| song.save_as(&dir));
-    assert!(s.error.is_none(), "{:?}", s.error);
-    // A fresh start opens the song: the device keeps its preset's name in it.
-    let mut s = Studio::sample();
-    let g = s.geometry(1600.0, 1000.0);
-    s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
-    assert!(s.error.is_none(), "{:?}", s.error);
-    let t2 = keys(&s);
-    assert_eq!(t2, t);
-    s.show_instrument(t, id);
-    s.instruments.detached_target = Some(id);
-    assert_eq!(
-        s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる".to_string(), false)
-    );
-    nudge(&mut s, &g, id, "threshold");
-    assert_eq!(
-        s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる".to_string(), true)
-    );
-}
-
-#[test]
-fn the_tag_keeps_the_preset_an_undo_went_back_to() {
-    let (mut s, g, t, _) = studio();
-    let id = compressor(&mut s, t);
-    assert!(s.load_preset(id, "ドラムをまとめる"));
-    assert!(s.load_preset(id, "ボーカルを整える"));
-    assert!(s.undo(&g));
-    assert_eq!(preset_of(&insert(&s, id)), Some("ドラムをまとめる"));
-    nudge(&mut s, &g, id, "threshold");
-    assert_eq!(
-        s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる".to_string(), true)
-    );
-}
-
-#[test]
-fn the_tag_keeps_a_preset_loaded_from_the_cli() {
-    let (mut s, g, t, _) = studio();
-    let id = compressor(&mut s, t);
-    // The CLI and the MCP send the command itself, not through the tag.
-    let def = insert(&s, id).builtin().unwrap();
-    let values: Vec<_> = def
-        .params
-        .iter()
-        .zip(preset_values(def, "ドラムをまとめる").unwrap())
-        .filter(|(p, _)| p.preset)
-        .map(|(p, v)| serde_json::json!({ "param": p.id, "value": v }))
-        .collect();
-    assert!(s.run_command(
-        "plugin.preset.load",
-        serde_json::json!({ "id": id.to_string(), "preset": "ドラムをまとめる", "values": values }),
-    ));
-    nudge(&mut s, &g, id, "threshold");
-    assert_eq!(
-        s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる".to_string(), true)
-    );
 }
 
 /// A Compressor in a song from before the sidechain (PLG-071) keeps only its seven knobs. At
