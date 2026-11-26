@@ -176,12 +176,36 @@ mod tests {
         assert!(fast.iter().any(|n| n.start == 10 && n.length == 100));
     }
 
-    /// The query against looking at every note, on a large song (UI-036). Prints the numbers.
+    /// The query draws what looking at every note draws, on a large song (UI-036). The speed is
+    /// the ignored test below: a time limit on a shared CI runner fails for the runner's load.
     #[test]
+    fn the_query_draws_what_a_full_scan_draws_on_a_large_song() {
+        query_against_full_scan();
+    }
+
+    /// The query against looking at every note, on a large song (UI-036). Prints the numbers.
+    /// Run by hand: `cargo test -p xirius-ui --lib the_query_is_faster -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "a time limit: run by hand on a quiet PC, not on a shared CI runner"]
     fn the_query_is_faster_than_a_full_scan_on_a_large_song() {
+        let (query, scan) = query_against_full_scan();
+        assert!(query * 4 < scan, "index {query:?}, scan {scan:?}");
+        assert!(per_frame(query) < 16.0);
+    }
+
+    const FRAMES: u32 = 40;
+
+    /// Milliseconds a frame of `FRAMES` took.
+    fn per_frame(d: std::time::Duration) -> f64 {
+        d.as_secs_f64() * 1000.0 / f64::from(FRAMES)
+    }
+
+    /// The times of the query and of the full scan over `FRAMES` frames, each frame's notes
+    /// compared.
+    fn query_against_full_scan() -> (std::time::Duration, std::time::Duration) {
         let (mut s, g) = song_with(200_000, 40_000);
         s.roll.beat_px = 60.0;
-        let frames = 40;
+        let frames = FRAMES;
         let ctx = s.roll_ctx(&g).unwrap();
         let v = s.roll.view(&ctx);
         let t = Instant::now();
@@ -203,7 +227,7 @@ mod tests {
             assert_eq!(fast, slow);
             shown += slow.len();
         }
-        let per = |d: std::time::Duration| d.as_secs_f64() * 1000.0 / f64::from(frames);
+        let per = per_frame;
         println!(
             "UI-036: 200000 notes, {frames} frames, {} drawn per frame; \
              built once in {build:?}; index {:.4} ms/frame, full scan {:.4} ms/frame ({:.0}x)",
@@ -212,7 +236,6 @@ mod tests {
             per(scan),
             scan.as_secs_f64() / query.as_secs_f64().max(1e-9)
         );
-        assert!(query * 4 < scan, "index {query:?}, scan {scan:?}");
-        assert!(per(query) < 16.0);
+        (query, scan)
     }
 }

@@ -28,6 +28,24 @@ class SelectionTests(unittest.TestCase):
             self.assertIn("--ignored", command)
         self.assertIn("not test(mixer::editor_tests)", ci_tests.test_filter())
 
+    def test_a_window_test_that_is_no_longer_a_target_is_named(self):
+        meta = {"packages": [{"name": "xirius-ui", "targets": [{"name": "crash_entry", "kind": ["test"]}]}]}
+        with patch.object(ci_tests, "WINDOW_TESTS", {"xirius-ui": {"crash_entry", "gone"}}):
+            self.assertEqual(ci_tests.missing_window_tests(meta), ["xirius-ui gone"])
+        with patch.object(ci_tests, "WINDOW_TESTS", {"xirius-ui": {"crash_entry"}}):
+            self.assertEqual(ci_tests.missing_window_tests(meta), [])
+
+    def test_the_fixture_plugins_are_built_with_the_workspace_not_on_their_own(self):
+        # Built alone they get other features and rewrite their unhashed rlibs, and the archive
+        # then rebuilt every crate above them (about 4 minutes on Windows).
+        with patch.object(ci_tests, "run") as run:
+            ci_tests.prepare()
+        self.assertEqual(len(run.call_args_list), 1)
+        command = run.call_args_list[0].args[0]
+        for arg in ("--workspace", "--lib", "--bins", "--tests"):
+            self.assertIn(arg, command)
+        self.assertNotIn("-p", command)
+
     def test_workspace_targets_are_the_union_of_legacy_integration_targets(self):
         commands = [["cargo", "test", "--test", "a", "--test", "b"],
                     ["cargo", "test", "--test", "b", "--test", "c"]]
@@ -77,9 +95,10 @@ class CoverageTests(unittest.TestCase):
     def test_release_checks_depend_on_build_and_all_shards(self):
         workflow = (Path(__file__).resolve().parent.parent / ".github/workflows/rust.yml").read_text(encoding="utf-8")
         aggregate = workflow.split("  check:\n", 1)[1].split("  deny:", 1)[0]
-        self.assertIn("needs: [build, test]", aggregate)
+        self.assertIn("needs: [build, side, test]", aggregate)
         self.assertIn("if: always()", aggregate)
         self.assertIn('assert os.environ["BUILD_RESULT"] == "success"', aggregate)
+        self.assertIn('assert os.environ["SIDE_RESULT"] == "success"', aggregate)
         self.assertIn('assert os.environ["TEST_RESULT"] == "success"', aggregate)
         self.assertIn("--expected-shards 4", aggregate)
         self.assertIn("save-if: ${{ github.ref == 'refs/heads/main' }}", workflow)

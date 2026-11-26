@@ -8725,6 +8725,15 @@ done_when = "dev と test は line-tables-only を使い、incremental は Cargo
 status = "done"
 
 [[item]]
+id = "ARC-048"
+title = "CI の試験のビルドを 1 回にし、既定の feature と doctest をビルドの横で流す"
+area = "ARC"
+phase = "v1.1"
+source = "2026-11-26 の持ち主の承認（試験の監査の §7 の 1、推奨どおり）"
+done_when = "scripts/ci_tests.py の準備は、試験用のプラグイン（xirius-test-clap・xirius-test-vst3）を別に作らず、1 回の cargo build --workspace --lib --bins --tests で作り、nextest archive がクレートを作り直さない。既定の feature の試験と doctest は rust の別の job（side）で build と並んで流れ、check はその成功も求める。WINDOW_TESTS に無い試験の名前が残ると ci_tests.py が名前を出して止まる。窓を開かない源の検査（source_rules）は CI で流れる名前にし、OS の入力を使わない検査も CI で流す。共有の runner で時間の上限を確かめる試験は #[ignore] にし、同じ試験の結果の一致は CI に残す。rust は scripts/test_licenses.py も流す。前と後の main の rust の時間を測る。試験は減らさない"
+status = "done"
+
+[[item]]
 id = "UI-371"
 title = "画面外の窓試験を現行の仕様にそろえ、トラック一覧の UIA を読めるようにする"
 area = "UI"

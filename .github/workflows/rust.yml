@@ -52,15 +52,11 @@ jobs:
       - name: release and test runner scripts
         shell: bash
         run: |
-          for t in test_release test_release_ci_gate test_update_sign test_pre_push test_ci_tests test_prune_deps; do
+          for t in test_release test_release_ci_gate test_update_sign test_pre_push test_ci_tests test_prune_deps test_licenses; do
             python "scripts/$t.py"
           done
       - name: design lint
         run: cargo run --locked -j6 -p xirius-design-lint
-      - name: default feature checks
-        run: python scripts/ci_tests.py --default-features
-      - name: doctest
-        run: python scripts/ci_tests.py --doctest
       - name: build and archive
         run: python scripts/ci_tests.py --archive tests.tar.zst
       - uses: actions/upload-artifact@v7
@@ -71,6 +67,29 @@ jobs:
           compression-level: 0
           retention-days: 3
           if-no-files-found: error
+
+  # Beside the build, not inside it: the tests with ordinary features and the doctests build
+  # their own targets, and the archive waited for them on the longest path.
+  side:
+    name: default features and doctest (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        if: github.event_name != 'workflow_dispatch' || inputs.use_cache
+        with:
+          shared-key: side
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: default feature checks
+        run: python scripts/ci_tests.py --default-features
+      - name: doctest
+        run: python scripts/ci_tests.py --doctest
 
   lame:
     name: test encoder (${{ matrix.os }})
@@ -154,7 +173,7 @@ jobs:
 
   check:
     name: check (${{ matrix.os }})
-    needs: [build, test]
+    needs: [build, side, test]
     if: always()
     runs-on: ${{ matrix.os }}
     strategy:
@@ -165,11 +184,13 @@ jobs:
       - name: require every build and shard
         env:
           BUILD_RESULT: ${{ needs.build.result }}
+          SIDE_RESULT: ${{ needs.side.result }}
           TEST_RESULT: ${{ needs.test.result }}
         shell: python
         run: |
           import os
           assert os.environ["BUILD_RESULT"] == "success"
+          assert os.environ["SIDE_RESULT"] == "success"
           assert os.environ["TEST_RESULT"] == "success"
       - uses: actions/checkout@v7
         if: always()
