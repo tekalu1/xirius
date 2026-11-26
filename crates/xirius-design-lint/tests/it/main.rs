@@ -6,14 +6,11 @@
 //! test(/^tokens::/)'` or `cargo test -p xirius-design-lint --test it tokens::`.
 
 mod behavior;
-mod color_usage;
 mod fixtures;
 mod interaction_coverage;
 mod license_bans;
-mod ops_coverage;
 mod policy_docs;
 mod tokens;
 mod trademarks;
-mod ui_io;
 mod ui_io_inventory;
 mod vst2_policy;

@@ -1,0 +1,926 @@
+# 試験が出す表で、手で直さない（XIRIUS_WRITE_CONTRAST=1 cargo nextest run -p xirius-design contrast）。
+# 表	行	前の色	面の色	比	下限
+text	Dark Strong on Paper	#f4f6ff	#1b1c23	15.74	4.5
+text	Dark Body on Paper	#dfe3f2	#1b1c23	13.26	4.5
+text	Dark Disabled on Paper	#9095a8	#1b1c23	5.70	4.5
+text	Dark Blue on Paper	#9eabde	#1b1c23	7.55	4.5
+text	Dark Mark on Paper	#e07ab8	#1b1c23	6.18	4.5
+text	Dark Alert on Paper	#ff7a70	#1b1c23	6.69	4.5
+text	Dark Ai on Paper	#b48cff	#1b1c23	6.58	4.5
+text	Dark Strong on S0	#f4f6ff	#121318	17.20	4.5
+text	Dark Body on S0	#dfe3f2	#121318	14.49	4.5
+text	Dark Blue on S0	#9eabde	#121318	8.24	4.5
+text	Dark Mark on S0	#e07ab8	#121318	6.75	4.5
+text	Dark Alert on S0	#ff7a70	#121318	7.31	4.5
+text	Dark Ai on S0	#b48cff	#121318	7.19	4.5
+text	Dark Strong on S1	#f4f6ff	#222329	14.53	4.5
+text	Dark Body on S1	#dfe3f2	#222329	12.24	4.5
+text	Dark Blue on S1	#9eabde	#222329	6.96	4.5
+text	Dark Mark on S1	#e07ab8	#222329	5.70	4.5
+text	Dark Alert on S1	#ff7a70	#222329	6.17	4.5
+text	Dark Ai on S1	#b48cff	#222329	6.07	4.5
+text	Dark Strong on S2	#f4f6ff	#15161c	16.74	4.5
+text	Dark Body on S2	#dfe3f2	#15161c	14.10	4.5
+text	Dark Blue on S2	#9eabde	#15161c	8.02	4.5
+text	Dark Mark on S2	#e07ab8	#15161c	6.57	4.5
+text	Dark Alert on S2	#ff7a70	#15161c	7.11	4.5
+text	Dark Ai on S2	#b48cff	#15161c	6.99	4.5
+text	Dark Strong on S3	#f4f6ff	#2a2b32	13.07	4.5
+text	Dark Body on S3	#dfe3f2	#2a2b32	11.01	4.5
+text	Dark Blue on S3	#9eabde	#2a2b32	6.26	4.5
+text	Dark Mark on S3	#e07ab8	#2a2b32	5.13	4.5
+text	Dark Alert on S3	#ff7a70	#2a2b32	5.55	4.5
+text	Dark Ai on S3	#b48cff	#2a2b32	5.46	4.5
+text	Dark Strong on Hover	#f4f6ff	#222329	14.53	4.5
+text	Dark Body on Hover	#dfe3f2	#222329	12.24	4.5
+text	Dark Blue on Hover	#9eabde	#222329	6.96	4.5
+text	Dark Mark on Hover	#e07ab8	#222329	5.70	4.5
+text	Dark Alert on Hover	#ff7a70	#222329	6.17	4.5
+text	Dark Ai on Hover	#b48cff	#222329	6.07	4.5
+text	Dark Strong on Sel	#f4f6ff	#2a2b32	13.07	4.5
+text	Dark Body on Sel	#dfe3f2	#2a2b32	11.01	4.5
+text	Dark Blue on Sel	#9eabde	#2a2b32	6.26	4.5
+text	Dark Mark on Sel	#e07ab8	#2a2b32	5.13	4.5
+text	Dark Alert on Sel	#ff7a70	#2a2b32	5.55	4.5
+text	Dark Ai on Sel	#b48cff	#2a2b32	5.46	4.5
+text	Dark Strong on Field	#f4f6ff	#0c0d11	18.01	4.5
+text	Dark Body on Field	#dfe3f2	#0c0d11	15.17	4.5
+text	Dark OnTextSel on TextSel	#f4f6ff	#465082	7.13	4.5
+text	Dark Strong on Clip	#f4f6ff	#35373f	11.00	4.5
+text	Dark Body on Clip	#dfe3f2	#35373f	9.27	4.5
+text	Dark Blue on Clip	#9eabde	#35373f	5.27	4.5
+text	Dark Alert on Clip	#ff7a70	#35373f	4.67	4.5
+text	Dark Ai on Clip	#b48cff	#35373f	4.60	4.5
+text	Dark Strong on ClipSel	#f4f6ff	#41434c	9.13	4.5
+text	Dark Body on ClipSel	#dfe3f2	#41434c	7.70	4.5
+text	Dark Strong on TrackSel	#f4f6ff	#41434c	9.13	4.5
+text	Dark Body on TrackSel	#dfe3f2	#41434c	7.70	4.5
+text	Dark Strong on LaneSel	#f4f6ff	#282930	13.43	4.5
+text	Dark Body on LaneSel	#dfe3f2	#282930	11.31	4.5
+text	Dark OnFill on Fill	#f4f5ff	#5665cd	4.68	4.5
+text	Dark OnFill on FillHover	#f4f5ff	#4f5ec8	5.14	4.5
+text	Dark OnFill on Danger	#f4f5ff	#c42b1c	5.22	4.5
+text	Dark OnFill on DangerHover	#f4f5ff	#a9241a	6.55	4.5
+text	Dark section of track 0	#0d0f16	#5b8def	5.93	4.5
+text	Dark section of track 1	#0d0f16	#3fb6a8	7.72	4.5
+text	Dark section of track 2	#0d0f16	#7cc46a	9.08	4.5
+text	Dark section of track 3	#0d0f16	#d6b24a	9.41	4.5
+text	Dark section of track 4	#0d0f16	#e08a4f	7.22	4.5
+text	Dark section of track 5	#0d0f16	#d96a9a	5.91	4.5
+text	Dark section of track 6	#0d0f16	#9a7fe0	5.91	4.5
+text	Dark section of track 7	#0d0f16	#8c95ad	6.40	4.5
+text	Dark section of track 8	#0d0f16	#c9a27a	8.14	4.5
+text	Dark section of track 9	#0d0f16	#5fb3d9	8.15	4.5
+text	Dark section of track 10	#0d0f16	#f2897c	7.88	4.5
+text	Dark section of track 11	#0d0f16	#9db854	8.58	4.5
+text	Dark section of track 12	#0d0f16	#4ec491	8.78	4.5
+text	Dark section of track 13	#0d0f16	#00c0da	8.71	4.5
+text	Dark section of track 14	#0d0f16	#98a2fc	8.12	4.5
+text	Dark section of track 15	#0d0f16	#dd8acb	7.81	4.5
+text	Dark toggle Mute on	#201a00	#e3c14b	9.92	4.5
+text	Dark toggle Solo on	#06210f	#4cc38a	7.69	4.5
+text	Dark toggle Arm on	#f4f5ff	#c42b1c	5.22	4.5
+text	Dark toggle Monitor on	#f4f5ff	#5665cd	4.68	4.5
+text	Dark toggle off	#dfe3f2	#2a2b32	11.01	4.5
+text	Dark note name on a white key	#0d0f16	#ffffff	19.14	4.5
+text	Dark note name on a lit key	#0d0f16	#728cd7	5.88	4.5
+text	Light Strong on Paper	#0f1330	#ffffff	18.16	4.5
+text	Light Body on Paper	#1c2247	#ffffff	15.34	4.5
+text	Light Disabled on Paper	#616678	#ffffff	5.71	4.5
+text	Light Blue on Paper	#3a499e	#ffffff	7.99	4.5
+text	Light Mark on Paper	#aa2678	#ffffff	6.45	4.5
+text	Light Alert on Paper	#a92a22	#ffffff	6.90	4.5
+text	Light Ai on Paper	#6a3cc8	#ffffff	6.79	4.5
+text	Light Strong on S0	#0f1330	#eceef4	15.66	4.5
+text	Light Body on S0	#1c2247	#eceef4	13.22	4.5
+text	Light Blue on S0	#3a499e	#eceef4	6.89	4.5
+text	Light Mark on S0	#aa2678	#eceef4	5.56	4.5
+text	Light Alert on S0	#a92a22	#eceef4	5.95	4.5
+text	Light Ai on S0	#6a3cc8	#eceef4	5.85	4.5
+text	Light Strong on S1	#0f1330	#f4f5f9	16.67	4.5
+text	Light Body on S1	#1c2247	#f4f5f9	14.08	4.5
+text	Light Blue on S1	#3a499e	#f4f5f9	7.34	4.5
+text	Light Mark on S1	#aa2678	#f4f5f9	5.92	4.5
+text	Light Alert on S1	#a92a22	#f4f5f9	6.34	4.5
+text	Light Ai on S1	#6a3cc8	#f4f5f9	6.23	4.5
+text	Light Strong on S2	#0f1330	#e8eaf1	15.11	4.5
+text	Light Body on S2	#1c2247	#e8eaf1	12.76	4.5
+text	Light Blue on S2	#3a499e	#e8eaf1	6.65	4.5
+text	Light Mark on S2	#aa2678	#e8eaf1	5.36	4.5
+text	Light Alert on S2	#a92a22	#e8eaf1	5.74	4.5
+text	Light Ai on S2	#6a3cc8	#e8eaf1	5.65	4.5
+text	Light Strong on S3	#0f1330	#dcdee8	13.54	4.5
+text	Light Body on S3	#1c2247	#dcdee8	11.44	4.5
+text	Light Blue on S3	#3a499e	#dcdee8	5.96	4.5
+text	Light Mark on S3	#aa2678	#dcdee8	4.81	4.5
+text	Light Alert on S3	#a92a22	#dcdee8	5.15	4.5
+text	Light Ai on S3	#6a3cc8	#dcdee8	5.06	4.5
+text	Light Strong on Hover	#0f1330	#f4f5f9	16.67	4.5
+text	Light Body on Hover	#1c2247	#f4f5f9	14.08	4.5
+text	Light Blue on Hover	#3a499e	#f4f5f9	7.34	4.5
+text	Light Mark on Hover	#aa2678	#f4f5f9	5.92	4.5
+text	Light Alert on Hover	#a92a22	#f4f5f9	6.34	4.5
+text	Light Ai on Hover	#6a3cc8	#f4f5f9	6.23	4.5
+text	Light Strong on Sel	#0f1330	#e3e5ed	14.44	4.5
+text	Light Body on Sel	#1c2247	#e3e5ed	12.19	4.5
+text	Light Blue on Sel	#3a499e	#e3e5ed	6.36	4.5
+text	Light Mark on Sel	#aa2678	#e3e5ed	5.13	4.5
+text	Light Alert on Sel	#a92a22	#e3e5ed	5.49	4.5
+text	Light Ai on Sel	#6a3cc8	#e3e5ed	5.40	4.5
+text	Light Strong on Field	#0f1330	#d7dae4	13.01	4.5
+text	Light Body on Field	#1c2247	#d7dae4	10.98	4.5
+text	Light OnTextSel on TextSel	#0f1330	#aab4e0	8.92	4.5
+text	Light Strong on Clip	#0f1330	#d5d8e4	12.78	4.5
+text	Light Body on Clip	#1c2247	#d5d8e4	10.79	4.5
+text	Light Blue on Clip	#3a499e	#d5d8e4	5.62	4.5
+text	Light Alert on Clip	#a92a22	#d5d8e4	4.86	4.5
+text	Light Ai on Clip	#6a3cc8	#d5d8e4	4.78	4.5
+text	Light Strong on ClipSel	#0f1330	#c9cdda	11.44	4.5
+text	Light Body on ClipSel	#1c2247	#c9cdda	9.66	4.5
+text	Light Strong on TrackSel	#0f1330	#c9cdda	11.44	4.5
+text	Light Body on TrackSel	#1c2247	#c9cdda	9.66	4.5
+text	Light Strong on LaneSel	#0f1330	#eceef4	15.66	4.5
+text	Light Body on LaneSel	#1c2247	#eceef4	13.22	4.5
+text	Light OnFill on Fill	#f4f5ff	#3a499e	7.37	4.5
+text	Light OnFill on FillHover	#f4f5ff	#2f3c86	9.17	4.5
+text	Light OnFill on Danger	#f4f5ff	#c42b1c	5.22	4.5
+text	Light OnFill on DangerHover	#f4f5ff	#a9241a	6.55	4.5
+text	Light section of track 0	#ffffff	#3e6dce	4.90	4.5
+text	Light section of track 1	#ffffff	#1a7f74	4.85	4.5
+text	Light section of track 2	#ffffff	#417f34	4.87	4.5
+text	Light section of track 3	#ffffff	#8b6d17	4.89	4.5
+text	Light section of track 4	#ffffff	#ae5b25	4.86	4.5
+text	Light section of track 5	#ffffff	#bb497d	4.81	4.5
+text	Light section of track 6	#ffffff	#7a5cc9	5.00	4.5
+text	Light section of track 7	#ffffff	#68718a	4.86	4.5
+text	Light section of track 8	#ffffff	#8d6b48	4.85	4.5
+text	Light section of track 9	#ffffff	#2779a0	4.85	4.5
+text	Light section of track 10	#ffffff	#a8372e	6.46	4.5
+text	Light section of track 11	#ffffff	#566f00	5.72	4.5
+text	Light section of track 12	#ffffff	#007c47	5.28	4.5
+text	Light section of track 13	#ffffff	#007694	5.23	4.5
+text	Light section of track 14	#ffffff	#5255b6	6.30	4.5
+text	Light section of track 15	#ffffff	#943b84	6.53	4.5
+text	Light toggle Mute on	#201a00	#e3c14b	9.92	4.5
+text	Light toggle Solo on	#06210f	#4cc38a	7.69	4.5
+text	Light toggle Arm on	#f4f5ff	#c42b1c	5.22	4.5
+text	Light toggle Monitor on	#f4f5ff	#3a499e	7.37	4.5
+text	Light toggle off	#1c2247	#dcdee8	11.44	4.5
+text	Light note name on a white key	#0d0f16	#ffffff	19.14	4.5
+text	Light note name on a lit key	#ffffff	#5665cd	5.07	4.5
+graphic	Dark track 0 on Paper	#5b8def	#1b1c23	5.26	3
+graphic	Dark track 1 on Paper	#3fb6a8	#1b1c23	6.85	3
+graphic	Dark track 2 on Paper	#7cc46a	#1b1c23	8.05	3
+graphic	Dark track 3 on Paper	#d6b24a	#1b1c23	8.35	3
+graphic	Dark track 4 on Paper	#e08a4f	#1b1c23	6.40	3
+graphic	Dark track 5 on Paper	#d96a9a	#1b1c23	5.24	3
+graphic	Dark track 6 on Paper	#9a7fe0	#1b1c23	5.24	3
+graphic	Dark track 7 on Paper	#8c95ad	#1b1c23	5.67	3
+graphic	Dark track 8 on Paper	#c9a27a	#1b1c23	7.22	3
+graphic	Dark track 9 on Paper	#5fb3d9	#1b1c23	7.22	3
+graphic	Dark track 10 on Paper	#f2897c	#1b1c23	6.99	3
+graphic	Dark track 11 on Paper	#9db854	#1b1c23	7.61	3
+graphic	Dark track 12 on Paper	#4ec491	#1b1c23	7.78	3
+graphic	Dark track 13 on Paper	#00c0da	#1b1c23	7.72	3
+graphic	Dark track 14 on Paper	#98a2fc	#1b1c23	7.20	3
+graphic	Dark track 15 on Paper	#dd8acb	#1b1c23	6.93	3
+graphic	Dark FocusRing on Paper	#728cd7	#1b1c23	5.21	3
+graphic	Dark AiLine on Paper	#b48cff	#1b1c23	6.58	3
+graphic	Dark StaleDot on Paper	#dcb36a	#1b1c23	8.65	3
+graphic	Dark category Tool on Paper	#8fb4ff	#1b1c23	8.20	3
+graphic	Dark category Play on Paper	#6fd6a8	#1b1c23	9.59	3
+graphic	Dark category Edit on Paper	#f2c46d	#1b1c23	10.42	3
+graphic	Dark category Track on Paper	#ef8fc8	#1b1c23	7.63	3
+graphic	Dark category View on Paper	#c7a4ff	#1b1c23	8.23	3
+graphic	Dark structure line Rest on Paper	#8a91b8	#1b1c23	5.52	3
+graphic	Dark structure line Hover on Paper	#728cd7	#1b1c23	5.21	3
+graphic	Dark structure line Selected on Paper	#9eabde	#1b1c23	7.55	3
+graphic	Dark track 0 on S0	#5b8def	#121318	5.74	3
+graphic	Dark track 1 on S0	#3fb6a8	#121318	7.48	3
+graphic	Dark track 2 on S0	#7cc46a	#121318	8.80	3
+graphic	Dark track 3 on S0	#d6b24a	#121318	9.12	3
+graphic	Dark track 4 on S0	#e08a4f	#121318	6.99	3
+graphic	Dark track 5 on S0	#d96a9a	#121318	5.72	3
+graphic	Dark track 6 on S0	#9a7fe0	#121318	5.73	3
+graphic	Dark track 7 on S0	#8c95ad	#121318	6.20	3
+graphic	Dark track 8 on S0	#c9a27a	#121318	7.89	3
+graphic	Dark track 9 on S0	#5fb3d9	#121318	7.89	3
+graphic	Dark track 10 on S0	#f2897c	#121318	7.64	3
+graphic	Dark track 11 on S0	#9db854	#121318	8.32	3
+graphic	Dark track 12 on S0	#4ec491	#121318	8.51	3
+graphic	Dark track 13 on S0	#00c0da	#121318	8.44	3
+graphic	Dark track 14 on S0	#98a2fc	#121318	7.87	3
+graphic	Dark track 15 on S0	#dd8acb	#121318	7.57	3
+graphic	Dark FocusRing on S0	#728cd7	#121318	5.70	3
+graphic	Dark AiLine on S0	#b48cff	#121318	7.19	3
+graphic	Dark StaleDot on S0	#dcb36a	#121318	9.45	3
+graphic	Dark category Tool on S0	#8fb4ff	#121318	8.96	3
+graphic	Dark category Play on S0	#6fd6a8	#121318	10.48	3
+graphic	Dark category Edit on S0	#f2c46d	#121318	11.39	3
+graphic	Dark category Track on S0	#ef8fc8	#121318	8.33	3
+graphic	Dark category View on S0	#c7a4ff	#121318	8.99	3
+graphic	Dark structure line Rest on S0	#8a91b8	#121318	6.03	3
+graphic	Dark structure line Hover on S0	#728cd7	#121318	5.70	3
+graphic	Dark structure line Selected on S0	#9eabde	#121318	8.24	3
+graphic	Dark track 0 on S1	#5b8def	#222329	4.85	3
+graphic	Dark track 1 on S1	#3fb6a8	#222329	6.32	3
+graphic	Dark track 2 on S1	#7cc46a	#222329	7.43	3
+graphic	Dark track 3 on S1	#d6b24a	#222329	7.70	3
+graphic	Dark track 4 on S1	#e08a4f	#222329	5.91	3
+graphic	Dark track 5 on S1	#d96a9a	#222329	4.83	3
+graphic	Dark track 6 on S1	#9a7fe0	#222329	4.84	3
+graphic	Dark track 7 on S1	#8c95ad	#222329	5.24	3
+graphic	Dark track 8 on S1	#c9a27a	#222329	6.66	3
+graphic	Dark track 9 on S1	#5fb3d9	#222329	6.67	3
+graphic	Dark track 10 on S1	#f2897c	#222329	6.45	3
+graphic	Dark track 11 on S1	#9db854	#222329	7.03	3
+graphic	Dark track 12 on S1	#4ec491	#222329	7.18	3
+graphic	Dark track 13 on S1	#00c0da	#222329	7.13	3
+graphic	Dark track 14 on S1	#98a2fc	#222329	6.65	3
+graphic	Dark track 15 on S1	#dd8acb	#222329	6.40	3
+graphic	Dark FocusRing on S1	#728cd7	#222329	4.81	3
+graphic	Dark AiLine on S1	#b48cff	#222329	6.07	3
+graphic	Dark StaleDot on S1	#dcb36a	#222329	7.98	3
+graphic	Dark category Tool on S1	#8fb4ff	#222329	7.56	3
+graphic	Dark category Play on S1	#6fd6a8	#222329	8.85	3
+graphic	Dark category Edit on S1	#f2c46d	#222329	9.62	3
+graphic	Dark category Track on S1	#ef8fc8	#222329	7.04	3
+graphic	Dark category View on S1	#c7a4ff	#222329	7.60	3
+graphic	Dark structure line Rest on S1	#8a91b8	#222329	5.09	3
+graphic	Dark structure line Hover on S1	#728cd7	#222329	4.81	3
+graphic	Dark structure line Selected on S1	#9eabde	#222329	6.96	3
+graphic	Dark track 0 on S2	#5b8def	#15161c	5.59	3
+graphic	Dark track 1 on S2	#3fb6a8	#15161c	7.28	3
+graphic	Dark track 2 on S2	#7cc46a	#15161c	8.56	3
+graphic	Dark track 3 on S2	#d6b24a	#15161c	8.88	3
+graphic	Dark track 4 on S2	#e08a4f	#15161c	6.81	3
+graphic	Dark track 5 on S2	#d96a9a	#15161c	5.57	3
+graphic	Dark track 6 on S2	#9a7fe0	#15161c	5.58	3
+graphic	Dark track 7 on S2	#8c95ad	#15161c	6.03	3
+graphic	Dark track 8 on S2	#c9a27a	#15161c	7.68	3
+graphic	Dark track 9 on S2	#5fb3d9	#15161c	7.68	3
+graphic	Dark track 10 on S2	#f2897c	#15161c	7.43	3
+graphic	Dark track 11 on S2	#9db854	#15161c	8.09	3
+graphic	Dark track 12 on S2	#4ec491	#15161c	8.28	3
+graphic	Dark track 13 on S2	#00c0da	#15161c	8.21	3
+graphic	Dark track 14 on S2	#98a2fc	#15161c	7.66	3
+graphic	Dark track 15 on S2	#dd8acb	#15161c	7.37	3
+graphic	Dark FocusRing on S2	#728cd7	#15161c	5.54	3
+graphic	Dark AiLine on S2	#b48cff	#15161c	6.99	3
+graphic	Dark StaleDot on S2	#dcb36a	#15161c	9.20	3
+graphic	Dark category Tool on S2	#8fb4ff	#15161c	8.72	3
+graphic	Dark category Play on S2	#6fd6a8	#15161c	10.19	3
+graphic	Dark category Edit on S2	#f2c46d	#15161c	11.08	3
+graphic	Dark category Track on S2	#ef8fc8	#15161c	8.11	3
+graphic	Dark category View on S2	#c7a4ff	#15161c	8.75	3
+graphic	Dark structure line Rest on S2	#8a91b8	#15161c	5.86	3
+graphic	Dark structure line Hover on S2	#728cd7	#15161c	5.54	3
+graphic	Dark structure line Selected on S2	#9eabde	#15161c	8.02	3
+graphic	Dark track 0 on S3	#5b8def	#2a2b32	4.36	3
+graphic	Dark track 1 on S3	#3fb6a8	#2a2b32	5.68	3
+graphic	Dark track 2 on S3	#7cc46a	#2a2b32	6.69	3
+graphic	Dark track 3 on S3	#d6b24a	#2a2b32	6.93	3
+graphic	Dark track 4 on S3	#e08a4f	#2a2b32	5.31	3
+graphic	Dark track 5 on S3	#d96a9a	#2a2b32	4.35	3
+graphic	Dark track 6 on S3	#9a7fe0	#2a2b32	4.35	3
+graphic	Dark track 7 on S3	#8c95ad	#2a2b32	4.71	3
+graphic	Dark track 8 on S3	#c9a27a	#2a2b32	5.99	3
+graphic	Dark track 9 on S3	#5fb3d9	#2a2b32	6.00	3
+graphic	Dark track 10 on S3	#f2897c	#2a2b32	5.80	3
+graphic	Dark track 11 on S3	#9db854	#2a2b32	6.32	3
+graphic	Dark track 12 on S3	#4ec491	#2a2b32	6.46	3
+graphic	Dark track 13 on S3	#00c0da	#2a2b32	6.41	3
+graphic	Dark track 14 on S3	#98a2fc	#2a2b32	5.98	3
+graphic	Dark track 15 on S3	#dd8acb	#2a2b32	5.75	3
+graphic	Dark FocusRing on S3	#728cd7	#2a2b32	4.33	3
+graphic	Dark AiLine on S3	#b48cff	#2a2b32	5.46	3
+graphic	Dark StaleDot on S3	#dcb36a	#2a2b32	7.18	3
+graphic	Dark category Tool on S3	#8fb4ff	#2a2b32	6.81	3
+graphic	Dark category Play on S3	#6fd6a8	#2a2b32	7.96	3
+graphic	Dark category Edit on S3	#f2c46d	#2a2b32	8.65	3
+graphic	Dark category Track on S3	#ef8fc8	#2a2b32	6.33	3
+graphic	Dark category View on S3	#c7a4ff	#2a2b32	6.83	3
+graphic	Dark structure line Rest on S3	#8a91b8	#2a2b32	4.58	3
+graphic	Dark structure line Hover on S3	#728cd7	#2a2b32	4.33	3
+graphic	Dark structure line Selected on S3	#9eabde	#2a2b32	6.26	3
+graphic	Dark track 0 on Hover	#5b8def	#222329	4.85	3
+graphic	Dark track 1 on Hover	#3fb6a8	#222329	6.32	3
+graphic	Dark track 2 on Hover	#7cc46a	#222329	7.43	3
+graphic	Dark track 3 on Hover	#d6b24a	#222329	7.70	3
+graphic	Dark track 4 on Hover	#e08a4f	#222329	5.91	3
+graphic	Dark track 5 on Hover	#d96a9a	#222329	4.83	3
+graphic	Dark track 6 on Hover	#9a7fe0	#222329	4.84	3
+graphic	Dark track 7 on Hover	#8c95ad	#222329	5.24	3
+graphic	Dark track 8 on Hover	#c9a27a	#222329	6.66	3
+graphic	Dark track 9 on Hover	#5fb3d9	#222329	6.67	3
+graphic	Dark track 10 on Hover	#f2897c	#222329	6.45	3
+graphic	Dark track 11 on Hover	#9db854	#222329	7.03	3
+graphic	Dark track 12 on Hover	#4ec491	#222329	7.18	3
+graphic	Dark track 13 on Hover	#00c0da	#222329	7.13	3
+graphic	Dark track 14 on Hover	#98a2fc	#222329	6.65	3
+graphic	Dark track 15 on Hover	#dd8acb	#222329	6.40	3
+graphic	Dark FocusRing on Hover	#728cd7	#222329	4.81	3
+graphic	Dark AiLine on Hover	#b48cff	#222329	6.07	3
+graphic	Dark StaleDot on Hover	#dcb36a	#222329	7.98	3
+graphic	Dark category Tool on Hover	#8fb4ff	#222329	7.56	3
+graphic	Dark category Play on Hover	#6fd6a8	#222329	8.85	3
+graphic	Dark category Edit on Hover	#f2c46d	#222329	9.62	3
+graphic	Dark category Track on Hover	#ef8fc8	#222329	7.04	3
+graphic	Dark category View on Hover	#c7a4ff	#222329	7.60	3
+graphic	Dark structure line Rest on Hover	#8a91b8	#222329	5.09	3
+graphic	Dark structure line Hover on Hover	#728cd7	#222329	4.81	3
+graphic	Dark structure line Selected on Hover	#9eabde	#222329	6.96	3
+graphic	Dark track 0 on Sel	#5b8def	#2a2b32	4.36	3
+graphic	Dark track 1 on Sel	#3fb6a8	#2a2b32	5.68	3
+graphic	Dark track 2 on Sel	#7cc46a	#2a2b32	6.69	3
+graphic	Dark track 3 on Sel	#d6b24a	#2a2b32	6.93	3
+graphic	Dark track 4 on Sel	#e08a4f	#2a2b32	5.31	3
+graphic	Dark track 5 on Sel	#d96a9a	#2a2b32	4.35	3
+graphic	Dark track 6 on Sel	#9a7fe0	#2a2b32	4.35	3
+graphic	Dark track 7 on Sel	#8c95ad	#2a2b32	4.71	3
+graphic	Dark track 8 on Sel	#c9a27a	#2a2b32	5.99	3
+graphic	Dark track 9 on Sel	#5fb3d9	#2a2b32	6.00	3
+graphic	Dark track 10 on Sel	#f2897c	#2a2b32	5.80	3
+graphic	Dark track 11 on Sel	#9db854	#2a2b32	6.32	3
+graphic	Dark track 12 on Sel	#4ec491	#2a2b32	6.46	3
+graphic	Dark track 13 on Sel	#00c0da	#2a2b32	6.41	3
+graphic	Dark track 14 on Sel	#98a2fc	#2a2b32	5.98	3
+graphic	Dark track 15 on Sel	#dd8acb	#2a2b32	5.75	3
+graphic	Dark FocusRing on Sel	#728cd7	#2a2b32	4.33	3
+graphic	Dark AiLine on Sel	#b48cff	#2a2b32	5.46	3
+graphic	Dark StaleDot on Sel	#dcb36a	#2a2b32	7.18	3
+graphic	Dark category Tool on Sel	#8fb4ff	#2a2b32	6.81	3
+graphic	Dark category Play on Sel	#6fd6a8	#2a2b32	7.96	3
+graphic	Dark category Edit on Sel	#f2c46d	#2a2b32	8.65	3
+graphic	Dark category Track on Sel	#ef8fc8	#2a2b32	6.33	3
+graphic	Dark category View on Sel	#c7a4ff	#2a2b32	6.83	3
+graphic	Dark structure line Rest on Sel	#8a91b8	#2a2b32	4.58	3
+graphic	Dark structure line Hover on Sel	#728cd7	#2a2b32	4.33	3
+graphic	Dark structure line Selected on Sel	#9eabde	#2a2b32	6.26	3
+graphic	Dark track 0 on Clip	#5b8def	#35373f	3.67	3
+graphic	Dark track 1 on Clip	#3fb6a8	#35373f	4.79	3
+graphic	Dark track 2 on Clip	#7cc46a	#35373f	5.63	3
+graphic	Dark track 3 on Clip	#d6b24a	#35373f	5.84	3
+graphic	Dark track 4 on Clip	#e08a4f	#35373f	4.47	3
+graphic	Dark track 5 on Clip	#d96a9a	#35373f	3.66	3
+graphic	Dark track 6 on Clip	#9a7fe0	#35373f	3.67	3
+graphic	Dark track 7 on Clip	#8c95ad	#35373f	3.97	3
+graphic	Dark track 8 on Clip	#c9a27a	#35373f	5.05	3
+graphic	Dark track 9 on Clip	#5fb3d9	#35373f	5.05	3
+graphic	Dark track 10 on Clip	#f2897c	#35373f	4.89	3
+graphic	Dark track 11 on Clip	#9db854	#35373f	5.32	3
+graphic	Dark track 12 on Clip	#4ec491	#35373f	5.44	3
+graphic	Dark track 13 on Clip	#00c0da	#35373f	5.40	3
+graphic	Dark track 14 on Clip	#98a2fc	#35373f	5.03	3
+graphic	Dark track 15 on Clip	#dd8acb	#35373f	4.84	3
+graphic	Dark FocusRing on Clip	#728cd7	#35373f	3.64	3
+graphic	Dark AiLine on Clip	#b48cff	#35373f	4.60	3
+graphic	Dark StaleDot on Clip	#dcb36a	#35373f	6.05	3
+graphic	Dark category Tool on Clip	#8fb4ff	#35373f	5.73	3
+graphic	Dark category Play on Clip	#6fd6a8	#35373f	6.70	3
+graphic	Dark category Edit on Clip	#f2c46d	#35373f	7.29	3
+graphic	Dark category Track on Clip	#ef8fc8	#35373f	5.33	3
+graphic	Dark category View on Clip	#c7a4ff	#35373f	5.75	3
+graphic	Dark structure line Rest on Clip	#8a91b8	#35373f	3.86	3
+graphic	Dark structure line Hover on Clip	#728cd7	#35373f	3.64	3
+graphic	Dark structure line Selected on Clip	#9eabde	#35373f	5.27	3
+graphic	Dark track 0 on ClipSel	#5b8def	#41434c	3.05	3
+graphic	Dark track 1 on ClipSel	#3fb6a8	#41434c	3.97	3
+graphic	Dark track 2 on ClipSel	#7cc46a	#41434c	4.67	3
+graphic	Dark track 3 on ClipSel	#d6b24a	#41434c	4.84	3
+graphic	Dark track 4 on ClipSel	#e08a4f	#41434c	3.71	3
+graphic	Dark track 5 on ClipSel	#d96a9a	#41434c	3.04	3
+graphic	Dark track 6 on ClipSel	#9a7fe0	#41434c	3.04	3
+graphic	Dark track 7 on ClipSel	#8c95ad	#41434c	3.29	3
+graphic	Dark track 8 on ClipSel	#c9a27a	#41434c	4.19	3
+graphic	Dark track 9 on ClipSel	#5fb3d9	#41434c	4.19	3
+graphic	Dark track 10 on ClipSel	#f2897c	#41434c	4.05	3
+graphic	Dark track 11 on ClipSel	#9db854	#41434c	4.42	3
+graphic	Dark track 12 on ClipSel	#4ec491	#41434c	4.52	3
+graphic	Dark track 13 on ClipSel	#00c0da	#41434c	4.48	3
+graphic	Dark track 14 on ClipSel	#98a2fc	#41434c	4.18	3
+graphic	Dark track 15 on ClipSel	#dd8acb	#41434c	4.02	3
+graphic	Dark track 0 on TrackSel	#5b8def	#41434c	3.05	3
+graphic	Dark track 1 on TrackSel	#3fb6a8	#41434c	3.97	3
+graphic	Dark track 2 on TrackSel	#7cc46a	#41434c	4.67	3
+graphic	Dark track 3 on TrackSel	#d6b24a	#41434c	4.84	3
+graphic	Dark track 4 on TrackSel	#e08a4f	#41434c	3.71	3
+graphic	Dark track 5 on TrackSel	#d96a9a	#41434c	3.04	3
+graphic	Dark track 6 on TrackSel	#9a7fe0	#41434c	3.04	3
+graphic	Dark track 7 on TrackSel	#8c95ad	#41434c	3.29	3
+graphic	Dark track 8 on TrackSel	#c9a27a	#41434c	4.19	3
+graphic	Dark track 9 on TrackSel	#5fb3d9	#41434c	4.19	3
+graphic	Dark track 10 on TrackSel	#f2897c	#41434c	4.05	3
+graphic	Dark track 11 on TrackSel	#9db854	#41434c	4.42	3
+graphic	Dark track 12 on TrackSel	#4ec491	#41434c	4.52	3
+graphic	Dark track 13 on TrackSel	#00c0da	#41434c	4.48	3
+graphic	Dark track 14 on TrackSel	#98a2fc	#41434c	4.18	3
+graphic	Dark track 15 on TrackSel	#dd8acb	#41434c	4.02	3
+graphic	Dark FocusRing on TrackSel	#728cd7	#41434c	3.02	3
+graphic	Dark AiLine on TrackSel	#b48cff	#41434c	3.82	3
+graphic	Dark structure line Rest on TrackSel	#8a91b8	#41434c	3.20	3
+graphic	Dark structure line Hover on TrackSel	#728cd7	#41434c	3.02	3
+graphic	Dark structure line Selected on TrackSel	#9eabde	#41434c	4.38	3
+graphic	Dark automation mark (Blue) on TrackSel	#9eabde	#41434c	4.38	3
+graphic	Dark meter stop at 0	#4cc38a	#0c0d11	8.77	3
+graphic	Dark meter stop at 0.7	#e3c14b	#0c0d11	11.09	3
+graphic	Dark meter stop at 1	#ef5a50	#0c0d11	5.78	3
+graphic	Dark white key against black key	#ffffff	#3a3e52	10.55	3
+graphic	Dark implied mute letter on S3	#e3c14b	#2a2b32	8.05	3
+graphic	Dark off switch (hover false) track on Paper	#80828e	#1b1c23	4.45	3
+graphic	Dark off switch (hover false) track on S0	#80828e	#121318	4.86	3
+graphic	Dark off switch (hover false) track on S1	#80828e	#222329	4.10	3
+graphic	Dark off switch (hover false) track on S2	#80828e	#15161c	4.73	3
+graphic	Dark off switch (hover false) track on S3	#80828e	#2a2b32	3.69	3
+graphic	Dark off switch (hover false) track on Hover	#80828e	#222329	4.10	3
+graphic	Dark off switch (hover false) track on Sel	#80828e	#2a2b32	3.69	3
+graphic	Dark off switch (hover false) knob on its track	#ffffff	#80828e	3.82	3
+graphic	Dark off switch (hover true) track on Paper	#8b8d99	#1b1c23	5.15	3
+graphic	Dark off switch (hover true) track on S0	#8b8d99	#121318	5.62	3
+graphic	Dark off switch (hover true) track on S1	#8b8d99	#222329	4.75	3
+graphic	Dark off switch (hover true) track on S2	#8b8d99	#15161c	5.47	3
+graphic	Dark off switch (hover true) track on S3	#8b8d99	#2a2b32	4.27	3
+graphic	Dark off switch (hover true) track on Hover	#8b8d99	#222329	4.75	3
+graphic	Dark off switch (hover true) track on Sel	#8b8d99	#2a2b32	4.27	3
+graphic	Dark off switch (hover true) knob on its track	#ffffff	#8b8d99	3.30	3
+graphic	Dark wave preview on S1	#9eabde	#222329	6.96	3
+graphic	Dark preview dot at alpha 0.6 on Sel	#9799a5	#2a2b32	4.98	3
+graphic	Dark preview dot at alpha 0.60300004 on Sel	#979aa6	#2a2b32	5.03	3
+graphic	Dark preview dot at alpha 0.606 on Sel	#989ba7	#2a2b32	5.09	3
+graphic	Dark preview dot at alpha 0.609 on Sel	#989ba7	#2a2b32	5.09	3
+graphic	Dark preview dot at alpha 0.61200005 on Sel	#999ca7	#2a2b32	5.15	3
+graphic	Dark preview dot at alpha 0.615 on Sel	#999ca8	#2a2b32	5.15	3
+graphic	Dark preview dot at alpha 0.61800003 on Sel	#9a9da9	#2a2b32	5.21	3
+graphic	Dark preview dot at alpha 0.621 on Sel	#9a9da9	#2a2b32	5.21	3
+graphic	Dark preview dot at alpha 0.624 on Sel	#9b9eaa	#2a2b32	5.28	3
+graphic	Dark preview dot at alpha 0.62700003 on Sel	#9c9eaa	#2a2b32	5.29	3
+graphic	Dark preview dot at alpha 0.63 on Sel	#9c9fab	#2a2b32	5.34	3
+graphic	Dark preview dot at alpha 0.633 on Sel	#9c9fab	#2a2b32	5.34	3
+graphic	Dark preview dot at alpha 0.63600004 on Sel	#9da0ac	#2a2b32	5.41	3
+graphic	Dark preview dot at alpha 0.639 on Sel	#9ea1ad	#2a2b32	5.47	3
+graphic	Dark preview dot at alpha 0.642 on Sel	#9ea1ad	#2a2b32	5.47	3
+graphic	Dark preview dot at alpha 0.64500004 on Sel	#9ea1ad	#2a2b32	5.47	3
+graphic	Dark preview dot at alpha 0.648 on Sel	#9fa2ae	#2a2b32	5.54	3
+graphic	Dark preview dot at alpha 0.651 on Sel	#a0a3af	#2a2b32	5.61	3
+graphic	Dark preview dot at alpha 0.65400004 on Sel	#a1a4b0	#2a2b32	5.67	3
+graphic	Dark preview dot at alpha 0.657 on Sel	#a1a4b0	#2a2b32	5.67	3
+graphic	Dark preview dot at alpha 0.66 on Sel	#a1a4b0	#2a2b32	5.67	3
+graphic	Dark preview dot at alpha 0.663 on Sel	#a2a5b1	#2a2b32	5.74	3
+graphic	Dark preview dot at alpha 0.666 on Sel	#a3a6b2	#2a2b32	5.81	3
+graphic	Dark preview dot at alpha 0.669 on Sel	#a3a6b3	#2a2b32	5.81	3
+graphic	Dark preview dot at alpha 0.672 on Sel	#a3a6b3	#2a2b32	5.81	3
+graphic	Dark preview dot at alpha 0.675 on Sel	#a4a7b4	#2a2b32	5.88	3
+graphic	Dark preview dot at alpha 0.67800003 on Sel	#a5a8b4	#2a2b32	5.95	3
+graphic	Dark preview dot at alpha 0.681 on Sel	#a6a9b5	#2a2b32	6.02	3
+graphic	Dark preview dot at alpha 0.684 on Sel	#a6a9b5	#2a2b32	6.02	3
+graphic	Dark preview dot at alpha 0.68700004 on Sel	#a6a9b6	#2a2b32	6.02	3
+graphic	Dark preview dot at alpha 0.69 on Sel	#a7aab7	#2a2b32	6.09	3
+graphic	Dark preview dot at alpha 0.693 on Sel	#a8abb7	#2a2b32	6.16	3
+graphic	Dark preview dot at alpha 0.696 on Sel	#a8abb7	#2a2b32	6.16	3
+graphic	Dark preview dot at alpha 0.699 on Sel	#a8abb8	#2a2b32	6.16	3
+graphic	Dark preview dot at alpha 0.702 on Sel	#a9acb9	#2a2b32	6.23	3
+graphic	Dark preview dot at alpha 0.705 on Sel	#aaadba	#2a2b32	6.31	3
+graphic	Dark preview dot at alpha 0.708 on Sel	#aaaeba	#2a2b32	6.36	3
+graphic	Dark preview dot at alpha 0.711 on Sel	#aaaeba	#2a2b32	6.36	3
+graphic	Dark preview dot at alpha 0.714 on Sel	#abaebb	#2a2b32	6.38	3
+graphic	Dark preview dot at alpha 0.717 on Sel	#acafbc	#2a2b32	6.45	3
+graphic	Dark preview dot at alpha 0.72 on Sel	#adb0bd	#2a2b32	6.52	3
+graphic	Dark preview dot at alpha 0.723 on Sel	#adb0bd	#2a2b32	6.52	3
+graphic	Dark preview dot at alpha 0.726 on Sel	#adb0bd	#2a2b32	6.52	3
+graphic	Dark preview dot at alpha 0.729 on Sel	#aeb1be	#2a2b32	6.60	3
+graphic	Dark preview dot at alpha 0.732 on Sel	#afb2bf	#2a2b32	6.67	3
+graphic	Dark preview dot at alpha 0.735 on Sel	#afb2bf	#2a2b32	6.67	3
+graphic	Dark preview dot at alpha 0.738 on Sel	#afb3c0	#2a2b32	6.73	3
+graphic	Dark preview dot at alpha 0.741 on Sel	#b0b3c0	#2a2b32	6.75	3
+graphic	Dark preview dot at alpha 0.744 on Sel	#b1b4c1	#2a2b32	6.82	3
+graphic	Dark preview dot at alpha 0.747 on Sel	#b1b4c1	#2a2b32	6.82	3
+graphic	Dark preview dot at alpha 0.75 on Sel	#b2b5c2	#2a2b32	6.90	3
+graphic	Dark preview dot at alpha 0.753 on Sel	#b2b6c3	#2a2b32	6.96	3
+graphic	Dark preview dot at alpha 0.756 on Sel	#b3b6c3	#2a2b32	6.98	3
+graphic	Dark preview dot at alpha 0.759 on Sel	#b4b7c4	#2a2b32	7.05	3
+graphic	Dark preview dot at alpha 0.76199996 on Sel	#b4b7c4	#2a2b32	7.05	3
+graphic	Dark preview dot at alpha 0.765 on Sel	#b4b8c5	#2a2b32	7.12	3
+graphic	Dark preview dot at alpha 0.768 on Sel	#b5b8c6	#2a2b32	7.14	3
+graphic	Dark preview dot at alpha 0.77099997 on Sel	#b6b9c6	#2a2b32	7.21	3
+graphic	Dark preview dot at alpha 0.774 on Sel	#b6b9c6	#2a2b32	7.21	3
+graphic	Dark preview dot at alpha 0.777 on Sel	#b7bac7	#2a2b32	7.29	3
+graphic	Dark preview dot at alpha 0.78 on Sel	#b7bbc8	#2a2b32	7.35	3
+graphic	Dark preview dot at alpha 0.783 on Sel	#b8bbc9	#2a2b32	7.38	3
+graphic	Dark preview dot at alpha 0.786 on Sel	#b8bbc9	#2a2b32	7.38	3
+graphic	Dark preview dot at alpha 0.78900003 on Sel	#b9bcc9	#2a2b32	7.45	3
+graphic	Dark preview dot at alpha 0.792 on Sel	#b9bdca	#2a2b32	7.51	3
+graphic	Dark preview dot at alpha 0.79499996 on Sel	#babdcb	#2a2b32	7.54	3
+graphic	Dark preview dot at alpha 0.798 on Sel	#babdcb	#2a2b32	7.54	3
+graphic	Dark preview dot at alpha 0.801 on Sel	#bbbecc	#2a2b32	7.62	3
+graphic	Dark preview dot at alpha 0.804 on Sel	#bcbfcc	#2a2b32	7.69	3
+graphic	Dark preview dot at alpha 0.807 on Sel	#bcc0cd	#2a2b32	7.76	3
+graphic	Dark preview dot at alpha 0.81 on Sel	#bdc0ce	#2a2b32	7.78	3
+graphic	Dark preview dot at alpha 0.81299996 on Sel	#bdc0ce	#2a2b32	7.78	3
+graphic	Dark preview dot at alpha 0.816 on Sel	#bec1cf	#2a2b32	7.86	3
+graphic	Dark preview dot at alpha 0.819 on Sel	#bec2cf	#2a2b32	7.92	3
+graphic	Dark preview dot at alpha 0.822 on Sel	#bfc3d0	#2a2b32	8.01	3
+graphic	Dark preview dot at alpha 0.825 on Sel	#bfc3d0	#2a2b32	8.01	3
+graphic	Dark preview dot at alpha 0.82799995 on Sel	#c0c3d1	#2a2b32	8.03	3
+graphic	Dark preview dot at alpha 0.831 on Sel	#c0c4d2	#2a2b32	8.10	3
+graphic	Dark preview dot at alpha 0.834 on Sel	#c1c5d2	#2a2b32	8.18	3
+graphic	Dark preview dot at alpha 0.837 on Sel	#c1c5d2	#2a2b32	8.18	3
+graphic	Dark preview dot at alpha 0.84 on Sel	#c2c5d3	#2a2b32	8.20	3
+graphic	Dark preview dot at alpha 0.843 on Sel	#c3c6d4	#2a2b32	8.29	3
+graphic	Dark preview dot at alpha 0.84599996 on Sel	#c3c7d5	#2a2b32	8.36	3
+graphic	Dark preview dot at alpha 0.849 on Sel	#c3c7d5	#2a2b32	8.36	3
+graphic	Dark preview dot at alpha 0.852 on Sel	#c4c8d5	#2a2b32	8.44	3
+graphic	Dark preview dot at alpha 0.855 on Sel	#c5c8d6	#2a2b32	8.46	3
+graphic	Dark preview dot at alpha 0.858 on Sel	#c5c9d7	#2a2b32	8.53	3
+graphic	Dark preview dot at alpha 0.861 on Sel	#c6cad8	#2a2b32	8.62	3
+graphic	Dark preview dot at alpha 0.86399996 on Sel	#c6cad8	#2a2b32	8.62	3
+graphic	Dark preview dot at alpha 0.867 on Sel	#c7cad8	#2a2b32	8.64	3
+graphic	Dark preview dot at alpha 0.87 on Sel	#c8cbd9	#2a2b32	8.72	3
+graphic	Dark preview dot at alpha 0.87299997 on Sel	#c8ccda	#2a2b32	8.80	3
+graphic	Dark preview dot at alpha 0.8759999 on Sel	#c8ccda	#2a2b32	8.80	3
+graphic	Dark preview dot at alpha 0.87899995 on Sel	#c9cddb	#2a2b32	8.88	3
+graphic	Dark preview dot at alpha 0.88199997 on Sel	#cacddb	#2a2b32	8.90	3
+graphic	Dark preview dot at alpha 0.885 on Sel	#cacedc	#2a2b32	8.98	3
+graphic	Dark preview dot at alpha 0.888 on Sel	#cacedc	#2a2b32	8.98	3
+graphic	Dark preview dot at alpha 0.891 on Sel	#cbcfdd	#2a2b32	9.07	3
+graphic	Dark preview dot at alpha 0.894 on Sel	#ccd0de	#2a2b32	9.16	3
+graphic	Dark preview dot at alpha 0.89699996 on Sel	#cdd0de	#2a2b32	9.18	3
+graphic	Dark preview dot at alpha 0.9 on Sel	#cdd1df	#2a2b32	9.25	3
+graphic	Dark preview dot at alpha 0.6 on Sel	#9799a5	#2a2b32	4.98	3
+graphic	Light track 0 on Paper	#3e6dce	#ffffff	4.90	3
+graphic	Light track 1 on Paper	#1a7f74	#ffffff	4.85	3
+graphic	Light track 2 on Paper	#417f34	#ffffff	4.87	3
+graphic	Light track 3 on Paper	#8b6d17	#ffffff	4.89	3
+graphic	Light track 4 on Paper	#ae5b25	#ffffff	4.86	3
+graphic	Light track 5 on Paper	#bb497d	#ffffff	4.81	3
+graphic	Light track 6 on Paper	#7a5cc9	#ffffff	5.00	3
+graphic	Light track 7 on Paper	#68718a	#ffffff	4.86	3
+graphic	Light track 8 on Paper	#8d6b48	#ffffff	4.85	3
+graphic	Light track 9 on Paper	#2779a0	#ffffff	4.85	3
+graphic	Light track 10 on Paper	#a8372e	#ffffff	6.46	3
+graphic	Light track 11 on Paper	#566f00	#ffffff	5.72	3
+graphic	Light track 12 on Paper	#007c47	#ffffff	5.28	3
+graphic	Light track 13 on Paper	#007694	#ffffff	5.23	3
+graphic	Light track 14 on Paper	#5255b6	#ffffff	6.30	3
+graphic	Light track 15 on Paper	#943b84	#ffffff	6.53	3
+graphic	Light FocusRing on Paper	#5665cd	#ffffff	5.07	3
+graphic	Light AiLine on Paper	#7d4fe0	#ffffff	5.16	3
+graphic	Light StaleDot on Paper	#9a6a00	#ffffff	4.73	3
+graphic	Light category Tool on Paper	#3459c4	#ffffff	6.23	3
+graphic	Light category Play on Paper	#1b8a5c	#ffffff	4.34	3
+graphic	Light category Edit on Paper	#9a6b00	#ffffff	4.69	3
+graphic	Light category Track on Paper	#b0347f	#ffffff	5.76	3
+graphic	Light category View on Paper	#7048c8	#ffffff	6.09	3
+graphic	Light structure line Rest on Paper	#6b7190	#ffffff	4.78	3
+graphic	Light structure line Hover on Paper	#5665cd	#ffffff	5.07	3
+graphic	Light structure line Selected on Paper	#3a499e	#ffffff	7.99	3
+graphic	Light track 0 on S0	#3e6dce	#eceef4	4.23	3
+graphic	Light track 1 on S0	#1a7f74	#eceef4	4.18	3
+graphic	Light track 2 on S0	#417f34	#eceef4	4.20	3
+graphic	Light track 3 on S0	#8b6d17	#eceef4	4.21	3
+graphic	Light track 4 on S0	#ae5b25	#eceef4	4.19	3
+graphic	Light track 5 on S0	#bb497d	#eceef4	4.15	3
+graphic	Light track 6 on S0	#7a5cc9	#eceef4	4.31	3
+graphic	Light track 7 on S0	#68718a	#eceef4	4.19	3
+graphic	Light track 8 on S0	#8d6b48	#eceef4	4.18	3
+graphic	Light track 9 on S0	#2779a0	#eceef4	4.18	3
+graphic	Light track 10 on S0	#a8372e	#eceef4	5.57	3
+graphic	Light track 11 on S0	#566f00	#eceef4	4.93	3
+graphic	Light track 12 on S0	#007c47	#eceef4	4.56	3
+graphic	Light track 13 on S0	#007694	#eceef4	4.50	3
+graphic	Light track 14 on S0	#5255b6	#eceef4	5.43	3
+graphic	Light track 15 on S0	#943b84	#eceef4	5.63	3
+graphic	Light FocusRing on S0	#5665cd	#eceef4	4.37	3
+graphic	Light AiLine on S0	#7d4fe0	#eceef4	4.45	3
+graphic	Light StaleDot on S0	#9a6a00	#eceef4	4.08	3
+graphic	Light category Tool on S0	#3459c4	#eceef4	5.37	3
+graphic	Light category Play on S0	#1b8a5c	#eceef4	3.74	3
+graphic	Light category Edit on S0	#9a6b00	#eceef4	4.04	3
+graphic	Light category Track on S0	#b0347f	#eceef4	4.97	3
+graphic	Light category View on S0	#7048c8	#eceef4	5.25	3
+graphic	Light structure line Rest on S0	#6b7190	#eceef4	4.12	3
+graphic	Light structure line Hover on S0	#5665cd	#eceef4	4.37	3
+graphic	Light structure line Selected on S0	#3a499e	#eceef4	6.89	3
+graphic	Light track 0 on S1	#3e6dce	#f4f5f9	4.50	3
+graphic	Light track 1 on S1	#1a7f74	#f4f5f9	4.45	3
+graphic	Light track 2 on S1	#417f34	#f4f5f9	4.47	3
+graphic	Light track 3 on S1	#8b6d17	#f4f5f9	4.49	3
+graphic	Light track 4 on S1	#ae5b25	#f4f5f9	4.46	3
+graphic	Light track 5 on S1	#bb497d	#f4f5f9	4.42	3
+graphic	Light track 6 on S1	#7a5cc9	#f4f5f9	4.59	3
+graphic	Light track 7 on S1	#68718a	#f4f5f9	4.46	3
+graphic	Light track 8 on S1	#8d6b48	#f4f5f9	4.45	3
+graphic	Light track 9 on S1	#2779a0	#f4f5f9	4.45	3
+graphic	Light track 10 on S1	#a8372e	#f4f5f9	5.93	3
+graphic	Light track 11 on S1	#566f00	#f4f5f9	5.25	3
+graphic	Light track 12 on S1	#007c47	#f4f5f9	4.85	3
+graphic	Light track 13 on S1	#007694	#f4f5f9	4.80	3
+graphic	Light track 14 on S1	#5255b6	#f4f5f9	5.78	3
+graphic	Light track 15 on S1	#943b84	#f4f5f9	5.99	3
+graphic	Light FocusRing on S1	#5665cd	#f4f5f9	4.66	3
+graphic	Light AiLine on S1	#7d4fe0	#f4f5f9	4.74	3
+graphic	Light StaleDot on S1	#9a6a00	#f4f5f9	4.35	3
+graphic	Light category Tool on S1	#3459c4	#f4f5f9	5.72	3
+graphic	Light category Play on S1	#1b8a5c	#f4f5f9	3.99	3
+graphic	Light category Edit on S1	#9a6b00	#f4f5f9	4.31	3
+graphic	Light category Track on S1	#b0347f	#f4f5f9	5.29	3
+graphic	Light category View on S1	#7048c8	#f4f5f9	5.59	3
+graphic	Light structure line Rest on S1	#6b7190	#f4f5f9	4.39	3
+graphic	Light structure line Hover on S1	#5665cd	#f4f5f9	4.66	3
+graphic	Light structure line Selected on S1	#3a499e	#f4f5f9	7.34	3
+graphic	Light track 0 on S2	#3e6dce	#e8eaf1	4.08	3
+graphic	Light track 1 on S2	#1a7f74	#e8eaf1	4.03	3
+graphic	Light track 2 on S2	#417f34	#e8eaf1	4.05	3
+graphic	Light track 3 on S2	#8b6d17	#e8eaf1	4.07	3
+graphic	Light track 4 on S2	#ae5b25	#e8eaf1	4.04	3
+graphic	Light track 5 on S2	#bb497d	#e8eaf1	4.01	3
+graphic	Light track 6 on S2	#7a5cc9	#e8eaf1	4.16	3
+graphic	Light track 7 on S2	#68718a	#e8eaf1	4.05	3
+graphic	Light track 8 on S2	#8d6b48	#e8eaf1	4.04	3
+graphic	Light track 9 on S2	#2779a0	#e8eaf1	4.04	3
+graphic	Light track 10 on S2	#a8372e	#e8eaf1	5.37	3
+graphic	Light track 11 on S2	#566f00	#e8eaf1	4.76	3
+graphic	Light track 12 on S2	#007c47	#e8eaf1	4.40	3
+graphic	Light track 13 on S2	#007694	#e8eaf1	4.35	3
+graphic	Light track 14 on S2	#5255b6	#e8eaf1	5.24	3
+graphic	Light track 15 on S2	#943b84	#e8eaf1	5.43	3
+graphic	Light FocusRing on S2	#5665cd	#e8eaf1	4.22	3
+graphic	Light AiLine on S2	#7d4fe0	#e8eaf1	4.30	3
+graphic	Light StaleDot on S2	#9a6a00	#e8eaf1	3.94	3
+graphic	Light category Tool on S2	#3459c4	#e8eaf1	5.18	3
+graphic	Light category Play on S2	#1b8a5c	#e8eaf1	3.61	3
+graphic	Light category Edit on S2	#9a6b00	#e8eaf1	3.90	3
+graphic	Light category Track on S2	#b0347f	#e8eaf1	4.79	3
+graphic	Light category View on S2	#7048c8	#e8eaf1	5.06	3
+graphic	Light structure line Rest on S2	#6b7190	#e8eaf1	3.98	3
+graphic	Light structure line Hover on S2	#5665cd	#e8eaf1	4.22	3
+graphic	Light structure line Selected on S2	#3a499e	#e8eaf1	6.65	3
+graphic	Light track 0 on S3	#3e6dce	#dcdee8	3.66	3
+graphic	Light track 1 on S3	#1a7f74	#dcdee8	3.61	3
+graphic	Light track 2 on S3	#417f34	#dcdee8	3.63	3
+graphic	Light track 3 on S3	#8b6d17	#dcdee8	3.64	3
+graphic	Light track 4 on S3	#ae5b25	#dcdee8	3.62	3
+graphic	Light track 5 on S3	#bb497d	#dcdee8	3.59	3
+graphic	Light track 6 on S3	#7a5cc9	#dcdee8	3.73	3
+graphic	Light track 7 on S3	#68718a	#dcdee8	3.63	3
+graphic	Light track 8 on S3	#8d6b48	#dcdee8	3.62	3
+graphic	Light track 9 on S3	#2779a0	#dcdee8	3.62	3
+graphic	Light track 10 on S3	#a8372e	#dcdee8	4.82	3
+graphic	Light track 11 on S3	#566f00	#dcdee8	4.27	3
+graphic	Light track 12 on S3	#007c47	#dcdee8	3.94	3
+graphic	Light track 13 on S3	#007694	#dcdee8	3.90	3
+graphic	Light track 14 on S3	#5255b6	#dcdee8	4.70	3
+graphic	Light track 15 on S3	#943b84	#dcdee8	4.87	3
+graphic	Light FocusRing on S3	#5665cd	#dcdee8	3.78	3
+graphic	Light AiLine on S3	#7d4fe0	#dcdee8	3.85	3
+graphic	Light StaleDot on S3	#9a6a00	#dcdee8	3.53	3
+graphic	Light category Tool on S3	#3459c4	#dcdee8	4.64	3
+graphic	Light category Play on S3	#1b8a5c	#dcdee8	3.24	3
+graphic	Light category Edit on S3	#9a6b00	#dcdee8	3.50	3
+graphic	Light category Track on S3	#b0347f	#dcdee8	4.30	3
+graphic	Light category View on S3	#7048c8	#dcdee8	4.54	3
+graphic	Light structure line Rest on S3	#6b7190	#dcdee8	3.57	3
+graphic	Light structure line Hover on S3	#5665cd	#dcdee8	3.78	3
+graphic	Light structure line Selected on S3	#3a499e	#dcdee8	5.96	3
+graphic	Light track 0 on Hover	#3e6dce	#f4f5f9	4.50	3
+graphic	Light track 1 on Hover	#1a7f74	#f4f5f9	4.45	3
+graphic	Light track 2 on Hover	#417f34	#f4f5f9	4.47	3
+graphic	Light track 3 on Hover	#8b6d17	#f4f5f9	4.49	3
+graphic	Light track 4 on Hover	#ae5b25	#f4f5f9	4.46	3
+graphic	Light track 5 on Hover	#bb497d	#f4f5f9	4.42	3
+graphic	Light track 6 on Hover	#7a5cc9	#f4f5f9	4.59	3
+graphic	Light track 7 on Hover	#68718a	#f4f5f9	4.46	3
+graphic	Light track 8 on Hover	#8d6b48	#f4f5f9	4.45	3
+graphic	Light track 9 on Hover	#2779a0	#f4f5f9	4.45	3
+graphic	Light track 10 on Hover	#a8372e	#f4f5f9	5.93	3
+graphic	Light track 11 on Hover	#566f00	#f4f5f9	5.25	3
+graphic	Light track 12 on Hover	#007c47	#f4f5f9	4.85	3
+graphic	Light track 13 on Hover	#007694	#f4f5f9	4.80	3
+graphic	Light track 14 on Hover	#5255b6	#f4f5f9	5.78	3
+graphic	Light track 15 on Hover	#943b84	#f4f5f9	5.99	3
+graphic	Light FocusRing on Hover	#5665cd	#f4f5f9	4.66	3
+graphic	Light AiLine on Hover	#7d4fe0	#f4f5f9	4.74	3
+graphic	Light StaleDot on Hover	#9a6a00	#f4f5f9	4.35	3
+graphic	Light category Tool on Hover	#3459c4	#f4f5f9	5.72	3
+graphic	Light category Play on Hover	#1b8a5c	#f4f5f9	3.99	3
+graphic	Light category Edit on Hover	#9a6b00	#f4f5f9	4.31	3
+graphic	Light category Track on Hover	#b0347f	#f4f5f9	5.29	3
+graphic	Light category View on Hover	#7048c8	#f4f5f9	5.59	3
+graphic	Light structure line Rest on Hover	#6b7190	#f4f5f9	4.39	3
+graphic	Light structure line Hover on Hover	#5665cd	#f4f5f9	4.66	3
+graphic	Light structure line Selected on Hover	#3a499e	#f4f5f9	7.34	3
+graphic	Light track 0 on Sel	#3e6dce	#e3e5ed	3.90	3
+graphic	Light track 1 on Sel	#1a7f74	#e3e5ed	3.85	3
+graphic	Light track 2 on Sel	#417f34	#e3e5ed	3.87	3
+graphic	Light track 3 on Sel	#8b6d17	#e3e5ed	3.89	3
+graphic	Light track 4 on Sel	#ae5b25	#e3e5ed	3.86	3
+graphic	Light track 5 on Sel	#bb497d	#e3e5ed	3.83	3
+graphic	Light track 6 on Sel	#7a5cc9	#e3e5ed	3.97	3
+graphic	Light track 7 on Sel	#68718a	#e3e5ed	3.87	3
+graphic	Light track 8 on Sel	#8d6b48	#e3e5ed	3.86	3
+graphic	Light track 9 on Sel	#2779a0	#e3e5ed	3.86	3
+graphic	Light track 10 on Sel	#a8372e	#e3e5ed	5.14	3
+graphic	Light track 11 on Sel	#566f00	#e3e5ed	4.55	3
+graphic	Light track 12 on Sel	#007c47	#e3e5ed	4.20	3
+graphic	Light track 13 on Sel	#007694	#e3e5ed	4.15	3
+graphic	Light track 14 on Sel	#5255b6	#e3e5ed	5.01	3
+graphic	Light track 15 on Sel	#943b84	#e3e5ed	5.19	3
+graphic	Light FocusRing on Sel	#5665cd	#e3e5ed	4.03	3
+graphic	Light AiLine on Sel	#7d4fe0	#e3e5ed	4.11	3
+graphic	Light StaleDot on Sel	#9a6a00	#e3e5ed	3.76	3
+graphic	Light category Tool on Sel	#3459c4	#e3e5ed	4.95	3
+graphic	Light category Play on Sel	#1b8a5c	#e3e5ed	3.45	3
+graphic	Light category Edit on Sel	#9a6b00	#e3e5ed	3.73	3
+graphic	Light category Track on Sel	#b0347f	#e3e5ed	4.58	3
+graphic	Light category View on Sel	#7048c8	#e3e5ed	4.84	3
+graphic	Light structure line Rest on Sel	#6b7190	#e3e5ed	3.80	3
+graphic	Light structure line Hover on Sel	#5665cd	#e3e5ed	4.03	3
+graphic	Light structure line Selected on Sel	#3a499e	#e3e5ed	6.36	3
+graphic	Light track 0 on Clip	#3e6dce	#d5d8e4	3.45	3
+graphic	Light track 1 on Clip	#1a7f74	#d5d8e4	3.41	3
+graphic	Light track 2 on Clip	#417f34	#d5d8e4	3.43	3
+graphic	Light track 3 on Clip	#8b6d17	#d5d8e4	3.44	3
+graphic	Light track 4 on Clip	#ae5b25	#d5d8e4	3.42	3
+graphic	Light track 5 on Clip	#bb497d	#d5d8e4	3.39	3
+graphic	Light track 6 on Clip	#7a5cc9	#d5d8e4	3.52	3
+graphic	Light track 7 on Clip	#68718a	#d5d8e4	3.42	3
+graphic	Light track 8 on Clip	#8d6b48	#d5d8e4	3.41	3
+graphic	Light track 9 on Clip	#2779a0	#d5d8e4	3.41	3
+graphic	Light track 10 on Clip	#a8372e	#d5d8e4	4.54	3
+graphic	Light track 11 on Clip	#566f00	#d5d8e4	4.03	3
+graphic	Light track 12 on Clip	#007c47	#d5d8e4	3.72	3
+graphic	Light track 13 on Clip	#007694	#d5d8e4	3.68	3
+graphic	Light track 14 on Clip	#5255b6	#d5d8e4	4.43	3
+graphic	Light track 15 on Clip	#943b84	#d5d8e4	4.59	3
+graphic	Light FocusRing on Clip	#5665cd	#d5d8e4	3.57	3
+graphic	Light AiLine on Clip	#7d4fe0	#d5d8e4	3.63	3
+graphic	Light StaleDot on Clip	#9a6a00	#d5d8e4	3.33	3
+graphic	Light category Tool on Clip	#3459c4	#d5d8e4	4.38	3
+graphic	Light category Play on Clip	#1b8a5c	#d5d8e4	3.05	3
+graphic	Light category Edit on Clip	#9a6b00	#d5d8e4	3.30	3
+graphic	Light category Track on Clip	#b0347f	#d5d8e4	4.05	3
+graphic	Light category View on Clip	#7048c8	#d5d8e4	4.28	3
+graphic	Light structure line Rest on Clip	#6b7190	#d5d8e4	3.36	3
+graphic	Light structure line Hover on Clip	#5665cd	#d5d8e4	3.57	3
+graphic	Light structure line Selected on Clip	#3a499e	#d5d8e4	5.62	3
+graphic	Light track 0 on ClipSel	#3e6dce	#c9cdda	3.09	3
+graphic	Light track 1 on ClipSel	#1a7f74	#c9cdda	3.05	3
+graphic	Light track 2 on ClipSel	#417f34	#c9cdda	3.07	3
+graphic	Light track 3 on ClipSel	#8b6d17	#c9cdda	3.08	3
+graphic	Light track 4 on ClipSel	#ae5b25	#c9cdda	3.06	3
+graphic	Light track 5 on ClipSel	#bb497d	#c9cdda	3.03	3
+graphic	Light track 6 on ClipSel	#7a5cc9	#c9cdda	3.15	3
+graphic	Light track 7 on ClipSel	#68718a	#c9cdda	3.06	3
+graphic	Light track 8 on ClipSel	#8d6b48	#c9cdda	3.06	3
+graphic	Light track 9 on ClipSel	#2779a0	#c9cdda	3.06	3
+graphic	Light track 10 on ClipSel	#a8372e	#c9cdda	4.07	3
+graphic	Light track 11 on ClipSel	#566f00	#c9cdda	3.61	3
+graphic	Light track 12 on ClipSel	#007c47	#c9cdda	3.33	3
+graphic	Light track 13 on ClipSel	#007694	#c9cdda	3.29	3
+graphic	Light track 14 on ClipSel	#5255b6	#c9cdda	3.97	3
+graphic	Light track 15 on ClipSel	#943b84	#c9cdda	4.11	3
+graphic	Light track 0 on TrackSel	#3e6dce	#c9cdda	3.09	3
+graphic	Light track 1 on TrackSel	#1a7f74	#c9cdda	3.05	3
+graphic	Light track 2 on TrackSel	#417f34	#c9cdda	3.07	3
+graphic	Light track 3 on TrackSel	#8b6d17	#c9cdda	3.08	3
+graphic	Light track 4 on TrackSel	#ae5b25	#c9cdda	3.06	3
+graphic	Light track 5 on TrackSel	#bb497d	#c9cdda	3.03	3
+graphic	Light track 6 on TrackSel	#7a5cc9	#c9cdda	3.15	3
+graphic	Light track 7 on TrackSel	#68718a	#c9cdda	3.06	3
+graphic	Light track 8 on TrackSel	#8d6b48	#c9cdda	3.06	3
+graphic	Light track 9 on TrackSel	#2779a0	#c9cdda	3.06	3
+graphic	Light track 10 on TrackSel	#a8372e	#c9cdda	4.07	3
+graphic	Light track 11 on TrackSel	#566f00	#c9cdda	3.61	3
+graphic	Light track 12 on TrackSel	#007c47	#c9cdda	3.33	3
+graphic	Light track 13 on TrackSel	#007694	#c9cdda	3.29	3
+graphic	Light track 14 on TrackSel	#5255b6	#c9cdda	3.97	3
+graphic	Light track 15 on TrackSel	#943b84	#c9cdda	4.11	3
+graphic	Light FocusRing on TrackSel	#5665cd	#c9cdda	3.20	3
+graphic	Light AiLine on TrackSel	#7d4fe0	#c9cdda	3.25	3
+graphic	Light structure line Rest on TrackSel	#6b7190	#c9cdda	3.01	3
+graphic	Light structure line Hover on TrackSel	#5665cd	#c9cdda	3.20	3
+graphic	Light structure line Selected on TrackSel	#3a499e	#c9cdda	5.04	3
+graphic	Light automation mark (Blue) on TrackSel	#3a499e	#c9cdda	5.04	3
+graphic	Light meter stop at 0	#1f8a56	#d7dae4	3.11	3
+graphic	Light meter stop at 0.7	#947500	#d7dae4	3.13	3
+graphic	Light meter stop at 1	#d9443a	#d7dae4	3.11	3
+graphic	Light white key against black key	#ffffff	#3a3e52	10.55	3
+graphic	Light implied mute letter on S3	#7a6100	#dcdee8	4.43	3
+graphic	Light off switch (hover false) track on Paper	#707481	#ffffff	4.66	3
+graphic	Light off switch (hover false) track on S0	#707481	#eceef4	4.02	3
+graphic	Light off switch (hover false) track on S1	#707481	#f4f5f9	4.28	3
+graphic	Light off switch (hover false) track on S2	#707481	#e8eaf1	3.88	3
+graphic	Light off switch (hover false) track on S3	#707481	#dcdee8	3.48	3
+graphic	Light off switch (hover false) track on Hover	#707481	#f4f5f9	4.28	3
+graphic	Light off switch (hover false) track on Sel	#707481	#e3e5ed	3.71	3
+graphic	Light off switch (hover false) knob on its track	#ffffff	#707481	4.66	3
+graphic	Light off switch (hover true) track on Paper	#616572	#ffffff	5.81	3
+graphic	Light off switch (hover true) track on S0	#616572	#eceef4	5.01	3
+graphic	Light off switch (hover true) track on S1	#616572	#f4f5f9	5.34	3
+graphic	Light off switch (hover true) track on S2	#616572	#e8eaf1	4.84	3
+graphic	Light off switch (hover true) track on S3	#616572	#dcdee8	4.33	3
+graphic	Light off switch (hover true) track on Hover	#616572	#f4f5f9	5.34	3
+graphic	Light off switch (hover true) track on Sel	#616572	#e3e5ed	4.62	3
+graphic	Light off switch (hover true) knob on its track	#ffffff	#616572	5.81	3
+graphic	Light wave preview on S1	#3a499e	#f4f5f9	7.34	3
+graphic	Light preview dot at alpha 0.6 on Sel	#646980	#e3e5ed	4.31	3
+graphic	Light preview dot at alpha 0.60300004 on Sel	#64687f	#e3e5ed	4.36	3
+graphic	Light preview dot at alpha 0.606 on Sel	#63677e	#e3e5ed	4.43	3
+graphic	Light preview dot at alpha 0.609 on Sel	#63677e	#e3e5ed	4.43	3
+graphic	Light preview dot at alpha 0.61200005 on Sel	#62667e	#e3e5ed	4.49	3
+graphic	Light preview dot at alpha 0.615 on Sel	#61667d	#e3e5ed	4.51	3
+graphic	Light preview dot at alpha 0.61800003 on Sel	#60657c	#e3e5ed	4.57	3
+graphic	Light preview dot at alpha 0.621 on Sel	#60657c	#e3e5ed	4.57	3
+graphic	Light preview dot at alpha 0.624 on Sel	#5f647c	#e3e5ed	4.64	3
+graphic	Light preview dot at alpha 0.62700003 on Sel	#5f637b	#e3e5ed	4.69	3
+graphic	Light preview dot at alpha 0.63 on Sel	#5e627a	#e3e5ed	4.77	3
+graphic	Light preview dot at alpha 0.633 on Sel	#5e627a	#e3e5ed	4.77	3
+graphic	Light preview dot at alpha 0.63600004 on Sel	#5d6179	#e3e5ed	4.84	3
+graphic	Light preview dot at alpha 0.639 on Sel	#5c6179	#e3e5ed	4.85	3
+graphic	Light preview dot at alpha 0.642 on Sel	#5b6078	#e3e5ed	4.93	3
+graphic	Light preview dot at alpha 0.64500004 on Sel	#5b6078	#e3e5ed	4.93	3
+graphic	Light preview dot at alpha 0.648 on Sel	#5a5f77	#e3e5ed	5.00	3
+graphic	Light preview dot at alpha 0.651 on Sel	#5a5e77	#e3e5ed	5.06	3
+graphic	Light preview dot at alpha 0.65400004 on Sel	#595d76	#e3e5ed	5.13	3
+graphic	Light preview dot at alpha 0.657 on Sel	#585d75	#e3e5ed	5.16	3
+graphic	Light preview dot at alpha 0.66 on Sel	#585d75	#e3e5ed	5.16	3
+graphic	Light preview dot at alpha 0.663 on Sel	#575c74	#e3e5ed	5.24	3
+graphic	Light preview dot at alpha 0.666 on Sel	#565b74	#e3e5ed	5.31	3
+graphic	Light preview dot at alpha 0.669 on Sel	#565a73	#e3e5ed	5.38	3
+graphic	Light preview dot at alpha 0.672 on Sel	#565a73	#e3e5ed	5.38	3
+graphic	Light preview dot at alpha 0.675 on Sel	#555972	#e3e5ed	5.46	3
+graphic	Light preview dot at alpha 0.67800003 on Sel	#545972	#e3e5ed	5.48	3
+graphic	Light preview dot at alpha 0.681 on Sel	#535871	#e3e5ed	5.56	3
+graphic	Light preview dot at alpha 0.684 on Sel	#535871	#e3e5ed	5.56	3
+graphic	Light preview dot at alpha 0.68700004 on Sel	#525770	#e3e5ed	5.65	3
+graphic	Light preview dot at alpha 0.69 on Sel	#51566f	#e3e5ed	5.74	3
+graphic	Light preview dot at alpha 0.693 on Sel	#51556f	#e3e5ed	5.80	3
+graphic	Light preview dot at alpha 0.696 on Sel	#51556f	#e3e5ed	5.80	3
+graphic	Light preview dot at alpha 0.699 on Sel	#50556e	#e3e5ed	5.83	3
+graphic	Light preview dot at alpha 0.702 on Sel	#4f546d	#e3e5ed	5.92	3
+graphic	Light preview dot at alpha 0.705 on Sel	#4e536d	#e3e5ed	6.00	3
+graphic	Light preview dot at alpha 0.708 on Sel	#4d526c	#e3e5ed	6.10	3
+graphic	Light preview dot at alpha 0.711 on Sel	#4d526c	#e3e5ed	6.10	3
+graphic	Light preview dot at alpha 0.714 on Sel	#4c516b	#e3e5ed	6.19	3
+graphic	Light preview dot at alpha 0.717 on Sel	#4c506a	#e3e5ed	6.27	3
+graphic	Light preview dot at alpha 0.72 on Sel	#4b506a	#e3e5ed	6.29	3
+graphic	Light preview dot at alpha 0.723 on Sel	#4b506a	#e3e5ed	6.29	3
+graphic	Light preview dot at alpha 0.726 on Sel	#4a4f69	#e3e5ed	6.39	3
+graphic	Light preview dot at alpha 0.729 on Sel	#494e68	#e3e5ed	6.49	3
+graphic	Light preview dot at alpha 0.732 on Sel	#484d68	#e3e5ed	6.58	3
+graphic	Light preview dot at alpha 0.735 on Sel	#484d68	#e3e5ed	6.58	3
+graphic	Light preview dot at alpha 0.738 on Sel	#474c67	#e3e5ed	6.69	3
+graphic	Light preview dot at alpha 0.741 on Sel	#474c66	#e3e5ed	6.70	3
+graphic	Light preview dot at alpha 0.744 on Sel	#464b65	#e3e5ed	6.80	3
+graphic	Light preview dot at alpha 0.747 on Sel	#464b65	#e3e5ed	6.80	3
+graphic	Light preview dot at alpha 0.75 on Sel	#454a65	#e3e5ed	6.90	3
+graphic	Light preview dot at alpha 0.753 on Sel	#444964	#e3e5ed	7.01	3
+graphic	Light preview dot at alpha 0.756 on Sel	#434863	#e3e5ed	7.12	3
+graphic	Light preview dot at alpha 0.759 on Sel	#424863	#e3e5ed	7.14	3
+graphic	Light preview dot at alpha 0.76199996 on Sel	#424863	#e3e5ed	7.14	3
+graphic	Light preview dot at alpha 0.765 on Sel	#424762	#e3e5ed	7.23	3
+graphic	Light preview dot at alpha 0.768 on Sel	#414661	#e3e5ed	7.34	3
+graphic	Light preview dot at alpha 0.77099997 on Sel	#404560	#e3e5ed	7.46	3
+graphic	Light preview dot at alpha 0.774 on Sel	#404560	#e3e5ed	7.46	3
+graphic	Light preview dot at alpha 0.777 on Sel	#3f4460	#e3e5ed	7.57	3
+graphic	Light preview dot at alpha 0.78 on Sel	#3e435f	#e3e5ed	7.68	3
+graphic	Light preview dot at alpha 0.783 on Sel	#3e435e	#e3e5ed	7.70	3
+graphic	Light preview dot at alpha 0.786 on Sel	#3e435e	#e3e5ed	7.70	3
+graphic	Light preview dot at alpha 0.78900003 on Sel	#3d425e	#e3e5ed	7.80	3
+graphic	Light preview dot at alpha 0.792 on Sel	#3c415d	#e3e5ed	7.93	3
+graphic	Light preview dot at alpha 0.79499996 on Sel	#3b405c	#e3e5ed	8.05	3
+graphic	Light preview dot at alpha 0.798 on Sel	#3b405c	#e3e5ed	8.05	3
+graphic	Light preview dot at alpha 0.801 on Sel	#3a3f5b	#e3e5ed	8.18	3
+graphic	Light preview dot at alpha 0.804 on Sel	#393f5b	#e3e5ed	8.20	3
+graphic	Light preview dot at alpha 0.807 on Sel	#393e5a	#e3e5ed	8.30	3
+graphic	Light preview dot at alpha 0.81 on Sel	#383d59	#e3e5ed	8.43	3
+graphic	Light preview dot at alpha 0.81299996 on Sel	#383d59	#e3e5ed	8.43	3
+graphic	Light preview dot at alpha 0.816 on Sel	#373c59	#e3e5ed	8.55	3
+graphic	Light preview dot at alpha 0.819 on Sel	#363b58	#e3e5ed	8.68	3
+graphic	Light preview dot at alpha 0.822 on Sel	#353b57	#e3e5ed	8.72	3
+graphic	Light preview dot at alpha 0.825 on Sel	#353b57	#e3e5ed	8.72	3
+graphic	Light preview dot at alpha 0.82799995 on Sel	#343a56	#e3e5ed	8.85	3
+graphic	Light preview dot at alpha 0.831 on Sel	#343956	#e3e5ed	8.95	3
+graphic	Light preview dot at alpha 0.834 on Sel	#333855	#e3e5ed	9.09	3
+graphic	Light preview dot at alpha 0.837 on Sel	#333855	#e3e5ed	9.09	3
+graphic	Light preview dot at alpha 0.84 on Sel	#323754	#e3e5ed	9.22	3
+graphic	Light preview dot at alpha 0.843 on Sel	#313654	#e3e5ed	9.35	3
+graphic	Light preview dot at alpha 0.84599996 on Sel	#303653	#e3e5ed	9.39	3
+graphic	Light preview dot at alpha 0.849 on Sel	#303653	#e3e5ed	9.39	3
+graphic	Light preview dot at alpha 0.852 on Sel	#2f3552	#e3e5ed	9.53	3
+graphic	Light preview dot at alpha 0.855 on Sel	#2f3451	#e3e5ed	9.65	3
+graphic	Light preview dot at alpha 0.858 on Sel	#2e3351	#e3e5ed	9.77	3
+graphic	Light preview dot at alpha 0.861 on Sel	#2d3250	#e3e5ed	9.92	3
+graphic	Light preview dot at alpha 0.86399996 on Sel	#2d3250	#e3e5ed	9.92	3
+graphic	Light preview dot at alpha 0.867 on Sel	#2c324f	#e3e5ed	9.96	3
+graphic	Light preview dot at alpha 0.87 on Sel	#2b314f	#e3e5ed	10.09	3
+graphic	Light preview dot at alpha 0.87299997 on Sel	#2a304e	#e3e5ed	10.24	3
+graphic	Light preview dot at alpha 0.8759999 on Sel	#2a304e	#e3e5ed	10.24	3
+graphic	Light preview dot at alpha 0.87899995 on Sel	#2a2f4d	#e3e5ed	10.36	3
+graphic	Light preview dot at alpha 0.88199997 on Sel	#292e4c	#e3e5ed	10.50	3
+graphic	Light preview dot at alpha 0.885 on Sel	#282e4c	#e3e5ed	10.53	3
+graphic	Light preview dot at alpha 0.888 on Sel	#282e4c	#e3e5ed	10.53	3
+graphic	Light preview dot at alpha 0.891 on Sel	#272d4b	#e3e5ed	10.68	3
+graphic	Light preview dot at alpha 0.894 on Sel	#262c4a	#e3e5ed	10.83	3
+graphic	Light preview dot at alpha 0.89699996 on Sel	#262b4a	#e3e5ed	10.94	3
+graphic	Light preview dot at alpha 0.9 on Sel	#252a49	#e3e5ed	11.09	3
+graphic	Light preview dot at alpha 0.6 on Sel	#646980	#e3e5ed	4.31	3

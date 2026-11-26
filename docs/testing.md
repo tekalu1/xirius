@@ -120,6 +120,20 @@ new test, and a row left without them fails the run, naming the row.
   its script (`devices_shots::tests::ENDS`), one row per shot; a row whose shot no longer plays
   to its end fails as `rows of ENDS whose shots were not played to their ends`. A script's own
   test then checks what its pictures show, not that it is listed or that its targets exist.
+- **A design rule, a lint case or a color** (`crates/xirius-design-lint`, `crates/xirius-design`):
+  a lint case is a line in a fixture, not a test. Add it to
+  `crates/xirius-design-lint/tests/fixtures/violations/*.rs` with `//~ <rule>` at the end of the
+  line that must fail (`//~^` for the line above; a rule hit twice on one line is marked twice),
+  or to `fixtures/clean/*.rs` when it must pass. Cases that must not see each other's `use` lines
+  or names are cut apart with a `// ----` line; `// ---- crates/xirius-ui/src/draw.rs` checks the
+  part below as that file. `fixtures::*` checks every fixture against its marks and fails with
+  every difference as `<file>:<line>: <rule> …`; a rule with no failing fixture fails as
+  `見本の無い規則`. A new token, face or pairing goes into `text_rows` or `graphic_rows`
+  (`crates/xirius-design/tests/it/contrast.rs`), which hold every text and graphic against its
+  face at 4.5:1 and 3:1. Then run `XIRIUS_WRITE_CONTRAST=1 cargo nextest run -p xirius-design
+  contrast` and read the change to `crates/xirius-design/tests/contrast.txt` (each row with its
+  two colors and ratio). A changed color fails `contrast::the_contrast_table_matches_its_snapshot`
+  with the first row that moved, as `tests/contrast.txt:<line>`.
 
 ## Build artifacts
 
