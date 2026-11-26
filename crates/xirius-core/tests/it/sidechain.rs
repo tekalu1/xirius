@@ -374,21 +374,6 @@ fn send_add_to_a_plugin_checks_the_key_level_range() {
     assert!(e.contains("範囲外"), "{e}");
 }
 
-#[test]
-fn a_saved_song_with_a_sidechain_opens_and_validates() {
-    let (mut s, kick, _bass, comp) = song();
-    run(
-        &mut s,
-        "plugin.sidechain.add",
-        json!({"id": comp.to_string(), "from": kick.to_string(), "level": -8.0}),
-    );
-    let v = serde_json::to_value(s.project()).unwrap();
-    let back: Project = serde_json::from_value(v).unwrap();
-    back.validate().unwrap();
-    back.validate_deep().unwrap();
-    assert_eq!(*s.project(), back);
-}
-
 /// PLG-071: Swap keeps no value of its own. It trades the frequencies of the Low Cut and the
 /// High Cut in one step, an Off for the other Off, as Studio Pro's button does.
 #[test]

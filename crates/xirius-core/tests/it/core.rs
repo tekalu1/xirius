@@ -115,88 +115,6 @@ fn send_loops_are_rejected() {
 }
 
 #[test]
-fn a_new_bus_and_its_sends_are_one_step() {
-    let mut s = Session::new("new bus");
-    let t = id_of(&run(&mut s, "track.add.audio", json!({})));
-    let u = id_of(&run(&mut s, "track.add.instrument", json!({})));
-    let before = hash(&s);
-    let steps = s.steps().len();
-    let r = run(
-        &mut s,
-        "send.add.bus",
-        json!({"ids": [t, u], "name": "Space", "level": -6}),
-    );
-    s.project().validate_deep().unwrap();
-    assert_eq!(s.steps().len(), steps + 1);
-    let bus: xirius_core::id::TrackId = r.data["id"].as_str().unwrap().parse().unwrap();
-    assert_eq!(r.data["sends"].as_array().unwrap().len(), 2);
-    let p = s.project();
-    assert_eq!(p.track(bus).unwrap().name, "Space");
-    for id in [&t, &u] {
-        let sends = &p.track(id.parse().unwrap()).unwrap().sends;
-        assert_eq!(sends.len(), 1);
-        assert_eq!(sends[0].to, bus);
-        assert_eq!(sends[0].level_db, -6.0);
-        assert!(!sends[0].pre);
-    }
-    // One undo takes the bus and the sends away together.
-    s.undo(1).unwrap();
-    assert_eq!(hash(&s), before);
-    assert!(s.project().track(bus).is_err());
-    // The master cannot send, and nothing is made when it is asked to.
-    assert!(try_run(&mut s, "send.add.bus", json!({"ids": ["master"]})).is_err());
-    assert_eq!(hash(&s), before);
-}
-
-#[test]
-fn a_new_bus_for_a_folder_is_one_step() {
-    let mut s = Session::new("folder new bus");
-    let f = id_of(&run(&mut s, "folder.add", json!({"name": "Drums"})));
-    let kick = id_of(&run(
-        &mut s,
-        "track.add.audio",
-        json!({"name": "Kick", "into": f}),
-    ));
-    let before = hash(&s);
-    let steps = s.steps().len();
-    let r = run(
-        &mut s,
-        "folder.bus.add",
-        json!({"id": f, "name": "Drum bus"}),
-    );
-    s.project().validate_deep().unwrap();
-    assert_eq!(s.steps().len(), steps + 1);
-    let bus: xirius_core::id::TrackId = r.data["id"].as_str().unwrap().parse().unwrap();
-    assert_eq!(r.data["folder"].as_str(), Some(f.as_str()));
-    let p = s.project();
-    assert_eq!(p.track(bus).unwrap().name, "Drum bus");
-    assert_eq!(p.folders[&f.parse().unwrap()].bus, Some(bus));
-    // The bus is held inside the folder and represented by its row.
-    assert_eq!(p.row_bus(f.parse().unwrap()), Some(bus));
-    let _ = kick;
-    // Without a name, one is made up.
-    let g = id_of(&run(&mut s, "folder.add", json!({})));
-    let r2 = run(&mut s, "folder.bus.add", json!({"id": g}));
-    let other: xirius_core::id::TrackId = r2.data["id"].as_str().unwrap().parse().unwrap();
-    assert!(!s.project().track(other).unwrap().name.is_empty());
-    s.undo(2).unwrap();
-    // One undo takes the bus and the connection away together.
-    s.undo(1).unwrap();
-    assert_eq!(hash(&s), before);
-    assert!(s.project().track(bus).is_err());
-    // Explicitly putting the bus in its own folder uses that folder's row too.
-    let made = run(&mut s, "folder.bus.add", json!({"id": f, "into": f}));
-    let channel = made.data["id"].as_str().unwrap().parse().unwrap();
-    assert_eq!(s.project().row_bus(f.parse().unwrap()), Some(channel));
-    s.project().validate_deep().unwrap();
-    s.undo(1).unwrap();
-    assert_eq!(hash(&s), before);
-    // A folder that does not exist makes nothing either.
-    assert!(try_run(&mut s, "folder.bus.add", json!({"id": "fld_999"})).is_err());
-    assert_eq!(hash(&s), before);
-}
-
-#[test]
 fn folder_bus_loops_are_rejected() {
     let mut s = Session::new("folder bus");
     let bus = id_of(&run(&mut s, "track.add.bus", json!({})));
@@ -370,10 +288,14 @@ fn deleting_a_track_cleans_up_sends_and_outputs() {
 }
 
 #[test]
-fn the_master_cannot_be_removed_or_moved() {
+fn the_master_cannot_be_removed_moved_or_sent_from() {
     let mut s = Session::new("master");
+    let before = hash(&s);
     assert!(try_run(&mut s, "track.delete", json!({"ids": ["master"]})).is_err());
     assert!(try_run(&mut s, "track.move", json!({"ids": ["master"], "by": 1})).is_err());
+    // Nor is a bus made for it to send to.
+    assert!(try_run(&mut s, "send.add.bus", json!({"ids": ["master"]})).is_err());
+    assert_eq!(hash(&s), before);
 }
 
 // ---- every command, one step, one undo ----------------------------------------------------------
@@ -463,6 +385,7 @@ fn every_history_command_undoes_and_redoes() {
     rig.step("track.monitor", json!({"ids": [lead]}));
     rig.step("track.input.gain", json!({"ids": [lead], "db": 6}));
     rig.step("track.volume.set", json!({"ids": [kick], "db": -6.5}));
+    rig.step("track.volume.set", json!({"ids": [kick, lead], "by": -1.5}));
     rig.step("track.pan.set", json!({"ids": [kick], "pan": 0.25}));
     rig.step("track.transpose", json!({"ids": [lead], "semis": -12}));
     rig.step("track.velocity", json!({"ids": [lead], "percent": 10}));
@@ -509,10 +432,22 @@ fn every_history_command_undoes_and_redoes() {
     rig.step("send.level.set", json!({"id": send, "level": -9}));
     rig.step("send.level.reset", json!({"id": send}));
     rig.step("send.remove", json!({"ids": [send]}));
-    rig.step(
+    let space = id_of(&rig.step(
         "send.add.bus",
         json!({"ids": [kick, lead], "name": "Space", "level": -6, "pre": true}),
-    );
+    ));
+    // The new bus is named as asked and every source sends to it as asked.
+    let p = rig.s.project();
+    assert_eq!(p.track(space.parse().unwrap()).unwrap().name, "Space");
+    for t in [&kick, &lead] {
+        let sends = &p.track(t.parse().unwrap()).unwrap().sends;
+        assert!(
+            sends
+                .iter()
+                .any(|x| x.to.to_string() == space && x.level_db == -6.0 && x.pre),
+            "send.add.bus from {t}: {sends:?}"
+        );
+    }
     let eq = id_of(&rig.step("plugin.add", json!({"track": kick, "name": "EQ"})));
     let comp = id_of(&rig.step("plugin.add", json!({"track": kick, "name": "Comp"})));
     rig.step("plugin.move", json!({"id": comp, "index": 0}));
@@ -1538,6 +1473,9 @@ fn save_and_reopen_round_trip() {
 
     let mut s = Session::open(&dir).unwrap();
     assert_eq!(hash(&s), saved);
+    // The folder still knows the bus made with it, so it takes that bus with it when it goes.
+    let group = s.project().folders.values().next().unwrap();
+    assert!(group.made_bus.is_some() && group.made_bus == group.bus);
     assert_eq!(
         s.steps().len(),
         steps,

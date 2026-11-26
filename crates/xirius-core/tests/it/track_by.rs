@@ -1,5 +1,6 @@
 //! `track.volume.set --by` and `track.pan.set --by` (CLI-003): each track moves from where it is,
-//! a track at the end of the range stops there alone, and one run is one undo.
+//! and a track at the end of the range stops there alone. That one run is one undo is checked by
+//! the history rig (`core::every_history_command_undoes_and_redoes`).
 
 use serde_json::{Value, json};
 use xirius_core::error::ErrorCode;
@@ -86,16 +87,6 @@ fn a_track_at_the_end_stops_there_alone() {
     for (got, want) in p.iter().zip([0.0, 0.5, 1.0]) {
         assert!((got - want).abs() < 1e-9, "{p:?}");
     }
-}
-
-#[test]
-fn one_by_is_one_undo() {
-    let (mut s, ids) = song();
-    let before = volumes(&s, &ids);
-    run(&mut s, "track.volume.set", json!({ "ids": ids, "by": 4.0 }));
-    assert_ne!(volumes(&s, &ids), before);
-    s.undo(1).expect("undo");
-    assert_eq!(volumes(&s, &ids), before);
 }
 
 #[test]
