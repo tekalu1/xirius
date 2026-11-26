@@ -359,14 +359,6 @@ mod tests {
         assert!((2.8..3.9).contains(&r), "{r}");
     }
 
-    #[test]
-    fn silence_in_is_silence_out() {
-        let (mut p, h) = make("compressor");
-        set_plain(&h, "makeup", 24.0);
-        set_plain(&h, "mix", 50.0);
-        assert_silent(p.as_mut());
-    }
-
     /// The Compressor as it was before it took a key (PLG-009), word for word: what a song
     /// without one must still sound like, to the bit.
     mod before {

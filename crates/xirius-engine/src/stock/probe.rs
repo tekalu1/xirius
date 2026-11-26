@@ -652,15 +652,15 @@ mod tests {
             (19_200, on(42, 1.0)),
         ];
         let notes = vec![(0, on(60, 1.0)), (24_000, off(60))];
-        vec![
-            ("eq", input.clone(), vec![]),
-            ("compressor", input.clone(), vec![]),
-            ("limiter", input.clone(), vec![]),
-            ("delay", input.clone(), vec![]),
-            ("reverb", input, vec![]),
-            ("sampler", silence.clone(), notes),
-            ("drum-kit", silence, hits),
-        ]
+        // Every one in the list: an effect takes the bursts, an instrument its notes.
+        xirius_params::BUILTINS
+            .iter()
+            .map(|def| match (def.kind, def.uid) {
+                (xirius_params::Kind::Effect, key) => (key, input.clone(), vec![]),
+                (_, key @ "drum-kit") => (key, silence.clone(), hits.clone()),
+                (_, key) => (key, silence.clone(), notes.clone()),
+            })
+            .collect()
     }
 
     #[test]
@@ -672,17 +672,22 @@ mod tests {
                 p.prepare(&setup());
             }
             let probe = h.probe();
+            let unwritten = Probe::new().pitch_view();
             render(p.as_mut(), &x, &x, &notes);
             assert_eq!(probe.gr_db(), 0.0, "{key}");
             assert_eq!(probe.take_peaks(), ([0.0; 2], [0.0; 2]), "{key}");
             assert_eq!(probe.onsets(), 0, "{key}");
             assert_eq!(probe.hits(), [0; HIT_PADS], "{key}");
             assert_eq!(probe.voice(), None, "{key}");
+            assert_eq!(probe.pitch_view(), unwritten, "{key}");
             // Watched, the same play writes.
             probe.watch(true);
             render(p.as_mut(), &x, &x, &notes);
-            let (_, output) = probe.take_peaks();
-            assert!(output[0] > 0.0, "{key}");
+            match key {
+                // It shows the pitch it hears, not meters.
+                "pitch-correction" => assert_ne!(probe.pitch_view(), unwritten, "{key}"),
+                _ => assert!(probe.take_peaks().1[0] > 0.0, "{key}"),
+            }
             match key {
                 "compressor" | "limiter" => assert!(probe.gr_db() > 0.0, "{key}"),
                 "delay" | "reverb" => assert_eq!(probe.onsets(), 4, "{key}"),
@@ -690,10 +695,14 @@ mod tests {
                 _ => {}
             }
             probe.watch(false);
-            let (before, voice) = (probe.onsets(), probe.voice());
+            let (before, voice, pitch) = (probe.onsets(), probe.voice(), probe.pitch_view());
             render(p.as_mut(), &x, &x, &notes);
             assert_eq!(probe.take_peaks(), ([0.0; 2], [0.0; 2]), "{key}");
-            assert_eq!((probe.onsets(), probe.voice()), (before, voice), "{key}");
+            assert_eq!(
+                (probe.onsets(), probe.voice(), probe.pitch_view()),
+                (before, voice, pitch),
+                "{key}"
+            );
         }
     }
 

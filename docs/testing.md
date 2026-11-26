@@ -80,6 +80,15 @@ new test, and a row left without them fails the run, naming the row.
   `interfaces::the_script_has_a_call_of_every_argument_type`, which then fails until
   `interfaces.rs`'s script has a call with it. A test that a command is reachable from both
   entrances is not needed.
+- **A built-in instrument or effect** (`xirius_params::BUILTINS`): nothing to add for what every
+  device must do. `stock::every` (`crates/xirius-engine/src/stock/every.rs`) checks each one:
+  silence in is silence out at its defaults, with every value at 0 and at 1, with and without a
+  file; notes without its files (or with a file that was not found) make no sound and do not
+  panic; a sound that plays out and a note let go before its file ends leave no voice sounding
+  and fall under -120 dB within eight seconds. A failure names the row, as `<uid>, <case>: left
+  frame 812 is 0.003`; a built-in in the list without a processor in `stock::create` fails as
+  `<uid>, …: no processor`. The probe tests (`stock::probe`) take the list from there too. The
+  device's own tests then check its sound, not silence or letting go.
 
 ## Build artifacts
 

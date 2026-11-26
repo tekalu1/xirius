@@ -516,13 +516,4 @@ mod tests {
         let ratio = db((rms(&l[half..]) + rms(&r[half..])) / (2.0 * rms(&x[half..])));
         assert!((-6.0..3.0).contains(&ratio), "{ratio}");
     }
-
-    #[test]
-    fn silence_in_is_silence_out() {
-        let (mut p, h) = make("reverb");
-        set_plain(&h, "decay", 20.0);
-        set_plain(&h, "mix", 100.0);
-        set_plain(&h, "size", 100.0);
-        assert_silent(p.as_mut());
-    }
 }

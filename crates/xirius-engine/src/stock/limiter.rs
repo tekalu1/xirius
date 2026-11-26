@@ -297,11 +297,4 @@ mod tests {
         let (int, _) = render(a.as_mut(), &x, &x, &[]);
         assert_eq!(keyed(b.as_mut(), &x, &vec![0.0; x.len()]), int);
     }
-
-    #[test]
-    fn silence_in_is_silence_out() {
-        let (mut p, h) = make("limiter");
-        set_plain(&h, "input", 24.0);
-        assert_silent(p.as_mut());
-    }
 }
