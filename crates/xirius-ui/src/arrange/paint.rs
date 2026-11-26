@@ -967,7 +967,9 @@ fn instrument(studio: &Studio, track: xirius_core::id::TrackId) -> bool {
         .is_some_and(|t| t.kind == xirius_core::model::TrackKind::Instrument)
 }
 
-/// The pointer's shape over the arrangement; None leaves it to the roll.
+/// The pointer's shape over the arrangement; None leaves it to the roll. Every place and tool
+/// is spelled out (UI-383): a new one does not build until it is given a shape.
+#[deny(clippy::wildcard_enum_match_arm)]
 pub fn cursor(studio: &Studio) -> Option<Cursor> {
     let (spot, tool, started) = match &studio.arrange.drag {
         Some(d) => (&d.spot, d.tool, d.started),
@@ -991,7 +993,7 @@ pub fn cursor(studio: &Studio) -> Option<Cursor> {
             Tool::Audition => Cursor::Audition,
             Tool::Range => Cursor::Range,
             // The middle of a clip keeps the arrow, held too (UI-382): no hand over every clip.
-            _ => match grip {
+            Tool::Select => match grip {
                 Grip::Left | Grip::Right | Grip::Corner => Cursor::ResizeH,
                 Grip::Body => Cursor::Arrow,
             },
@@ -1005,6 +1007,9 @@ pub fn cursor(studio: &Studio) -> Option<Cursor> {
         },
         Spot::Loop(LoopGrip::Start | LoopGrip::End) => Cursor::ResizeH,
         Spot::Loop(LoopGrip::Body) => Cursor::Move,
+        // A new range is drawn sideways; before the press the ruler's crosshair shows.
+        Spot::Loop(LoopGrip::New) if started => Cursor::ResizeH,
+        Spot::Loop(LoopGrip::New) => Cursor::Arrow,
         Spot::Section { resize: true, .. } => Cursor::ResizeH,
         Spot::Section { .. } => Cursor::Move,
         // Split and mute have nothing to act on in the tempo row and the lanes.
@@ -1021,7 +1026,7 @@ pub fn cursor(studio: &Studio) -> Option<Cursor> {
             Tool::Draw => Cursor::Pencil,
             Tool::Eraser => Cursor::Blocked,
             Tool::Range => Cursor::Range,
-            _ => Cursor::Arrow,
+            Tool::Select | Tool::Cut | Tool::Mute | Tool::Audition => Cursor::Arrow,
         },
         Spot::Tempo(_) | Spot::Line { .. } => Cursor::ResizeV,
         Spot::RangeTrim(_) | Spot::FrameGrip { .. } => Cursor::ResizeV,
@@ -1029,9 +1034,29 @@ pub fn cursor(studio: &Studio) -> Option<Cursor> {
         Spot::Lane { .. } => match tool {
             Tool::Draw => Cursor::Pencil,
             Tool::Eraser => Cursor::Blocked,
-            _ => Cursor::Cross,
+            Tool::Select | Tool::Cut | Tool::Mute | Tool::Audition | Tool::Range => Cursor::Cross,
         },
         Spot::Row(_) if started => Cursor::Move,
+        // A row's name and empty part only select it (its buttons are hits of their own).
+        Spot::Row(_) => Cursor::Arrow,
+        // The pencil draws a section there; the rest only select.
+        Spot::Band => match tool {
+            Tool::Draw => Cursor::Pencil,
+            Tool::Select | Tool::Eraser | Tool::Cut | Tool::Mute | Tool::Audition | Tool::Range => {
+                Cursor::Arrow
+            }
+        },
+        // Buttons in the lanes: the ARA badge, the lanes' show and hide, a lane's head.
+        Spot::Ara { .. } | Spot::AutoToggle(_) | Spot::LaneHead { .. } => Cursor::Press,
+        // The recording area: the input gain is dragged sideways; a take's row plays it.
+        Spot::Rec {
+            part: crate::rec_area::RecPart::Gain(_),
+            ..
+        } => Cursor::ResizeH,
+        Spot::Rec {
+            part: crate::rec_area::RecPart::Fold | crate::rec_area::RecPart::Bar { .. },
+            ..
+        } => Cursor::Press,
         // Where there is no part: the tools that act on one have nothing to act on, and the
         // pencil makes one only on an instrument track.
         Spot::Space(row) => match tool {
@@ -1042,7 +1067,7 @@ pub fn cursor(studio: &Studio) -> Option<Cursor> {
             Tool::Range => Cursor::Range,
             Tool::Select => Cursor::Arrow,
         },
-        _ => return None,
+        Spot::None => return None,
     })
 }
 

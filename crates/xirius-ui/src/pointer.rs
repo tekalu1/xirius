@@ -12,6 +12,7 @@ use gpui::CursorStyle;
 
 use crate::roll::Cursor;
 use crate::studio::{Geometry, Studio};
+use crate::want::Want;
 
 /// A custom pointer picture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -79,32 +80,30 @@ impl Pointer {
     }
 }
 
-/// The pointer for `cursor`. With `crosshair` the tools' pictures give way to the system's
-/// crosshair (SET: ツールのカーソルを十字にする); the "not allowed" sign does not, it is not a tool.
+/// The pointer for `cursor`, not held (see [`show`]).
 pub fn pointer(cursor: Cursor, crosshair: bool) -> Pointer {
-    let tool = |shape| {
-        if crosshair {
-            Pointer::style(CursorStyle::Crosshair)
-        } else {
-            Pointer {
-                style: CursorStyle::Crosshair,
-                shape: Some(shape),
-            }
-        }
-    };
-    match cursor {
-        Cursor::Arrow => Pointer::style(CursorStyle::Arrow),
-        Cursor::Move => Pointer::style(CursorStyle::OpenHand),
-        Cursor::ResizeH => Pointer::style(CursorStyle::ResizeLeftRight),
-        Cursor::ResizeV => Pointer::style(CursorStyle::ResizeUpDown),
-        Cursor::Cross => Pointer::style(CursorStyle::Crosshair),
-        Cursor::Blocked => Pointer::style(CursorStyle::OperationNotAllowed),
-        Cursor::Pencil => tool(Shape::Pencil),
-        Cursor::Split => tool(Shape::Scissors),
-        Cursor::Erase => tool(Shape::Eraser),
-        Cursor::Mute => tool(Shape::Mute),
-        Cursor::Audition => tool(Shape::Audition),
-        Cursor::Range => tool(Shape::Range),
+    show(Want::of(cursor), crosshair, false)
+}
+
+/// The one table from what a place does to the shape shown (UI-383). With `crosshair` the
+/// tools' pictures give way to the system's crosshair (SET: ツールのカーソルを十字にする); the
+/// hand and the "not allowed" sign do not, they are not tools. `held`: a grab is under way.
+pub fn show(want: Want, crosshair: bool, held: bool) -> Pointer {
+    match want {
+        Want::Plain => Pointer::style(CursorStyle::Arrow),
+        Want::Press => Pointer::style(CursorStyle::PointingHand),
+        Want::Text => Pointer::style(CursorStyle::IBeam),
+        Want::DragH => Pointer::style(CursorStyle::ResizeLeftRight),
+        Want::DragV => Pointer::style(CursorStyle::ResizeUpDown),
+        Want::Grab => hand(held),
+        Want::Corner => Pointer::style(CursorStyle::ResizeUpLeftDownRight),
+        Want::Locate => Pointer::style(CursorStyle::Crosshair),
+        Want::Blocked => Pointer::style(CursorStyle::OperationNotAllowed),
+        Want::Tool(_) if crosshair => Pointer::style(CursorStyle::Crosshair),
+        Want::Tool(shape) => Pointer {
+            style: CursorStyle::Crosshair,
+            shape: Some(shape),
+        },
     }
 }
 
@@ -171,7 +170,7 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
         return hand(true);
     }
     if let Some(cursor) = studio.ruler_grab.as_ref().and_then(|grab| grab.cursor()) {
-        return pointer(cursor, studio.crosshair);
+        return show(Want::of(cursor), studio.crosshair, true);
     }
     if studio.lock_hovered(g).is_some()
         || studio.insert_drag_refused(g)
@@ -188,77 +187,29 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
     if studio.mixer.drag.is_some() {
         return Pointer::style(CursorStyle::ResizeUpDown);
     }
-    if studio.text_index(g, x, y, false).is_some()
-        || matches!(
-            hit,
-            crate::studio::Hit::Home(crate::home::Spot::Search)
-                | crate::studio::Hit::Browser(crate::browser::BrowserHit::Search)
-        )
-    {
+    if studio.text_index(g, x, y, false).is_some() {
         return Pointer::style(CursorStyle::IBeam);
     }
-    if let crate::studio::Hit::Mixer(hit) = hit {
-        use crate::mixer::MixerHit;
-        return Pointer::style(match hit {
-            MixerHit::Fader(_) | MixerHit::Pan(_) | MixerHit::SendLevel(..) => {
-                CursorStyle::ResizeUpDown
-            }
-            MixerHit::Control(_, control) if !control.is_button() => CursorStyle::ResizeUpDown,
-            MixerHit::Level(..) | MixerHit::KeyLevel(..) | MixerHit::BranchPan(..) => {
-                CursorStyle::ResizeLeftRight
-            }
-            MixerHit::Strip(_) | MixerHit::Heading(..) => CursorStyle::Arrow,
-            _ => CursorStyle::PointingHand,
-        });
+    let held =
+        studio.arrange.drag.as_ref().is_some_and(|d| d.started) || studio.roll.drag.is_some();
+    // A press on a button decides at once; a drag from the arrangement or the roll keeps its
+    // own shape over the buttons it passes.
+    let dragging = studio.arrange.drag.is_some() || studio.roll.drag.is_some();
+    if let Some(want) = hit.want().filter(|_| !dragging) {
+        return show(want, studio.crosshair, held);
     }
-    if matches!(
-        hit,
-        crate::studio::Hit::Bar(_)
-            | crate::studio::Hit::Tab(_)
-            | crate::studio::Hit::Rail(_)
-            | crate::studio::Hit::RailSettings
-            | crate::studio::Hit::AddTrack
-            | crate::studio::Hit::ZoomIn
-            | crate::studio::Hit::ZoomOut
-            | crate::studio::Hit::ToggleArrange
-            | crate::studio::Hit::ToggleTempo
-            | crate::studio::Hit::Follow
-            | crate::studio::Hit::Fold
-            | crate::studio::Hit::Home(crate::home::Spot::Button(_))
-            | crate::studio::Hit::Home(crate::home::Spot::Row(..))
-            | crate::studio::Hit::Browser(_)
-            | crate::studio::Hit::Keys(..)
-            | crate::studio::Hit::TrackIcon(..)
-            | crate::studio::Hit::Widen(..)
-            | crate::studio::Hit::Freeze(..)
-            | crate::studio::Hit::Output(..)
-            | crate::studio::Hit::FolderBus(..)
-            | crate::studio::Hit::AllOff(..)
-    ) {
-        return Pointer::style(CursorStyle::PointingHand);
-    }
-    if matches!(hit, crate::studio::Hit::HeadFader(..)) {
-        return Pointer::style(CursorStyle::ResizeLeftRight);
-    }
-    let cursor = crate::arrange::paint::cursor(studio).unwrap_or_else(|| {
+    let want = Want::of(crate::arrange::paint::cursor(studio).unwrap_or_else(|| {
         let ctx = studio.roll_ctx(g);
         studio.roll.cursor(ctx.as_ref())
-    });
-    if cursor == Cursor::Move {
-        return hand(
-            studio.arrange.drag.as_ref().is_some_and(|d| d.started) || studio.roll.drag.is_some(),
-        );
-    }
+    }));
     let over_ruler = matches!(hit, crate::studio::Hit::Ruler(_))
         || studio
             .roll_ctx(g)
             .is_some_and(|ctx| studio.roll.frame(ctx.body).ruler.contains(x, y));
-    let held =
-        studio.arrange.drag.as_ref().is_some_and(|d| d.started) || studio.roll.drag.is_some();
-    if cursor == Cursor::Arrow && over_ruler && !held {
-        return Pointer::style(CursorStyle::Crosshair);
+    if want == Want::Plain && over_ruler && !held {
+        return show(Want::Locate, studio.crosshair, held);
     }
-    pointer(cursor, studio.crosshair)
+    show(want, studio.crosshair, held)
 }
 
 fn hand(grabbing: bool) -> Pointer {
@@ -584,7 +535,8 @@ mod tests {
         use Cursor::*;
         for (cursor, style, shape) in [
             (Arrow, CursorStyle::Arrow, None),
-            (Move, CursorStyle::OpenHand, None),
+            (Press, CursorStyle::PointingHand, None),
+            (Move, CursorStyle::OpenHand, Some(Shape::OpenHand)),
             (ResizeH, CursorStyle::ResizeLeftRight, None),
             (ResizeV, CursorStyle::ResizeUpDown, None),
             (Cross, CursorStyle::Crosshair, None),
@@ -601,14 +553,97 @@ mod tests {
                 Pointer { style, shape },
                 "{cursor:?}"
             );
+            // The crosshair takes the tools' place; the hand is not a tool and stays.
             let with_crosshair = pointer(cursor, true);
+            let tool = style == CursorStyle::Crosshair && shape.is_some();
+            let (style, shape) = if tool {
+                (CursorStyle::Crosshair, None)
+            } else {
+                (style, shape)
+            };
+            assert_eq!(with_crosshair, Pointer { style, shape }, "{cursor:?}");
+        }
+        // Held, the hand closes.
+        assert_eq!(
+            show(Want::Grab, false, true),
+            Pointer {
+                style: CursorStyle::ClosedHand,
+                shape: Some(Shape::ClosedHand)
+            }
+        );
+    }
+
+    /// Every button the report found showing the arrow (UI-383) now shows the pointing hand,
+    /// and the drags their own arrows.
+    #[test]
+    fn every_kind_of_hit_has_its_shape() {
+        use crate::studio::Hit;
+        for hit in [
+            Hit::MidiCancel,
+            Hit::WaveZoom,
+            Hit::RollMap,
+            Hit::Toast(crate::toast::ToastPart::Close),
+            Hit::Rec(crate::rec_panel::RecPart::Punch),
+            Hit::Inspector(crate::inspector::Part::Field(0)),
+            Hit::Start(crate::start::Entry::Audio),
+            Hit::Entrance(crate::start::Part::NoDevice),
+            Hit::Home(crate::home::Spot::Device),
+            Hit::Bar(crate::topbar::BarButton::Play),
+            Hit::Rail(crate::browser::RailTab::Files),
+        ] {
+            assert_eq!(hit.want(), Some(Want::Press), "{hit:?}");
             assert_eq!(
-                with_crosshair.shape, None,
-                "{cursor:?}: no picture with the crosshair"
+                show(Want::Press, false, false).style,
+                CursorStyle::PointingHand
             );
-            let tool = shape.is_some();
-            let want = if tool { CursorStyle::Crosshair } else { style };
-            assert_eq!(with_crosshair.style, want, "{cursor:?}");
+        }
+        assert_eq!(
+            Hit::Bar(crate::topbar::BarButton::Tempo).want(),
+            Some(Want::DragV)
+        );
+        assert_eq!(
+            Hit::Browser(crate::browser::BrowserHit::Search).want(),
+            Some(Want::Text)
+        );
+        assert_eq!(
+            Hit::Toast(crate::toast::ToastPart::Body).want(),
+            Some(Want::Plain)
+        );
+        assert_eq!(Hit::None.want(), None);
+    }
+
+    #[test]
+    fn the_track_columns_buttons_and_the_bars_show_the_pointing_hand() {
+        use crate::studio::Hit;
+        let mut studio = Studio::sample();
+        // Tall enough that every row is in view.
+        let g = studio.geometry(1440.0, 1100.0);
+        let track = studio
+            .project()
+            .tracks
+            .values()
+            .find(|t| t.name == "Keys")
+            .unwrap()
+            .id;
+        for hit in [
+            Hit::Mute(track),
+            Hit::Solo(track),
+            Hit::Arm(track),
+            Hit::TrackColor(track),
+            Hit::Bar(crate::topbar::BarButton::Play),
+            Hit::Bar(crate::topbar::BarButton::Loop),
+            Hit::AddTrack,
+        ] {
+            let Some(at) = studio.center_of(&g, hit) else {
+                panic!("{hit:?}: on the screen");
+            };
+            studio.input_map.pointer = at;
+            assert_eq!(studio.hit(&g, at.0, at.1), hit, "{hit:?}: found there");
+            assert_eq!(
+                of_studio(&studio, &g).style,
+                CursorStyle::PointingHand,
+                "{hit:?}"
+            );
         }
     }
 

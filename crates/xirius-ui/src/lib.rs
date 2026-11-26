@@ -334,6 +334,7 @@ pub mod view_motion;
 pub mod viewport;
 pub mod wait;
 pub mod wait_shots;
+pub mod want;
 pub mod wave;
 pub mod wave_mod_shots;
 pub mod wave_zoom;
