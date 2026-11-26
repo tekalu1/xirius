@@ -20,6 +20,7 @@
 | トラックの色と中立の面のコントラスト 3:1（UI-008） | `TrackColor` | 16 色 × 2 テーマ（最小 3.39:1） | — |
 | 有彩色の塗りの面の上は ink_on_fill（mute・solo の札はその対の色）（UI-309） | `Fill`・`FillHover`・`Danger`・`DangerHover` の面に許す文字は `OnFill` だけ。画面の `Colors` は `primary`・`primary_hover` を面と文字の組（`Pair<Fill, OnFill>` から作る）で持ち、`Pen::transition_pair` で面と文字を一緒に切り替える | `draw::tests`: 入ったトグルは 2 テーマとも面が fill・文字が on_fill（4.5:1 以上）。`color_usage`: 今の `xirius-ui` は 0 件・もとのトグルは落ちる | `fill-ink` |
 | 一覧系は検索付きの共通部品（PickList）で作る（UI-320・UI-338） | 一覧を作る API は PickList だけ（`Popup` と設定の `OpenMenu` は `pick: Option<PickList>` を持ち、一覧の腕はすべて `pick_list::cells` を通る）。ドロップダウンの `Menu` は「その他」の操作のメニューだけ | 一覧を開く試験で検索の欄・↑↓ Enter・Esc の 2 段・当たり無しの表示を数える（`pick_list::tests`、設定の一覧は `settings::tests`） | `list-menu` |
+| 押せる物は指、ドラッグする物は矢印、クリップとノートの中は矢印（UI-382〜UI-385） | 形は `pointer::show(want, crosshair, held)` の 1 つの表だけが決め、当たりの種類ごとの `want()` は `_` の腕を持たない。別の窓（デバイス・チャンネル・マクロ）も同じ表を通る | `cursor_sweep`: 全部の画面を格子でなぞって、当たりの種類と形の組を `tests/cursor_table.txt` と比べる。押せる当たりが矢印にならない | `cursor` |
 
 ## アイコン
 
@@ -109,6 +110,8 @@ let d = div().border_1(); // design-lint: allow(border) 同じ行にも書ける
   `gpui` の `div` の木（`.bg(…).text_color(…)`）は見ない。
 - `list-menu`: `xirius-ui` の画面のファイルで、ドロップダウンの `Menu::rich`・`Menu::new` を呼ぶ物（`dropdown.rs`・`pick_list.rs` と試験は除く）。選ぶ一覧（設定の一覧も）は PickList で作る。
   「その他」のような操作のメニューは、理由を付けて allow する。
+- `cursor`: `xirius-ui` の画面のファイルで、左の押下（`on_mouse_down(MouseButton::Left, …)`）・`on_click`・`on_drag` を受ける要素の連なりに、`.cursor(…)`（`cursor_pointer` など `cursor` で始まる呼び出し）が無い物（試験は除く）。
+  形は `pointer::show` の 1 つの表から出し、どの当たりの形も `want.rs` の `want()` で決める（`_` の腕は `clippy::wildcard_enum_match_arm` で止める）。親の要素が当たりから形を決めているなら、理由を付けて allow する。
 - `wording`: 文字列のリテラルに、硬い言い回し（「要ります」「が要る」「格子」「吸着」「寄せる」「版の」「試しに実行」「素通し」「立て直」「進み具合」ほか 19 語）がある物。
   画面・コマンドの説明・エラーの文は、製品の自然な日本語（説明は「〜します」、結果は「〜しました」、エラーは「〜できません」「〜が必要です」）と、DAW で通じる用語（グリッド・スナップ・クオンタイズ・バイパス・バージョン）で書く。語の一覧は `scan.rs` の `STIFF_WORDS`。
 - `guidance`: `xirius-ui` の画面のファイル（`crates/xirius-ui/src/`。試験のファイルは除く）の文字列に、操作を教える言い回し（「ください」「クリックで」「ダブルクリック」「右クリック」「ドラッグで」「持ち替え」「押すと」「すると」「ここに並び」「ここに表示」）がある物。

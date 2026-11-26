@@ -81,6 +81,8 @@ pub mod ctx_shots;
 pub mod ctxfolder_shots;
 pub mod ctxnames_shots;
 pub mod ctxshape_shots;
+#[cfg(test)]
+mod cursor_sweep;
 pub mod data;
 pub mod dawproject_reference_shots;
 pub mod dawproject_shots;

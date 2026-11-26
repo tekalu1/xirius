@@ -844,6 +844,7 @@ impl Render for Workspace {
                     window.refresh();
                 }
             })
+            // design-lint: allow(cursor) 測定用のスパイクの窓で、押下は台本の入力を受けるだけ
             .on_mouse_down(MouseButton::Left, {
                 let sh = sh.clone();
                 move |ev, window, _| {
