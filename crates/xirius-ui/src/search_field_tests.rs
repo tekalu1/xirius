@@ -67,12 +67,44 @@ fn pressing_the_browser_clear_empties_it_and_the_field_keeps_the_keys() {
     s.browser.press(&l, BrowserHit::SearchClear);
     assert!(s.browser.search.is_empty());
     assert!(s.browser.typing, "the field still has the keys");
-    // Esc in two steps: the words, then the field.
-    s.browser.search.set("rev".into());
-    assert!(s.browser.typed("escape", None));
-    assert!(s.browser.search.is_empty() && s.browser.typing);
-    assert!(s.browser.typed("escape", None));
-    assert!(!s.browser.typing);
+}
+
+/// Esc in the browser's search goes in two steps: the words first, then the field.
+#[test]
+fn each_esc_in_the_browser_search_takes_one_step() {
+    // (row, words, the field has the keys, then after one Esc: taken, words left, keys kept)
+    let rows = [
+        (
+            "words in the focused field: the words go, the field keeps the keys",
+            "rev",
+            true,
+            (true, "", true),
+        ),
+        (
+            "an empty focused field: the field lets the keys go",
+            "",
+            true,
+            (true, "", false),
+        ),
+        (
+            "words with the keys elsewhere: the words go",
+            "warm user",
+            false,
+            (true, "", false),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (row, words, typing, want) in rows {
+        let (mut s, _) = browser();
+        s.browser.search.set(words.into());
+        s.browser.typing = typing;
+        let taken = s.browser.typed("escape", None);
+        let got = (taken, s.browser.search.value.as_str(), s.browser.typing);
+        if got != want {
+            failures.push(format!("{row}: {got:?}, not {want:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 #[test]

@@ -2569,7 +2569,10 @@ mod tests {
                     assert_eq!(face.bottom(), preview.bottom());
                     // Inset from the row by the same amount on both sides.
                     let (left, right) = (face.x - file.x, file.right() - face.right());
-                    assert!(left > 0.0 && (left - right).abs() < 0.01, "{face:?} {file:?}");
+                    assert!(
+                        left > 0.0 && (left - right).abs() < 0.01,
+                        "{face:?} {file:?}"
+                    );
                     // A single round rectangle has full width at this seam: both
                     // outside corner arcs end before it (radius 8, seam at 28).
                     assert!(preview.y - face.y > Radius::S.px());
@@ -2876,11 +2879,8 @@ mod tests {
         assert_eq!(names(&b.rows()), ["[シンセ 1]", "Surge XT"]);
         assert!(b.typed("backspace", None));
         assert_eq!(b.search.value, "su");
-        // The first Esc empties the words and stays; the second ends the input.
-        assert!(b.typed("escape", None));
-        assert!(b.search.is_empty() && b.typing);
-        assert!(b.typed("escape", None));
-        assert!(!b.typing);
+        // Esc's two steps: `search_field_tests`' `each_esc_in_the_browser_search_takes_one_step`.
+        b.typing = false;
         assert!(
             !b.typed("a", Some("a")),
             "no key goes to a box that is not focused"

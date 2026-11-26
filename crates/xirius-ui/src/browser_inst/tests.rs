@@ -95,63 +95,123 @@ fn a_double_click_makes_a_new_track() {
     );
 }
 
+/// Where an instrument row is let go decides what it does: an instrument track's lane or
+/// column takes it in that track's place, an audio track's lane starts a new track, and
+/// off the tracks nothing changes.
 #[test]
-fn dropped_on_an_instrument_track_it_takes_that_tracks_place() {
-    let (mut s, g) = studio();
-    let keys = track(&s, "Keys");
-    let before = tracks(&s);
-    let steps = s.song().steps();
-    let at = lane(&s, &g, keys);
-    assert_eq!(s.lib_drop_at(&g, at.0, at.1), Drop::Replace(keys));
-    drag(&mut s, &g, "Drum Kit", at);
-    assert_eq!(
-        instrument_name(&s.project(), keys).as_deref(),
-        Some("Drum Kit")
-    );
-    assert_eq!(tracks(&s), before);
-    assert_eq!(s.song().steps(), steps + 1);
-    assert_eq!(s.selected_row, Some(RowKind::Track(keys)));
-    // The track column counts too.
-    let (_, y) = lane(&s, &g, keys);
-    drag(&mut s, &g, "Sampler", (g.column.x + 20.0, y));
-    assert_eq!(
-        instrument_name(&s.project(), keys).as_deref(),
-        Some("Sampler")
-    );
-    assert!(s.browser.drag.is_none());
+fn an_instrument_dropped_does_what_its_spot_says() {
+    enum At {
+        KeysLane,
+        KeysColumn,
+        AudioLane,
+        UnderTheItem,
+    }
+    enum Gets {
+        KeysTrack,
+        NewTrack,
+        Nothing,
+    }
+    let rows = [
+        (
+            "on an instrument track's lane: in its place",
+            "Drum Kit",
+            At::KeysLane,
+            Gets::KeysTrack,
+        ),
+        (
+            "on an instrument track's column: in its place",
+            "Sampler",
+            At::KeysColumn,
+            Gets::KeysTrack,
+        ),
+        (
+            "on an audio track's lane: a new track",
+            "Sampler",
+            At::AudioLane,
+            Gets::NewTrack,
+        ),
+        (
+            "off the tracks: nothing",
+            "Drum Kit",
+            At::UnderTheItem,
+            Gets::Nothing,
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (row, name, at, gets) in rows {
+        let (mut s, g) = studio();
+        let keys = track(&s, "Keys");
+        let audio = s
+            .project()
+            .tracks
+            .values()
+            .find(|t| t.kind == TrackKind::Audio)
+            .map(|t| t.id)
+            .unwrap();
+        let before: Vec<TrackId> = s.project().tracks.keys().copied().collect();
+        let steps = s.song().steps();
+        let to = match at {
+            At::KeysLane => lane(&s, &g, keys),
+            At::KeysColumn => (g.column.x + 20.0, lane(&s, &g, keys).1),
+            At::AudioLane => lane(&s, &g, audio),
+            At::UnderTheItem => {
+                let (_, x, y) = item(&s, &g, name);
+                (x, y + 60.0)
+            }
+        };
+        let aim = s.lib_drop_at(&g, to.0, to.1);
+        drag(&mut s, &g, name, to);
+        let p = s.project();
+        let mut wrong = Vec::new();
+        let (want_aim, more, step) = match gets {
+            Gets::KeysTrack => (Drop::Replace(keys), 0, 1),
+            Gets::NewTrack => (Drop::New, 1, 1),
+            Gets::Nothing => (Drop::Nothing, 0, 0),
+        };
+        if aim != want_aim {
+            wrong.push(format!("aimed {aim:?}, not {want_aim:?}"));
+        }
+        if p.tracks.len() != before.len() + more {
+            wrong.push(format!(
+                "{} tracks, not {}",
+                p.tracks.len(),
+                before.len() + more
+            ));
+        }
+        if s.song().steps() != steps + step {
+            wrong.push(format!("{} steps, not {}", s.song().steps(), steps + step));
+        }
+        let holder = match gets {
+            Gets::KeysTrack => Some(keys),
+            Gets::NewTrack => (p.tracks.len() > before.len()).then(|| added(&p, &before).id),
+            Gets::Nothing => None,
+        };
+        if let Some(t) = holder.filter(|&t| instrument_name(&p, t).as_deref() != Some(name)) {
+            wrong.push(format!("the track plays {:?}", instrument_name(&p, t)));
+        }
+        if matches!(gets, Gets::KeysTrack) && s.selected_row != Some(RowKind::Track(keys)) {
+            wrong.push(format!("selected {:?}", s.selected_row));
+        }
+        if !matches!(gets, Gets::KeysTrack) && instrument_name(&p, keys).is_some() {
+            wrong.push("Keys took it".into());
+        }
+        if instrument_name(&p, audio).is_some() {
+            wrong.push("the audio track took it".into());
+        }
+        if s.browser.drag.is_some() {
+            wrong.push("the drag stays".into());
+        }
+        if !wrong.is_empty() {
+            failures.push(format!("{row}: {wrong:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 #[test]
-fn dropped_anywhere_else_on_the_tracks_it_starts_a_new_one() {
-    let (mut s, g) = studio();
-    let audio = s
-        .project()
-        .tracks
-        .values()
-        .find(|t| t.kind == TrackKind::Audio)
-        .map(|t| t.id)
-        .unwrap();
-    let before: Vec<TrackId> = s.project().tracks.keys().copied().collect();
-    let at = lane(&s, &g, audio);
-    assert_eq!(s.lib_drop_at(&g, at.0, at.1), Drop::New);
-    drag(&mut s, &g, "Sampler", at);
-    let p = s.project();
-    let new = added(&p, &before);
-    assert_eq!(instrument_name(&p, new.id).as_deref(), Some("Sampler"));
-    assert_eq!(
-        instrument_name(&p, audio),
-        None,
-        "the audio track is as it was"
-    );
-}
-
-#[test]
-fn let_go_off_the_tracks_or_unmoved_nothing_changes() {
+fn a_small_wobble_or_nothing_held_changes_nothing() {
     let (mut s, g) = studio();
     let steps = s.song().steps();
-    let (_, x, y) = item(&s, &g, "Drum Kit");
-    assert_eq!(s.lib_drop_at(&g, x, y), Drop::Nothing);
-    drag(&mut s, &g, "Drum Kit", (x, y + 60.0));
     // A small wobble is not a drag.
     let keys = track(&s, "Keys");
     let (hit, x, y) = item(&s, &g, "Sampler");

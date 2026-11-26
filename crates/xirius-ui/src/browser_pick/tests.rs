@@ -236,64 +236,94 @@ fn a_file_row_dropped_on_a_detached_drum_kit_loads_its_pad() {
     assert!(crate::device::sampler::pad_files(x.builtin().unwrap(), &x, 0).is_empty());
 }
 
-/// A file row dragged onto a Sampler's own window is its sample (UI-353).
+/// A file row let go on an independent window (UI-353): a Sampler's body takes it as its
+/// sample; another kind of window, a device window's own edge, or no window of ours ends
+/// the drag with nothing put down. The lanes take nothing either way.
 #[test]
-fn a_file_row_dropped_on_a_detached_sampler_loads_it() {
-    let (_tmp, mut s, top) = studio("sampler");
-    let g = geometry(&s);
-    let (t, id) = detached(&mut s, "Sampler");
-    let tracks = s.project().tracks.len();
-    let at = crate::device_window::with_surface(&mut s, id, |s, g| {
-        s.instrument_center(g, id, Part::Body)
-            .expect("the sampler's body")
-    });
-    let pad_wav = top.join("pad_44k.wav");
-    grab(&mut s, &g, "pad_44k.wav");
-    s.lib_move(20.0, 20.0);
-    s.over = Over::Window(Kind::Device(id), at);
-    assert!(s.lib_up(&g, 20.0, 20.0, false));
-    assert_eq!(s.error, None, "{:?}", s.error);
-    let p = s.project();
-    assert_eq!(p.tracks.len(), tracks);
-    assert!(clips_of(&s, &pad_wav).is_empty());
-    assert_eq!(current(&p.tracks[&t]).unwrap().samples.len(), 1);
-}
-
-/// A row let go on another kind of independent window, on a device window's own
-/// edge, or off every window of ours ends the drag with nothing put down (UI-353).
-#[test]
-fn a_file_row_let_go_on_a_window_that_takes_no_files_drops_nothing() {
-    let (_tmp, mut s, _top) = studio("cancel");
-    let g = geometry(&s);
-    let (_, id) = detached(&mut s, "Drum Kit");
-    let tracks = s.project().tracks.len();
-    let clips: usize = s.project().tracks.values().map(|t| t.clips.len()).sum();
-    let steps = s.song.steps();
-    for over in [
-        Over::Window(Kind::Channel, (10.0, 10.0)),
-        Over::Window(Kind::Macros, (10.0, 10.0)),
-        Over::Window(Kind::Device(id), (-4.0, -4.0)),
-        Over::Elsewhere,
-    ] {
-        grab(&mut s, &g, "loop_120bpm.wav");
+fn a_file_row_let_go_on_a_detached_window_loads_only_a_sampler() {
+    enum On {
+        Body,
+        Edge,
+        Channel,
+        Macros,
+        Elsewhere,
+    }
+    let rows = [
+        ("a Sampler's body: its sample", "Sampler", On::Body, true),
+        ("a channel window: nothing", "Drum Kit", On::Channel, false),
+        ("a macros window: nothing", "Drum Kit", On::Macros, false),
+        (
+            "a device window's own edge: nothing",
+            "Drum Kit",
+            On::Edge,
+            false,
+        ),
+        (
+            "no window of ours: nothing",
+            "Drum Kit",
+            On::Elsewhere,
+            false,
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (row, instrument, on, loads) in rows {
+        let (_tmp, mut s, top) = studio("detached");
+        let g = geometry(&s);
+        let (t, id) = detached(&mut s, instrument);
+        let tracks = s.project().tracks.len();
+        let clips: usize = s.project().tracks.values().map(|t| t.clips.len()).sum();
+        let samples = current(&s.project().tracks[&t]).unwrap().samples.len();
+        let steps = s.song.steps();
+        let over = match on {
+            On::Body => {
+                let at = crate::device_window::with_surface(&mut s, id, |s, g| {
+                    s.instrument_center(g, id, Part::Body)
+                        .expect("the sampler's body")
+                });
+                Over::Window(Kind::Device(id), at)
+            }
+            On::Edge => Over::Window(Kind::Device(id), (-4.0, -4.0)),
+            On::Channel => Over::Window(Kind::Channel, (10.0, 10.0)),
+            On::Macros => Over::Window(Kind::Macros, (10.0, 10.0)),
+            On::Elsewhere => Over::Elsewhere,
+        };
+        let file = top.join("pad_44k.wav");
+        grab(&mut s, &g, "pad_44k.wav");
         s.lib_move(100.0, 400.0);
-        assert!(s.browser.file_drag.as_ref().unwrap().moved);
+        let moved = s.browser.file_drag.as_ref().is_some_and(|d| d.moved);
         s.over = over;
-        assert!(s.lib_up(&g, 100.0, 400.0, false));
+        let up = s.lib_up(&g, 100.0, 400.0, false);
         s.settle_browser_import();
         s.browser.settle_prefs_io();
         s.follow_browser();
-        assert_eq!(s.error, None, "{over:?}");
         let p = s.project();
-        assert_eq!(p.tracks.len(), tracks, "{over:?}");
-        assert_eq!(
+        let got = (
+            moved && up,
+            s.error.clone(),
+            p.tracks.len(),
             p.tracks.values().map(|t| t.clips.len()).sum::<usize>(),
-            clips,
-            "{over:?}"
+            clips_of(&s, &file).len(),
+            current(&p.tracks[&t]).unwrap().samples.len(),
+            s.song.steps() > steps,
         );
+        let want = (
+            true,
+            None,
+            tracks,
+            clips,
+            0,
+            samples + usize::from(loads),
+            loads,
+        );
+        if got != want {
+            failures.push(format!("{row}: {got:?}, not {want:?}"));
+        }
     }
-    assert_eq!(s.song.steps(), steps, "nothing ran, nothing to undo");
-    // An instrument row's drag ends the same way.
+    assert!(failures.is_empty(), "{failures:#?}");
+    // An instrument row's drag let go on no window of ours ends the same way.
+    let (_tmp, mut s, _top) = studio("cancel");
+    let g = geometry(&s);
+    let tracks = s.project().tracks.len();
     s.browser.drag = Some(crate::browser_inst::LibDrag {
         name: "Drum Kit",
         icon: "drums",
