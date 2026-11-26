@@ -281,15 +281,12 @@ mod tests {
     }
 
     #[test]
-    fn nothing_processed_reads_as_nothing() {
-        let r = ready().read();
-        assert_eq!(r.blocks, 0);
-        assert_eq!(r.load, 0.0);
-    }
-
-    #[test]
     fn the_load_is_the_time_over_the_time_of_the_audio() {
         let m = ready();
+        // Nothing processed reads as nothing.
+        let r = m.read();
+        assert_eq!(r.blocks, 0);
+        assert_eq!(r.load, 0.0);
         // 480 frames last 10 ms; 1.5 ms of work is 15%.
         for _ in 0..50 {
             m.record(480, 1_500_000);

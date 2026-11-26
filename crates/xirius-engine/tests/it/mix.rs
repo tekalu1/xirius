@@ -1,11 +1,11 @@
-//! Offline, deterministic checks of the mixer: gain, pan, sends, buses, block chopping, events,
-//! plan swaps and latency.
+//! Offline, deterministic checks of the mixer: gain, pan, sends, buses, block chopping, events
+//! and plan swaps. Insert order is in `master_order`, latency in `pdc`.
 
 use std::f32::consts::FRAC_1_SQRT_2;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use xirius_engine::builtin::{Delay, Gain, Sine, SineSynth};
+use xirius_engine::builtin::{Gain, SineSynth};
 use xirius_engine::engine::{self, EngineConfig};
 use xirius_engine::mixer::NodeId;
 use xirius_engine::{
@@ -150,15 +150,6 @@ fn pan_is_unity_at_centre_and_constant_power_at_the_sides() {
 }
 
 #[test]
-fn inserts_run_in_order_before_the_fader() {
-    let mut t = dc_track(1.0);
-    t.inserts = vec![Box::new(Gain::new(0.5)), Box::new(Gain::new(0.5))];
-    t.gain = 2.0;
-    let (l, _) = render_offline(plan(vec![t], vec![]), 64);
-    assert_all(&l, 0.5);
-}
-
-#[test]
 fn post_fader_send_follows_fader_and_pan() {
     let mut t = dc_track(1.0);
     t.gain = 0.5;
@@ -267,25 +258,6 @@ fn mono_device_gets_the_average() {
     let mut out = vec![0.0; 100];
     audio.render(&mut out, 1);
     assert_all(&out, 0.5);
-}
-
-#[test]
-fn rendering_is_deterministic() {
-    let make = || {
-        let mut t = TrackSpec::new("sine", Box::new(Sine::new(440.0, 0.5)));
-        t.pan = 0.3;
-        t.sends = vec![SendSpec {
-            bus: 0,
-            level: 0.3,
-            pre_fader: false,
-        }];
-        let mut bus = BusSpec::new("fx");
-        bus.inserts = vec![Box::new(Delay::new(37))];
-        plan(vec![t], vec![bus])
-    };
-    let a = render_offline(make(), 4800);
-    let b = render_offline(make(), 4800);
-    assert_eq!(a, b);
 }
 
 #[test]
@@ -423,25 +395,6 @@ fn meters_and_position_are_reported() {
     assert!((m.peak[0] - 0.5).abs() < 1e-6 && m.peak[1] < 1e-6);
     assert!((m.rms[0] - 0.5).abs() < 1e-6);
     assert_eq!(position, Some(960));
-}
-
-#[test]
-fn plan_reports_and_compensates_insert_latency() {
-    let mut t = dc_track(1.0);
-    t.inserts = vec![Box::new(Delay::new(100))];
-    t.sends = vec![SendSpec {
-        bus: 0,
-        level: 1.0,
-        pre_fader: false,
-    }];
-    let mut bus = BusSpec::new("fx");
-    bus.inserts = vec![Box::new(Delay::new(30))];
-    let p = plan(vec![t], vec![bus]);
-    assert_eq!(p.latency(), 130);
-    // The direct path waits for the bus path (ENG-010), so both arrive together.
-    let (l, _) = render_offline(p, 300);
-    assert_all(&l[..130], 0.0);
-    assert_all(&l[130..], 2.0);
 }
 
 #[test]

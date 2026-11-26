@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn a_key_turns_the_audio_down_and_it_still_stays_under_the_ceiling() {
+    fn a_key_turns_the_audio_down_under_the_ceiling_and_a_silent_one_changes_nothing() {
         let (mut p, h) = make("limiter");
         set_plain(&h, "ceiling", -6.0);
         p.prepare(&setup());
@@ -285,10 +285,8 @@ mod tests {
         let l = keyed(p.as_mut(), &x, &vec![0.05; n]);
         assert!(peak(&l) <= ceiling + 1e-6, "{}", peak(&l));
         assert!(peak(&l) > ceiling * 0.98);
-    }
 
-    #[test]
-    fn a_silent_key_leaves_the_brickwall_as_it_was() {
+        // A silent key leaves the brickwall as it was.
         let x = sine(110.0, 0.9, RATE as usize / 4);
         let (mut a, h) = make("limiter");
         set_plain(&h, "input", 6.0);

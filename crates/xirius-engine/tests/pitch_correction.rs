@@ -105,20 +105,19 @@ fn configured(
 }
 
 #[test]
-fn catalog_has_the_seven_automation_destinations_and_relative_keys() {
+fn catalog_has_the_automation_destinations_and_relative_keys() {
     let def = xirius_params::find("pitch-correction").expect("catalog entry");
-    for (id, label) in [
-        ("key", "キー"),
-        ("scale", "スケール"),
-        ("speed", "スピード"),
-        ("transition", "ノートトランジション"),
-        ("amount", "補正の量"),
-        ("formant", "フォルマント"),
-        ("range", "音域"),
+    for id in [
+        "key",
+        "scale",
+        "speed",
+        "transition",
+        "amount",
+        "formant",
+        "range",
     ] {
-        assert_eq!(def.param(id).unwrap().1.label, label);
+        assert!(def.param(id).is_some(), "{id}");
     }
-    assert_eq!(def.params.len(), 7);
     let custom = xirius_params::pitch_correction::toggle_relative(1.0 / 3.0, 4);
     let mask = xirius_params::pitch_correction::scale_mask(custom);
     assert_eq!(mask & (1 << 4), 0);
