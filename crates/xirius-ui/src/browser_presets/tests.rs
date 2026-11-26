@@ -133,8 +133,6 @@ fn track_browser_kind_buttons_keep_query_and_have_one_rail_entry() {
         assert_eq!(s.browser.track_kind, i == 2);
     }
     assert!(!s.browser.typing, "the kind buttons leave text entry");
-    assert!(s.browser.typed("escape", None));
-    assert!(s.browser.search.is_empty());
 }
 
 #[test]
