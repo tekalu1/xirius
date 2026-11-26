@@ -2506,10 +2506,21 @@ mod tests {
     // Windows-only: the installer identifies Windows processes by executable name.
     #[cfg(windows)]
     fn a_live_process_that_is_not_xirius_does_not_hold_a_part() {
-        // PID 4 is Windows' System process, and 9 is read as 8 (the low bits are ignored):
-        // neither is a window writing a download.
+        // PID 4 is Windows' System process: not a window writing a download.
         assert!(!pid_alive(4));
-        assert!(!pid_alive(9));
+        // Nor is a running program of another name. A fixed small PID is not used for it:
+        // Windows hands those out again, and on a fresh machine one may be another Xirius test.
+        let mut other = std::process::Command::new("ping")
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("ping starts");
+        let alive = pid_alive(other.id());
+        let still_running = other.try_wait().unwrap().is_none();
+        let _ = other.kill();
+        let _ = other.wait();
+        assert!(still_running, "the other program was running when asked");
+        assert!(!alive, "a running program that is not Xirius holds no part");
         assert!(
             pid_alive(std::process::id()),
             "this test's own program is a Xirius one"
