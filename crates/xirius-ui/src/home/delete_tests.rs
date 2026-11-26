@@ -86,25 +86,72 @@ fn delete_on_a_draft_in_the_list_asks_and_removes_nothing_yet() {
     assert!(s.draft_removal.is_none());
 }
 
+/// Off a draft (a saved song's row, the sample's, a button, an empty place) neither Delete nor
+/// a right press asks, opens a menu or takes anything away.
 #[test]
-fn delete_does_nothing_on_a_saved_song_the_sample_or_a_button() {
-    let (tmp, mut s, g) = listed(&[("old", false, 1), ("d1", true, 2)]);
-    let before = song_state(&s);
-    // A saved song and the sample.
-    for row in [1, 2] {
-        select(&mut s, row, Focus::List);
-        assert!(key(&mut s, &g, "delete", NONE, None), "the list's key");
-        assert!(s.unsaved.is_none(), "row {row} asks nothing");
-        assert!(s.popup.is_none());
+fn delete_and_a_right_press_off_a_draft_do_nothing() {
+    #[derive(Debug, Clone, Copy)]
+    enum Off {
+        /// Delete with the cursor on the list's row.
+        Key(usize),
+        /// Delete with a button holding the keys.
+        Button,
+        /// A right press on the list's row.
+        Press(usize),
+        /// A right press on no row.
+        Empty,
     }
-    // A button has the keys: Delete stays what it was.
-    s.home.as_mut().unwrap().focus = Focus::Button(Button::New);
-    key(&mut s, &g, "delete", NONE, None);
-    assert!(s.unsaved.is_none());
-    assert_eq!(song_state(&s), before);
-    assert!(tmp.path().join("old").exists() && dir_of(&tmp, "d1").exists());
-    settle(&mut s);
-    assert_eq!(labels(&s).len(), 3);
+    let mut failures = Vec::new();
+    for case in [
+        Off::Key(1),
+        Off::Key(2),
+        Off::Button,
+        Off::Press(1),
+        Off::Press(2),
+        Off::Empty,
+    ] {
+        // old (row 1), d1 (row 0) and the sample (row 2).
+        let (tmp, mut s, g) = listed(&[("old", false, 1), ("d1", true, 2)]);
+        let before = song_state(&s);
+        let taken = match case {
+            Off::Key(row) => {
+                select(&mut s, row, Focus::List);
+                Some(key(&mut s, &g, "delete", NONE, None))
+            }
+            Off::Button => {
+                s.home.as_mut().unwrap().focus = Focus::Button(Button::New);
+                key(&mut s, &g, "delete", NONE, None);
+                None
+            }
+            Off::Press(row) => {
+                let r = s.home_layout(&g).unwrap().rect(row_spot(&s, &g, row));
+                let at = centre(r.unwrap());
+                Some(s.window_right_press(&g, at.0, at.1))
+            }
+            Off::Empty => Some(s.window_right_press(&g, g.size.0 - 10.0, g.size.1 - 10.0)),
+        };
+        // The list's Delete is its own key; a right press off a draft goes no further.
+        let want = match case {
+            Off::Key(_) => Some(true),
+            Off::Button => None,
+            Off::Press(_) | Off::Empty => Some(false),
+        };
+        if taken != want {
+            failures.push(format!("{case:?}: taken {taken:?}, want {want:?}"));
+        }
+        if s.unsaved.is_some() || s.popup.is_some() || s.ctx.is_some() {
+            failures.push(format!("{case:?}: something asks or opens"));
+        }
+        if song_state(&s) != before {
+            failures.push(format!("{case:?}: the song changed"));
+        }
+        settle(&mut s);
+        let kept = tmp.path().join("old").exists() && dir_of(&tmp, "d1").exists();
+        if !kept || labels(&s).len() != 3 {
+            failures.push(format!("{case:?}: a song went: {:?}", labels(&s)));
+        }
+    }
+    assert!(failures.is_empty(), "off a draft: {failures:#?}");
 }
 
 #[test]
@@ -166,24 +213,6 @@ fn a_right_press_on_a_draft_row_opens_the_one_row_menu_and_chooses_the_row() {
     assert!(s.context_pick(&g, 0));
     assert!(s.unsaved.is_some());
     assert!(dir_of(&tmp, "d1").exists());
-}
-
-#[test]
-fn a_right_press_on_a_saved_song_the_sample_or_nothing_opens_no_menu_and_goes_no_further() {
-    let (_tmp, mut s, g) = listed(&[("old", false, 1), ("d1", true, 2)]);
-    for row in [1, 2] {
-        let at = centre(
-            s.home_layout(&g)
-                .unwrap()
-                .rect(row_spot(&s, &g, row))
-                .unwrap(),
-        );
-        assert!(!s.window_right_press(&g, at.0, at.1), "row {row}");
-        assert!(s.popup.is_none() && s.ctx.is_none(), "row {row}");
-    }
-    let empty = (g.size.0 - 10.0, g.size.1 - 10.0);
-    assert!(!s.window_right_press(&g, empty.0, empty.1));
-    assert!(s.popup.is_none());
 }
 
 #[test]
@@ -402,30 +431,36 @@ fn deleting_the_row_that_ends_the_list_chooses_the_one_above_and_the_sample_alon
     assert_eq!(home(&s).focus, Focus::List);
     drop(tmp);
 }
+/// A draft whose lock names a live process (this one) is kept and the person is told; a lock
+/// left by a process that is gone does not hold the draft back.
 #[test]
-fn a_draft_with_a_live_lock_is_kept_and_the_person_is_told() {
-    let (tmp, mut s, g) = listed(&[("d1", true, 1)]);
-    std::fs::write(
-        dir_of(&tmp, "d1").join("session.lock"),
-        std::process::id().to_string(),
-    )
-    .unwrap();
-    select(&mut s, 0, Focus::List);
-    delete_chosen(&mut s, &g);
-    assert!(dir_of(&tmp, "d1").exists());
-    assert_eq!(labels(&s).len(), 2);
-    let toast = s.toast.as_ref().expect("told");
-    assert!(toast.text.contains("曲を削除できません"), "{}", toast.text);
-}
-
-#[test]
-fn a_draft_with_a_dead_lock_goes() {
-    let (tmp, mut s, g) = listed(&[("d1", true, 1)]);
-    std::fs::write(dir_of(&tmp, "d1").join("session.lock"), "4000000000").unwrap();
-    select(&mut s, 0, Focus::List);
-    delete_chosen(&mut s, &g);
-    assert!(!dir_of(&tmp, "d1").exists());
-    assert_eq!(labels(&s), [crate::song::SAMPLE_NAME]);
+fn a_draft_is_kept_only_while_its_lock_is_live() {
+    let mut failures = Vec::new();
+    for (name, lock, kept) in [
+        ("live lock", std::process::id().to_string(), true),
+        ("dead lock", "4000000000".to_string(), false),
+    ] {
+        let (tmp, mut s, g) = listed(&[("d1", true, 1)]);
+        std::fs::write(dir_of(&tmp, "d1").join("session.lock"), lock).unwrap();
+        select(&mut s, 0, Focus::List);
+        delete_chosen(&mut s, &g);
+        if dir_of(&tmp, "d1").exists() != kept {
+            failures.push(format!("{name}: kept is not {kept}"));
+        }
+        let want = if kept { 2 } else { 1 };
+        if labels(&s).len() != want {
+            failures.push(format!("{name}: rows {:?}", labels(&s)));
+        }
+        let told = s
+            .toast
+            .as_ref()
+            .is_some_and(|t| t.text.contains("曲を削除できません"));
+        if told != kept {
+            let text = s.toast.as_ref().map(|t| t.text.clone());
+            failures.push(format!("{name}: told is not {kept}: {text:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "draft locks: {failures:#?}");
 }
 
 #[test]

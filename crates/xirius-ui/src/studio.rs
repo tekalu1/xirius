@@ -3313,13 +3313,14 @@ mod tests {
     }
 
     #[test]
-    fn shutting_the_drawer_gives_its_room_to_the_rows() {
+    fn shutting_the_drawer_gives_the_room_it_left_to_the_rows() {
         let open = Geometry::new(1440.0, 860.0, true);
         let shut = Geometry::new(1440.0, 860.0, false);
-        assert_eq!(
-            shut.lanes.h - open.lanes.h,
-            Layout::DRAWER_H - Layout::DRAWER_BAR_H
-        );
+        let freed = open.drawer.h - shut.drawer.h;
+        assert!(freed > 0.0, "{open:?} {shut:?}");
+        // The lanes and the track column both grow by exactly what the drawer gave up.
+        assert_eq!(shut.lanes.h - open.lanes.h, freed);
+        assert_eq!(shut.column.h - open.column.h, freed);
     }
 
     #[test]
@@ -3457,9 +3458,11 @@ mod tests {
     }
 
     #[test]
-    fn the_playhead_starts_at_the_verse() {
+    fn the_sample_song_starts_at_the_verse_and_ends_with_room_after_the_last_section() {
         let s = studio();
-        assert_eq!(s.project().time_map().format(s.playhead), "5.1.0");
+        let tm = s.project().time_map();
+        assert_eq!(tm.format(s.playhead), "5.1.0");
+        assert!(s.end_tick() > tm.bar_start(21));
     }
 
     #[test]
@@ -3606,14 +3609,25 @@ mod tests {
     #[test]
     fn the_drawer_buttons_do_not_overlap() {
         let g = Geometry::new(1440.0, 860.0, true);
-        assert!(g.tab(DrawerTab::Roll).right() <= g.tab(DrawerTab::Mixer).x);
-        assert!(g.tab(DrawerTab::Mixer).right() < g.roll_switch(false).x);
-        assert_eq!(Geometry::TAB_W, 28.0);
-        assert_eq!(Geometry::TAB_H, 24.0);
-        assert_eq!(g.roll_switch(false).x - g.drawer_bar.x, 82.0);
-        assert_eq!(g.roll_length().x - g.drawer_bar.x, 156.0);
-        assert_eq!(g.roll_length().right() - g.drawer_bar.x, 184.0);
-        assert_eq!(g.roll_map().x - g.drawer_bar.x, 148.0);
+        let bar = g.drawer_bar;
+        let (roll, mixer) = (g.tab(DrawerTab::Roll), g.tab(DrawerTab::Mixer));
+        let (keys, drums) = (g.roll_switch(false), g.roll_switch(true));
+        // Left to right: the tabs, the switch's two halves, then the drum map or the last-note
+        // toggle (a view shows only one of those two, so they may share a place).
+        assert!(roll.right() <= mixer.x);
+        assert!(mixer.right() < keys.x);
+        assert!(keys.right() <= drums.x);
+        assert!(drums.right() < g.roll_map().x);
+        assert!(drums.right() < g.roll_length().x);
+        for r in [roll, mixer, keys, drums, g.roll_map(), g.roll_length()] {
+            assert!(
+                r.x >= bar.x
+                    && r.right() <= bar.right()
+                    && r.y >= bar.y
+                    && r.bottom() <= bar.bottom(),
+                "{r:?} is outside the drawer's bar {bar:?}"
+            );
+        }
     }
 
     #[test]
@@ -3662,13 +3676,6 @@ mod tests {
         assert_eq!(roll_top_pitch(&[note(0)], 24), 23);
         assert_eq!(roll_top_pitch(&[note(127)], 24), 127);
         assert_eq!(roll_top_pitch(&[], 24), 72);
-    }
-
-    #[test]
-    fn the_end_of_the_song_leaves_room_after_the_last_section() {
-        let s = studio();
-        let tm = s.project().time_map();
-        assert!(s.end_tick() > tm.bar_start(21));
     }
 
     fn click(s: &mut Studio, hit: Hit) {

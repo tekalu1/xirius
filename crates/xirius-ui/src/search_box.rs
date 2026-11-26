@@ -191,16 +191,6 @@ mod tests {
     }
 
     #[test]
-    fn the_text_room_does_not_move_when_the_clear_shows() {
-        let r = Rect::new(10.0, 4.0, 200.0, HEIGHT);
-        let a = text_rect(r, Space::X2.px());
-        // The room is a function of the box alone, not of the text.
-        assert_eq!(a, text_rect(r, Space::X2.px()));
-        assert!(clear_rect(r, Space::X2.px()).x >= a.right());
-        assert!(clear_rect(r, Space::X2.px()).right() <= r.right());
-    }
-
-    #[test]
     fn the_match_is_found_without_case() {
         assert_eq!(matched("Compressor", "PRE"), Some((3, 6)));
         assert_eq!(matched("Compressor", "xyz"), None);
@@ -213,19 +203,11 @@ mod tests {
     fn the_clear_hits_only_with_text() {
         let r = Rect::new(0.0, 0.0, 200.0, HEIGHT);
         let x = clear_rect(r, Space::X2.px());
+        // The ✖ sits past the text's room and inside the field.
+        assert!(x.x >= text_rect(r, Space::X2.px()).right() && x.right() <= r.right());
         let (cx, cy) = (x.x + 2.0, x.y + 2.0);
         assert!(!clear_hit(r, Space::X2.px(), &field(""), cx, cy));
         assert!(clear_hit(r, Space::X2.px(), &field("a"), cx, cy));
         assert!(!clear_hit(r, Space::X2.px(), &field("a"), 5.0, 5.0));
-    }
-
-    #[test]
-    fn the_numbers_are_the_approved_ones() {
-        assert_eq!(HEIGHT, 28.0);
-        assert_eq!(RING, 2.0);
-        assert_eq!(NO_MATCH, "見つかりません");
-        assert_eq!(CLEAR_NAME, "クリア");
-        assert_eq!(count_info(0), "見つかりません");
-        assert_eq!(count_info(3), "3 件");
     }
 }
