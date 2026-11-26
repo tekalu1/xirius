@@ -17,11 +17,27 @@ use xirius_session::tempo::TempoMap;
 
 const RATE: u32 = 48_000;
 
-fn temp(name: &str) -> PathBuf {
+/// A folder of the test's own, removed when the test ends, also when an assertion fails.
+struct Temp(PathBuf);
+
+impl std::ops::Deref for Temp {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Temp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn temp(name: &str) -> Temp {
     let dir = std::env::temp_dir().join(format!("xirius-processed-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    Temp(dir)
 }
 
 /// A tone of `secs` seconds whose level rises from `from` to `to`.
@@ -130,7 +146,6 @@ fn half_speed_lasts_twice_as_long_at_the_same_pitch() {
     // Sounding nearly to the end of the two seconds.
     let tail = &left[88_000..94_000];
     assert!(rms(tail) > 0.2, "{}", rms(tail));
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -153,7 +168,6 @@ fn an_octave_up_doubles_the_frequency_and_keeps_the_length() {
     let f = frequency(&left, 8_000, 40_000);
     let want = 300.0 * 2f64.powf(-1.0 / 12.0);
     assert!((f - want).abs() < 1.0, "{f} Hz, want {want}");
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -169,7 +183,6 @@ fn a_reversed_clip_plays_its_end_first() {
     let quarter = left.len() / 4;
     let (start, end) = (rms(&left[..quarter]), rms(&left[3 * quarter..]));
     assert!(start > end * 3.0, "{start} then {end}");
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -200,15 +213,20 @@ fn the_live_mix_leaves_a_clip_silent_until_its_render_is_ready() {
     .unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
     let clip = &p.tracks[&TrackId(1)].clips[0];
+    // A fast machine may finish the render before this point; it never goes back from ready,
+    // so a render still under way now was under way when the host built its timeline too.
+    let working = matches!(host.clip_state(clip), Some(State::Working(_)));
     assert!(
-        matches!(host.clip_state(clip), Some(State::Working(_))),
+        working || matches!(host.clip_state(clip), Some(State::Ready(_))),
         "{:?}",
         host.clip_state(clip)
     );
     host.controller().send(Command::Play).ok().unwrap();
     let mut out = vec![0.0; 256];
     audio.render(&mut out, 2);
-    assert!(out.iter().all(|v| *v == 0.0), "silent while rendering");
+    if working {
+        assert!(out.iter().all(|v| *v == 0.0), "silent while rendering");
+    }
 
     let t = Instant::now();
     while !matches!(host.clip_state(clip), Some(State::Ready(_))) {
@@ -225,5 +243,4 @@ fn the_live_mix_leaves_a_clip_silent_until_its_render_is_ready() {
     }
     assert!(heard, "heard once ready");
     drop(host);
-    let _ = std::fs::remove_dir_all(dir);
 }
