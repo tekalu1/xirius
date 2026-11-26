@@ -656,29 +656,6 @@ fn mix_045_a_reader_presses_the_plus_and_a_heads_mute() {
 }
 
 #[test]
-fn mix_045_empty_branch_names_remain_visible_without_the_controls() {
-    let (mut s, g) = studio();
-    let (t, sp, _) = vocal(&mut s);
-    assert!(s.run_command("rack.branch.add", json!({"split":sp})));
-    s.channel.as_mut().unwrap().pointer = None;
-    s.channel.as_mut().unwrap().chosen = None;
-    let v = s.channel_view(&g).unwrap();
-    for b in split(&s, t, sp).unwrap().branches {
-        let col = column(&v, b.id);
-        assert!(!head_shown(
-            s.channel.as_ref().unwrap(),
-            &col,
-            &v.flow,
-            None
-        ));
-        let (name, rect) = paint::resting_branch_name(&col).unwrap();
-        assert_eq!(name, format!("分岐 {}", col.n));
-        assert_eq!(rect.x + rect.w / 2.0, col.head.x + col.head.w / 2.0);
-        assert!(rect.right() < head_parts(&col).keep.x);
-    }
-}
-
-#[test]
 fn mix_045_each_empty_branch_has_its_own_axis_destination_and_switch() {
     let (mut s, g) = studio();
     assert!(s.run_command("track.add.audio", json!({"name":"Empty branches"})));
@@ -691,6 +668,9 @@ fn mix_045_each_empty_branch_has_its_own_axis_destination_and_switch() {
         .id;
     assert!(s.run_command("rack.split.add", json!({"track":t,"branches":3})));
     s.open_channel(t);
+    // At rest: no pointer over the flow and no card chosen.
+    s.channel.as_mut().unwrap().pointer = None;
+    s.channel.as_mut().unwrap().chosen = None;
     let branches = s
         .channel_view(&g)
         .unwrap()
@@ -716,9 +696,13 @@ fn mix_045_each_empty_branch_has_its_own_axis_destination_and_switch() {
                 "the head separates input and output"
             );
             assert!(line_at(&v, x, col.head.bottom() + 9.0));
+            // The head's controls rest hidden; the name stays, centred and clear of what the
+            // head keeps at its right.
+            assert!(!head_shown(s.channel.as_ref().unwrap(), col, &v.flow, None));
             let (name, label) = paint::resting_branch_name(col).unwrap();
             assert_eq!(name, format!("分岐 {}", col.n));
             assert_eq!(label.x + label.w / 2.0, x);
+            assert!(label.right() < head_parts(col).keep.x);
             let gap = v
                 .flow
                 .gaps

@@ -129,8 +129,9 @@ fn the_picked_row_has_a_level_row_whose_bar_and_m_move_its_branch() {
     assert!(s.level_down(&g, hit, bar.right() - 1.0));
     assert_eq!(branch(&s, t, b[1]).0, 0.0, "a press alone does not jump");
     assert!(s.level_move(bar.x + bar.w / 2.0, false));
-    let d = -(bar.w / 2.0 - 1.0) / bar.w.max(44.0);
-    let want = (flow::level_db((flow::level_t(0.0) + d).clamp(0.0, 1.0)) * 10.0).round() / 10.0;
+    // half the bar down from 0 dB on the fader's scale, to a tenth of a dB (a fixed number, not
+    // the product's own sum done again, so a wrong scale fails here)
+    let want = -7.0;
     assert!(want < 0.0);
     assert_eq!(branch(&s, t, b[1]).0, 0.0);
     assert!(s.level_up());
@@ -324,24 +325,59 @@ fn the_screen_reader_names_the_m_the_plus_the_level_and_the_name_buttons() {
     assert_eq!(widen.node.toggled(), Some(accesskit::Toggled::False));
 }
 
+/// Leaving the mixer for the arrangement lets the picked row go, and the keys the row took
+/// (space, delete, enter, m, insert, down) go on to the keymap and touch no row, however the
+/// keys leave: a press there, F6 from the dock, or the palette (or a menu of the arrangement)
+/// sending them there.
 #[test]
-fn a_press_on_the_arrangement_gives_the_keys_back() {
-    let (mut s, g) = studio();
-    let t = track(&s, "Guitar");
-    let eq = add(&mut s, t, "EQ");
-    s.instruments.open.clear();
-    click_row(&mut s, &g, t, eq);
-    assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
-    // the screen begins every press with this (`screen.rs`, `pressed`)
-    let (x, y) = (g.lanes.x + g.lanes.w / 2.0, g.lanes.y + 4.0);
-    assert!(!matches!(s.hit(&g, x, y), Hit::Mixer(_)));
-    s.press_keys(&g, x, y);
-    assert_eq!(s.mixer.chosen, None);
-    for k in ["space", "delete", "enter", "m", "insert", "down"] {
-        assert!(!key(&mut s, &g, k, false), "{k} goes on to the keymap");
+fn every_way_of_leaving_for_the_arrangement_lets_the_row_go_and_gives_the_keys_back() {
+    type Leave = fn(&mut Studio, &Geometry);
+    let rows: [(&str, Leave); 3] = [
+        ("a press on the arrangement", |s, g| {
+            // the screen begins every press with this (`screen.rs`, `pressed`)
+            let (x, y) = (g.lanes.x + g.lanes.w / 2.0, g.lanes.y + 4.0);
+            assert!(!matches!(s.hit(g, x, y), Hit::Mixer(_)));
+            s.press_keys(g, x, y);
+        }),
+        ("F6 from the dock to the next part", |s, g| {
+            s.arrange.focus = false;
+            assert_eq!(s.place(), crate::context::key_more::Place::Dock);
+            assert!(s.run_binding(g, "view.focus --way next"));
+            assert_ne!(s.place(), crate::context::key_more::Place::Dock);
+        }),
+        ("the palette sending the keys to the arrangement", |s, _| {
+            s.focus_arrange(true);
+        }),
+    ];
+    let mut failures = Vec::new();
+    for (row, leave) in rows {
+        let (mut s, g) = studio();
+        let t = track(&s, "Guitar");
+        let eq = add(&mut s, t, "EQ");
+        s.instruments.open.clear();
+        click_row(&mut s, &g, t, eq);
+        assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))), "{row}");
+        leave(&mut s, &g);
+        let mut bad = Vec::new();
+        if s.mixer.chosen.is_some() {
+            bad.push(format!("still picked: {:?}", s.mixer.chosen));
+        }
+        for k in ["space", "delete", "enter", "m", "insert", "down"] {
+            if key(&mut s, &g, k, false) {
+                bad.push(format!("{k} was taken"));
+            }
+        }
+        if s.project().tracks[&t].inserts[0].bypass {
+            bad.push("EQ bypassed".into());
+        }
+        if names(&s, t) != ["EQ"] {
+            bad.push(format!("inserts {:?}", names(&s, t)));
+        }
+        if !bad.is_empty() {
+            failures.push(format!("{row}: {bad:?}"));
+        }
     }
-    assert!(!s.project().tracks[&t].inserts[0].bypass);
-    assert_eq!(names(&s, t), ["EQ"]);
+    assert!(failures.is_empty(), "leaving the mixer: {failures:#?}");
 }
 
 #[test]
@@ -374,33 +410,6 @@ fn esc_while_a_knob_is_awaited_ends_the_wait_first() {
         "the keymap's Esc ends it"
     );
     assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
-}
-
-#[test]
-fn moving_the_keys_to_the_arrangement_by_keyboard_lets_the_row_go() {
-    let (mut s, g) = studio();
-    let t = track(&s, "Guitar");
-    let eq = add(&mut s, t, "EQ");
-    s.instruments.open.clear();
-    click_row(&mut s, &g, t, eq);
-    assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
-    // F6 from the dock to the next part (the browser or the arrangement)
-    s.arrange.focus = false;
-    assert_eq!(s.place(), crate::context::key_more::Place::Dock);
-    assert!(s.run_binding(&g, "view.focus --way next"));
-    assert_ne!(s.place(), crate::context::key_more::Place::Dock);
-    assert_eq!(s.mixer.chosen, None);
-    for k in ["space", "delete", "enter", "m", "insert", "down"] {
-        assert!(!key(&mut s, &g, k, false), "{k} goes on to the keymap");
-    }
-    assert!(!s.project().tracks[&t].inserts[0].bypass);
-    assert_eq!(names(&s, t), ["EQ"]);
-
-    // the palette (or a menu of the arrangement) sending the keys there does the same
-    click_row(&mut s, &g, t, eq);
-    assert!(s.mixer.chosen.is_some());
-    s.focus_arrange(true);
-    assert_eq!(s.mixer.chosen, None);
 }
 
 #[test]

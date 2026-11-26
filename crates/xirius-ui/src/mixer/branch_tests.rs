@@ -74,16 +74,6 @@ fn mix_045_the_splitters_plus_shows_at_116_under_the_pointer_and_always_when_wid
 }
 
 #[test]
-fn mix_045_a_channel_splits_row_has_no_plus() {
-    let (mut s, g) = studio();
-    let (t, sp, _, _) = vocal(&mut s);
-    assert!(s.run_command("rack.split.mode", json!({"id": sp, "mode": "channel"})));
-    s.mixer.wide.insert(t);
-    s.mixer.chosen = Some((t, Pick::Split(sp)));
-    assert_eq!(s.mixer_center(&g, MixerHit::AddBranch(t, sp)), None);
-}
-
-#[test]
 fn mix_045_the_pan_is_on_a_wide_strips_level_row_only() {
     let (mut s, g) = studio();
     let (t, _, b, [_, _, verb]) = vocal(&mut s);
@@ -361,10 +351,17 @@ fn mix_045_a_channel_splits_empty_rows_are_l_and_r() {
     let (mut s, g) = studio();
     let t = track(&s, "Vocal");
     assert!(s.run_command("rack.split.add", json!({"track": t, "mode": "channel"})));
-    let b: Vec<NodeId> = match s.project().tracks[&t].rack.as_ref().unwrap().fx.last() {
-        Some(RackNode::Split(x)) => x.branches.iter().map(|b| b.id).collect(),
-        other => panic!("{other:?}"),
-    };
+    let (sp, b): (NodeId, Vec<NodeId>) =
+        match s.project().tracks[&t].rack.as_ref().unwrap().fx.last() {
+            Some(RackNode::Split(x)) => (x.id, x.branches.iter().map(|b| b.id).collect()),
+            other => panic!("{other:?}"),
+        };
+    // its two branches are fixed: no ＋, even picked on a wide strip
+    s.mixer.wide.insert(t);
+    s.mixer.chosen = Some((t, Pick::Split(sp)));
+    assert_eq!(s.mixer_center(&g, MixerHit::AddBranch(t, sp)), None);
+    s.mixer.wide.remove(&t);
+    s.mixer.chosen = None;
     // the rows paint and speak the names the editor gives its columns
     let f = flow_of(&s, &g, t);
     let track = s.project().tracks[&t].clone();

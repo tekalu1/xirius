@@ -375,36 +375,52 @@ fn the_pointer_moving_slowly_shows_the_line_and_the_rows_light_nothing() {
     assert!(on_show(&s, t));
 }
 
+/// The pointer's speed reaches the line through the window's moves and frames: a fast pointer
+/// shows it only once it stops on it (the timing itself is the `Live` tests' above).
 #[test]
-fn the_pointer_going_fast_across_the_line_shows_nothing() {
-    let (mut s, g) = studio();
-    let t = track(&s, "Vocal");
-    let a = add(&mut s, t, "EQ");
-    let spot = Spot::After(Pick::Plugin(a));
-    let (x, y) = on_line(&s, &g, t, spot);
-    let b = Instant::now();
-    s.seam_moved(&g, x, y - 40.0, b);
-    s.seam_moved(&g, x, y + 2.0, ms(b, 30));
-    assert_eq!(s.mixer.seam.spot_on(t), None);
-    s.seam_moved(&g, x, y + 80.0, ms(b, 60));
-    s.seam_tick(&g, ms(b, 400));
-    assert_eq!(s.mixer.seam.spot_on(t), None);
-}
-
-#[test]
-fn a_fast_pointer_that_stops_on_the_line_shows_it_after_the_settle_time() {
-    let (mut s, g) = studio();
-    let t = track(&s, "Vocal");
-    let a = add(&mut s, t, "EQ");
-    let spot = Spot::After(Pick::Plugin(a));
-    let (x, y) = on_line(&s, &g, t, spot);
-    let b = Instant::now();
-    s.seam_moved(&g, x, y - 40.0, b);
-    s.seam_moved(&g, x, y + 1.0, ms(b, 30));
-    s.seam_tick(&g, ms(b, 100));
-    assert_eq!(s.mixer.seam.spot_on(t), None);
-    s.seam_tick(&g, ms(b, 30 + SETTLE_MS + 1));
-    assert_eq!(s.mixer.seam.spot_on(t), Some(spot));
+fn a_fast_pointer_shows_the_line_only_when_it_stops_on_it() {
+    struct Row {
+        name: &'static str,
+        /// (px from the line, ms) the pointer is at.
+        moves: &'static [(f32, u64)],
+        /// (ms, shows) frames after the moves.
+        frames: &'static [(u64, bool)],
+    }
+    let rows = [
+        Row {
+            name: "going across",
+            moves: &[(-40.0, 0), (2.0, 30), (80.0, 60)],
+            frames: &[(400, false)],
+        },
+        Row {
+            name: "stopping on it",
+            moves: &[(-40.0, 0), (1.0, 30)],
+            frames: &[(100, false), (30 + SETTLE_MS + 1, true)],
+        },
+    ];
+    let mut failures = Vec::new();
+    for row in &rows {
+        let (mut s, g) = studio();
+        let t = track(&s, "Vocal");
+        let a = add(&mut s, t, "EQ");
+        let spot = Spot::After(Pick::Plugin(a));
+        let (x, y) = on_line(&s, &g, t, spot);
+        let b = Instant::now();
+        for &(dy, at) in row.moves {
+            s.seam_moved(&g, x, y + dy, ms(b, at));
+            if s.mixer.seam.spot_on(t).is_some() {
+                failures.push(format!("{}: shown while moving at {at} ms", row.name));
+            }
+        }
+        for &(at, shows) in row.frames {
+            s.seam_tick(&g, ms(b, at));
+            let got = s.mixer.seam.spot_on(t);
+            if got != shows.then_some(spot) {
+                failures.push(format!("{}: at {at} ms got {got:?}", row.name));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "fast pointer: {failures:#?}");
 }
 
 #[test]

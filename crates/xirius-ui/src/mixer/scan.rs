@@ -265,41 +265,6 @@ mod menu_io_tests {
     }
 
     #[test]
-    fn a_scan_running_when_a_new_song_comes_goes_on_and_nothing_fails() {
-        let root = tempfile::tempdir().unwrap();
-        let (mut s, first) = scanning(root.path());
-        let before = s.project();
-        assert!(s.request_open(crate::opening::Request::New));
-        opened(&mut s, &first);
-        assert!(
-            !Arc::ptr_eq(&before, &s.project()),
-            "the new song is in place"
-        );
-        same_scan_done(&mut s, &first);
-        assert!(root.path().join("catalog.json").exists());
-    }
-
-    #[test]
-    fn a_scan_running_when_a_song_is_opened_goes_on_and_nothing_fails() {
-        let root = crate::shot::TestFolder::new("xirius-ui-scan-opened-");
-        let song = root.path().join("song");
-        crate::song::Song::empty().save_as(&song).unwrap();
-        let mut s = windowed(root.path());
-        s.start_plugin_scan().unwrap();
-        owner_done(&mut s);
-        assert!(s.mixer.scan.job.is_some());
-        assert!(s.request_open_file(crate::studio::FileRequest::Open, &song));
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while s.opening.is_some() {
-            s.poll_opening();
-            assert!(Instant::now() < deadline, "the song never opened");
-            std::thread::yield_now();
-        }
-        assert_eq!(s.song.dir(), Some(song.clone()));
-        scan_done(&mut s);
-    }
-
-    #[test]
     fn a_scan_status_poll_waits_for_the_session_owner_during_open() {
         let root = crate::shot::TestFolder::new("xirius-ui-scan-poll-open-");
         let song = root.path().join("song");
@@ -364,16 +329,26 @@ mod menu_io_tests {
             crate::opening::Request::Sample,
             crate::opening::Request::New,
         ] {
+            let file = match &request {
+                crate::opening::Request::File(_, path) => Some(path.clone()),
+                _ => None,
+            };
+            let before = s.project();
             assert!(s.request_open(request));
             opened(&mut s, &first);
             assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
             assert!(s.error.is_none(), "{:?}", s.error);
+            assert!(!Arc::ptr_eq(&before, &s.project()), "the song is in place");
+            if let Some(file) = file {
+                assert_eq!(s.song.dir(), Some(file), "the song opened is the one asked");
+            }
         }
         // Closed to the start screen as well.
         assert!(s.close_to_home());
         opened(&mut s, &first);
         assert!(s.home_shown());
         same_scan_done(&mut s, &first);
+        assert!(root.path().join("catalog.json").exists());
     }
 
     /// Should a song's job go with it all the same (a session made anew, as only tests do), the
@@ -453,8 +428,8 @@ mod menu_io_tests {
     }
 
     /// Frames until the scan, the list it leaves and the sound for the inputs are done; then
-    /// nothing is left over the start screen.
-    fn home_done(s: &mut Studio) {
+    /// what is still left over the start screen.
+    fn home_done(s: &mut Studio) -> Vec<String> {
         let deadline = Instant::now() + Duration::from_secs(20);
         while s.saving.is_some()
             || s.mixer.scan.running()
@@ -462,51 +437,101 @@ mod menu_io_tests {
             || s.sound_preparing()
             || !s.mixer.scan.checked
         {
+            if Instant::now() >= deadline {
+                return vec!["the scan and the sound never ended".into()];
+            }
             s.tick();
-            assert!(Instant::now() < deadline);
             std::thread::yield_now();
         }
         for _ in 0..8 {
             s.tick();
         }
-        assert!(s.home_shown());
-        assert!(s.preparing.is_none(), "the card is down");
-        assert!(!s.input_blocked(), "the veil is down");
+        let mut left = Vec::new();
+        if !s.home_shown() {
+            left.push("the start screen went".into());
+        }
+        if s.preparing.is_some() {
+            left.push("the card is up".into());
+        }
+        if s.input_blocked() {
+            left.push("the veil is up".into());
+        }
+        left
     }
 
     #[test]
-    fn the_start_screen_is_left_clear_after_the_automatic_scan() {
-        let root = tempfile::tempdir().unwrap();
-        let mut s = home(root.path());
-        home_done(&mut s);
-        assert!(s.error.is_none(), "{:?}", s.error);
-        assert_eq!(s.mixer.scan.cache_current, Some(true));
-        assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
+    fn the_start_screen_is_left_clear_whatever_the_scan_and_the_sound_end_in() {
+        struct Row {
+            name: &'static str,
+            setup: fn(&mut Studio),
+            check: fn(&Studio) -> Vec<String>,
+        }
+        let rows = [
+            Row {
+                name: "the automatic scan ends",
+                setup: |_| {},
+                check: |s| {
+                    let mut bad = Vec::new();
+                    if s.error.is_some() {
+                        bad.push(format!("error {:?}", s.error));
+                    }
+                    if s.mixer.scan.cache_current != Some(true) {
+                        bad.push(format!("list {:?}", s.mixer.scan.cache_current));
+                    }
+                    if s.mixer.scan.error.is_some() {
+                        bad.push(format!("scan error {:?}", s.mixer.scan.error));
+                    }
+                    if !s.transport.host().is_some_and(|h| h.is_watching()) {
+                        bad.push("the inputs are not watched once the sound is ready".into());
+                    }
+                    bad
+                },
+            },
+            Row {
+                name: "the automatic scan fails",
+                setup: |s| s.save_test_failure = true,
+                check: |s| {
+                    let mut bad = Vec::new();
+                    if s.error.is_some() {
+                        bad.push(format!("error {:?}", s.error));
+                    }
+                    if s.mixer.scan.error.as_deref() != Some("保存できません") {
+                        bad.push(format!("scan error {:?}", s.mixer.scan.error));
+                    }
+                    bad
+                },
+            },
+            Row {
+                name: "the sound cannot be prepared",
+                setup: |s| s.transport.fail_start = Some("開けません".into()),
+                check: |s| {
+                    let mut bad = Vec::new();
+                    // Said as the failure it is, not as the sound being prepared.
+                    if s.error.as_deref() != Some("開けません") {
+                        bad.push(format!("error {:?}", s.error));
+                    }
+                    if s.transport.is_live() {
+                        bad.push("the sound is live".into());
+                    }
+                    bad
+                },
+            },
+        ];
+        let mut failures = Vec::new();
+        for row in &rows {
+            let root = tempfile::tempdir().unwrap();
+            let mut s = home(root.path());
+            (row.setup)(&mut s);
+            let mut bad = home_done(&mut s);
+            bad.extend((row.check)(&s));
+            if !bad.is_empty() {
+                failures.push(format!("{}: {bad:?}", row.name));
+            }
+        }
         assert!(
-            s.transport.host().is_some_and(|h| h.is_watching()),
-            "the inputs are watched once the sound is ready"
+            failures.is_empty(),
+            "start screen left unclear: {failures:#?}"
         );
-    }
-
-    #[test]
-    fn the_start_screen_is_left_clear_after_a_failed_automatic_scan() {
-        let root = tempfile::tempdir().unwrap();
-        let mut s = home(root.path());
-        s.save_test_failure = true;
-        home_done(&mut s);
-        assert!(s.error.is_none(), "{:?}", s.error);
-        assert_eq!(s.mixer.scan.error.as_deref(), Some("保存できません"));
-    }
-
-    #[test]
-    fn the_start_screen_is_left_clear_when_the_sound_cannot_be_prepared() {
-        let root = tempfile::tempdir().unwrap();
-        let mut s = home(root.path());
-        s.transport.fail_start = Some("開けません".into());
-        home_done(&mut s);
-        // Said as the failure it is, not as the sound being prepared.
-        assert_eq!(s.error.as_deref(), Some("開けません"));
-        assert!(!s.transport.is_live());
     }
 
     #[test]

@@ -200,28 +200,6 @@ fn a_splitter_is_one_row_that_opens_on_its_branches_and_folds_away() {
 }
 
 #[test]
-fn the_dot_bypasses_and_the_name_opens() {
-    let (mut s, g) = studio();
-    let t = track(&s, "Bass");
-    let delay = add(&mut s, t, "Delay");
-    let bypass = MixerHit::Bypass(t, delay);
-    let (x, y) = s.mixer_center(&g, bypass).unwrap();
-    assert_eq!(s.hit(&g, x, y), Hit::Mixer(bypass));
-    assert!(s.press(&g, Hit::Mixer(bypass)));
-    assert!(
-        s.project().tracks[&t]
-            .inserts
-            .iter()
-            .any(|p| p.id == delay && p.bypass)
-    );
-    let open = s.mixer_rect(&g, MixerHit::Open(t, delay)).unwrap();
-    assert_eq!(
-        s.hit(&g, open.x + open.w / 2.0, open.y + open.h / 2.0),
-        Hit::Mixer(MixerHit::Open(t, delay))
-    );
-}
-
-#[test]
 fn the_instrument_area_adds_a_layer_once_there_is_an_instrument() {
     let (mut s, g) = studio();
     let t = track(&s, "Keys");

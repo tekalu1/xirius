@@ -58,17 +58,52 @@ fn picked(w: f32) -> (Studio, Geometry, TrackId, PluginId) {
     (s, g, t, eq)
 }
 
+/// At every width the picked device opens in its own window and leaves the drawer to the
+/// strips, and a knob drag in that window is one undoable edit, written only at the let go.
 #[test]
-fn a_picked_device_leaves_the_whole_drawer_for_the_strips_at_every_width() {
+fn a_picked_device_leaves_the_whole_drawer_for_the_strips_and_drags_as_one_edit_at_every_width() {
     for width in [760.0, crate::studio::WINDOW_MIN.0, 1600.0] {
         let (mut s, g, t, eq) = picked(width);
         assert!(s.instruments.detached.contains(&eq));
         assert_eq!(s.instruments.open[0].track, t);
         assert_eq!(s.instruments.frame(0, &g), Rect::default());
+        let params = |s: &Studio| {
+            s.project().tracks[&t]
+                .inserts
+                .iter()
+                .find(|p| p.id == eq)
+                .unwrap()
+                .params
+                .clone()
+        };
+        let before = params(&s);
+        let steps = s.song().steps();
         with_surface(&mut s, eq, |s, local| {
             let (x, y) = s.instrument_center(local, eq, Part::Knob(0)).unwrap();
-            assert!(s.instruments.frame(0, local).contains(x, y));
+            assert!(s.instruments.frame(0, local).contains(x, y), "{width}");
+            let k = s.project().tracks[&t]
+                .inserts
+                .iter()
+                .find(|p| p.id == eq)
+                .unwrap()
+                .builtin()
+                .unwrap()
+                .param("output")
+                .unwrap()
+                .0;
+            let (x, y) = s.instrument_center(local, eq, Part::Knob(k)).unwrap();
+            assert!(s.instrument_down(local, x, y), "{width}");
+            assert!(s.instrument_moved(local, x, y + 30.0, false), "{width}");
+            assert_eq!(
+                s.song().steps(),
+                steps,
+                "{width}: written before the let go"
+            );
+            assert!(s.instrument_up(), "{width}");
+            assert_eq!(s.song().steps(), steps + 1, "{width}");
+            assert!(s.undo(local), "{width}");
         });
+        assert_eq!(params(&s), before, "{width}: undone");
     }
 }
 
@@ -112,37 +147,6 @@ fn changing_the_main_tab_does_not_hide_or_recreate_the_device() {
     with_surface(&mut s, eq, |s, g| {
         assert!(s.instrument_center(g, eq, Part::Close).is_some());
     });
-}
-
-#[test]
-fn a_local_knob_drag_is_one_undoable_edit() {
-    let (mut s, _, t, eq) = picked(1600.0);
-    let before = s.project().tracks[&t]
-        .inserts
-        .iter()
-        .find(|p| p.id == eq)
-        .unwrap()
-        .clone();
-    let steps = s.song().steps();
-    with_surface(&mut s, eq, |s, g| {
-        let p = s.project();
-        let plugin = p.tracks[&t].inserts.iter().find(|p| p.id == eq).unwrap();
-        let k = plugin.builtin().unwrap().param("output").unwrap().0;
-        let (x, y) = s.instrument_center(g, eq, Part::Knob(k)).unwrap();
-        assert!(s.instrument_down(g, x, y));
-        assert!(s.instrument_moved(g, x, y + 30.0, false));
-        assert_eq!(s.song().steps(), steps);
-        assert!(s.instrument_up());
-        assert_eq!(s.song().steps(), steps + 1);
-        assert!(s.undo(g));
-    });
-    let after = s.project().tracks[&t]
-        .inserts
-        .iter()
-        .find(|p| p.id == eq)
-        .unwrap()
-        .clone();
-    assert_eq!(before.params, after.params);
 }
 
 #[test]
