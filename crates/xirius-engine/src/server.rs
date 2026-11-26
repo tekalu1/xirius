@@ -718,25 +718,32 @@ mod refused_start_tests {
     fn ended(server: &PluginServer) {
         server.inner.went_down(1, Some(3), false, false);
     }
-    fn assert_calm(server: &PluginServer) {
-        assert!(!server.crashed());
-        assert_eq!(server.status(&PluginLink::default()).crashes, 0);
-    }
-
+    /// The two events in the order they are seen.
+    type Order = [fn(&PluginServer); 2];
     #[test]
-    fn the_host_ending_before_the_refusal_is_noted_is_not_a_crash() {
-        let server = starting();
-        ended(&server);
-        refuse(&server);
-        assert_calm(&server);
-    }
-
-    #[test]
-    fn the_host_ending_after_the_refusal_is_noted_is_not_a_crash() {
-        let server = starting();
-        refuse(&server);
-        ended(&server);
-        assert_calm(&server);
+    fn the_host_ending_before_or_after_the_refusal_is_noted_is_not_a_crash() {
+        let orders: [(&str, Order); 2] = [
+            ("ended before the refusal", [ended, refuse]),
+            ("ended after the refusal", [refuse, ended]),
+        ];
+        let mut failures = Vec::new();
+        for (name, steps) in orders {
+            let server = starting();
+            for step in steps {
+                step(&server);
+            }
+            let crashes = server.status(&PluginLink::default()).crashes;
+            if server.crashed() || crashes != 0 {
+                failures.push(format!(
+                    "{name}: crashed {}, {crashes} crashes",
+                    server.crashed()
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "a refused start read as a crash:\n{failures:#?}"
+        );
     }
 
     #[test]

@@ -2247,6 +2247,8 @@ mod thru_tests {
         }
     }
 
+    /// The monitor plays the track's transpose and velocity, the velocity rounded first to the
+    /// same whole number the playing tracks use: 64 with +10% is 70, not 70.4 (UI-312).
     #[test]
     fn the_thru_plays_the_tracks_transpose_and_velocity() {
         let thru = Thru {
@@ -2255,63 +2257,68 @@ mod thru_tests {
             transpose: 2,
             velocity: 10,
         };
-        let heard = thru
-            .heard(NoteKind::On {
-                pitch: 60,
-                velocity: 100.0 / 127.0,
-            })
-            .expect("on the keyboard");
-        let NoteKind::On { pitch, velocity } = heard else {
-            panic!("not a note on");
+        let on = |pitch, velocity: f32| NoteKind::On {
+            pitch,
+            velocity: velocity / 127.0,
         };
-        assert_eq!(pitch, 62);
-        assert!((velocity - 110.0 / 127.0).abs() < 1e-6, "{velocity}");
+        let rows = [
+            (
+                "transposed and louder",
+                thru,
+                on(60, 100.0),
+                Some(on(62, 110.0)),
+            ),
+            (
+                "rounded to a whole velocity",
+                Thru {
+                    transpose: 0,
+                    ..thru
+                },
+                on(60, 64.0),
+                Some(on(60, 70.0)),
+            ),
+            (
+                "transposed off the keyboard",
+                Thru {
+                    transpose: -64,
+                    ..thru
+                },
+                on(60, 64.0),
+                None,
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (name, t, played, want) in rows {
+            let got = t.heard(played);
+            let same = match (got, want) {
+                (
+                    Some(NoteKind::On { pitch, velocity }),
+                    Some(NoteKind::On {
+                        pitch: p,
+                        velocity: v,
+                    }),
+                ) => pitch == p && (velocity - v).abs() < 1e-6,
+                _ => got == want,
+            };
+            if !same {
+                failures.push(format!("{name}: heard {got:?}, not {want:?}"));
+            }
+        }
+        assert!(failures.is_empty(), "the thru's notes:\n{failures:#?}");
         // The note off goes to the same key the on played.
         assert_eq!(
             thru.heard(NoteKind::Off { pitch: 60 }),
             Some(NoteKind::Off { pitch: 62 })
         );
-        // A key the transpose takes off the keyboard makes no sound, on or off.
+        // A key the transpose takes off the keyboard makes no sound off either.
         let low = Thru {
             transpose: -64,
             ..thru
         };
-        assert_eq!(
-            low.heard(NoteKind::On {
-                pitch: 60,
-                velocity: 0.5
-            }),
-            None
-        );
         assert_eq!(low.heard(NoteKind::Off { pitch: 60 }), None);
         // Controllers are not moved.
         let ctrl = NoteKind::control(64, 0);
         assert_eq!(thru.heard(ctrl), Some(ctrl));
-    }
-
-    /// The monitor rounds to the same whole velocity the playing tracks use: 64 with +10% is
-    /// 70, not 70.4 (UI-312).
-    #[test]
-    fn the_thru_rounds_the_velocity_to_a_whole_number_first() {
-        let thru = Thru {
-            track: 0,
-            port: None,
-            transpose: 0,
-            velocity: 10,
-        };
-        let heard = thru
-            .heard(NoteKind::On {
-                pitch: 60,
-                velocity: 64.0 / 127.0,
-            })
-            .expect("on the keyboard");
-        assert_eq!(
-            heard,
-            NoteKind::On {
-                pitch: 60,
-                velocity: 70.0 / 127.0,
-            }
-        );
     }
 
     fn empty_plan() -> crate::mixer::Plan {

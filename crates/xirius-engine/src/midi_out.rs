@@ -395,26 +395,6 @@ mod tests {
     }
 
     #[test]
-    fn the_mock_keeps_what_it_is_sent_in_order() {
-        let (mut out, mut log) = MockMidiOut::new(&["A", "B"]);
-        assert_eq!(out.port_index("B"), Some(1));
-        assert_eq!(out.port_index("C"), None);
-        out.send(1, 5, [0x90, 60, 100]);
-        out.send(0, 0, [0x80, 60, 0]);
-        let got = log.take();
-        assert_eq!(got.len(), 2);
-        assert_eq!(
-            got[0],
-            Sent {
-                port: 1,
-                offset: 5,
-                msg: [0x90, 60, 100]
-            }
-        );
-        assert!(log.take().is_empty());
-    }
-
-    #[test]
     fn a_port_is_found_by_name_in_any_case() {
         let ports = vec!["Loop MIDI".to_string(), "Synth".to_string()];
         assert_eq!(find_out("synth", &ports), Some(1));

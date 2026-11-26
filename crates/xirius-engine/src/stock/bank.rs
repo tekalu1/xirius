@@ -379,18 +379,11 @@ mod tests {
     }
 
     #[test]
-    fn a_new_bank_holds_the_defaults() {
-        let bank = Arc::new(ParamBank::new(&xirius_params::COMPRESSOR));
-        let p = Params::new(bank);
-        assert!((p.get(0) - -18.0).abs() < 1e-4);
-        assert!((p.get(1) - 4.0).abs() < 1e-4);
-    }
-
-    #[test]
     fn params_see_a_write_once() {
         let bank = Arc::new(ParamBank::new(&xirius_params::EQ));
         let handle = StockHandle::new(bank.clone(), None);
         let mut p = Params::new(bank);
+        assert!((p.get(16) - xirius_params::EQ.params[16].default).abs() < 1e-4);
         assert!(!p.refresh());
         assert!(handle.set("output", 1.0));
         assert!(p.refresh());

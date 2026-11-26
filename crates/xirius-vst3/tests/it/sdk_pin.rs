@@ -24,11 +24,11 @@ fn git(args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-#[test]
-fn the_bindings_come_from_sdk_3_8_or_later() {
+// The bindings come from SDK 3.8 or later; checked when this file is compiled.
+const _: () = {
     use vst3::Steinberg::Vst::{SDKVersionMajor, SDKVersionMinor};
-    assert!((SDKVersionMajor, SDKVersionMinor) >= (3, 8));
-}
+    assert!(SDKVersionMajor > 3 || (SDKVersionMajor == 3 && SDKVersionMinor >= 8));
+};
 
 #[test]
 fn the_sdk_is_a_submodule_at_3_8_0_and_no_older_copy_is_tracked() {

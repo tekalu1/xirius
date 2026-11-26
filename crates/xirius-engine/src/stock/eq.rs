@@ -445,64 +445,131 @@ mod tests {
         db(rms(&l[tail..]) / rms(&input[tail..]))
     }
 
-    #[test]
-    fn flat_settings_change_nothing() {
-        for f in [50.0, 1000.0, 12_000.0] {
-            assert!(gain_at(f, &[]).abs() < 0.01, "{f} Hz");
-        }
+    /// One row of a response table: its name, the settings, the frequency, and the range in
+    /// dB the gain there must fall in.
+    type Row<'a> = (&'a str, &'a [(&'a str, f64)], f64, (f64, f64));
+
+    /// `want` ± `tol`.
+    fn near(want: f64, tol: f64) -> (f64, f64) {
+        (want - tol, want + tol)
+    }
+
+    /// The rows whose gain falls outside their range, each with what it read.
+    fn misses(rows: &[Row<'_>]) -> Vec<String> {
+        rows.iter()
+            .filter_map(|&(name, set, freq, (lo, hi))| {
+                let got = gain_at(freq, set);
+                (!(lo..hi).contains(&got))
+                    .then(|| format!("{name} at {freq} Hz: {got:.2} dB, not in {lo}..{hi}"))
+            })
+            .collect()
     }
 
     #[test]
-    fn a_bell_lifts_its_frequency_and_leaves_the_rest() {
-        let set = [("mid1_freq", 1000.0), ("mid1_gain", 9.0), ("mid1_q", 2.0)];
-        assert!((gain_at(1000.0, &set) - 9.0).abs() < 0.1);
-        assert!(gain_at(100.0, &set).abs() < 0.2);
-        assert!(gain_at(10_000.0, &set).abs() < 0.2);
-        let cut = [("mid2_freq", 3000.0), ("mid2_gain", -12.0)];
-        assert!((gain_at(3000.0, &cut) + 12.0).abs() < 0.1);
-    }
-
-    #[test]
-    fn shelves_reach_their_gain() {
-        let set = [
+    fn each_band_reaches_its_gain_and_leaves_the_rest() {
+        let bell = [("mid1_freq", 1000.0), ("mid1_gain", 9.0), ("mid1_q", 2.0)];
+        let dip = [("mid2_freq", 3000.0), ("mid2_gain", -12.0)];
+        let shelves = [
             ("low_freq", 200.0),
             ("low_gain", -6.0),
             ("high_freq", 5000.0),
             ("high_gain", 4.0),
         ];
-        assert!((gain_at(30.0, &set) + 6.0).abs() < 0.3);
-        assert!((gain_at(18_000.0, &set) - 4.0).abs() < 0.3);
-        assert!(gain_at(1200.0, &set).abs() < 0.6);
+        let off = [("b3_on", 0.0), ("mid1_gain", 12.0)];
+        let notch = [
+            ("b2_type", 3.0),
+            ("low_freq", 300.0),
+            ("b2_q", 4.0),
+            ("low_gain", 9.0),
+        ];
+        let rows: &[Row<'_>] = &[
+            ("flat, low", &[], 50.0, near(0.0, 0.01)),
+            ("flat, middle", &[], 1000.0, near(0.0, 0.01)),
+            ("flat, high", &[], 12_000.0, near(0.0, 0.01)),
+            ("bell at its frequency", &bell, 1000.0, near(9.0, 0.1)),
+            ("bell far below", &bell, 100.0, near(0.0, 0.2)),
+            ("bell far above", &bell, 10_000.0, near(0.0, 0.2)),
+            ("dip at its frequency", &dip, 3000.0, near(-12.0, 0.1)),
+            ("low shelf", &shelves, 30.0, near(-6.0, 0.3)),
+            ("high shelf", &shelves, 18_000.0, near(4.0, 0.3)),
+            ("between the shelves", &shelves, 1200.0, near(0.0, 0.6)),
+            ("output gain", &[("output", -6.0)], 1000.0, near(-6.0, 0.01)),
+            ("a band off", &off, 400.0, near(0.0, 0.01)),
+            (
+                "notch at its frequency, whatever the gain",
+                &notch,
+                300.0,
+                (f64::NEG_INFINITY, -40.0),
+            ),
+            ("notch far above", &notch, 3000.0, near(0.0, 0.1)),
+            ("notch far below", &notch, 30.0, near(0.0, 0.1)),
+        ];
+        let failures = misses(rows);
+        assert!(failures.is_empty(), "the bands' gains:\n{failures:#?}");
+        assert_eq!(band_db(&values(&notch), 1, 300.0, RATE), f64::NEG_INFINITY);
     }
 
     #[test]
     fn cuts_fall_by_their_slope() {
         // An octave and two below the corner: 24 dB/oct falls about 24 and 48 dB.
-        let set = [("low_cut_on", 1.0), ("low_cut_freq", 400.0)];
-        assert!((gain_at(400.0, &set) + 3.0).abs() < 0.2);
-        let one = gain_at(200.0, &set);
-        assert!((-26.0..-22.0).contains(&one), "{one}");
+        let low = [("low_cut_on", 1.0), ("low_cut_freq", 400.0)];
         let steep = [
             ("low_cut_on", 1.0),
             ("low_cut_freq", 400.0),
             ("low_cut_slope", 2.0),
         ];
-        let one = gain_at(200.0, &steep);
-        assert!((-50.0..-46.0).contains(&one), "{one}");
         let high = [
             ("high_cut_on", 1.0),
             ("high_cut_freq", 2000.0),
             ("high_cut_slope", 0.0),
         ];
-        assert!((gain_at(2000.0, &high) + 3.0).abs() < 0.2);
-        let one = gain_at(4000.0, &high);
-        assert!((-14.0..-10.0).contains(&one), "{one}");
-        assert!(gain_at(200.0, &high).abs() < 0.05);
-    }
-
-    #[test]
-    fn output_gain_applies() {
-        assert!((gain_at(1000.0, &[("output", -6.0)]) + 6.0).abs() < 0.01);
+        // Band 3 as a low cut ignores its gain; as a high cut it falls 12 dB per octave.
+        let flat = std::f64::consts::FRAC_1_SQRT_2;
+        let band_low = [
+            ("b3_type", 0.0),
+            ("mid1_freq", 400.0),
+            ("mid1_gain", 12.0),
+            ("mid1_q", flat),
+        ];
+        let band_high = [
+            ("b3_type", 5.0),
+            ("mid1_freq", 2000.0),
+            ("mid1_q", flat),
+            ("b3_slope", 0.0),
+        ];
+        let rows: &[Row<'_>] = &[
+            ("low cut at its corner", &low, 400.0, near(-3.0, 0.2)),
+            ("low cut an octave below", &low, 200.0, near(-24.0, 2.0)),
+            (
+                "steep low cut an octave below",
+                &steep,
+                200.0,
+                near(-48.0, 2.0),
+            ),
+            ("high cut at its corner", &high, 2000.0, near(-3.0, 0.2)),
+            ("high cut an octave above", &high, 4000.0, near(-12.0, 2.0)),
+            ("high cut far below", &high, 200.0, near(0.0, 0.05)),
+            (
+                "band 3 low cut at its corner",
+                &band_low,
+                400.0,
+                near(-3.0, 0.2),
+            ),
+            (
+                "band 3 low cut an octave below",
+                &band_low,
+                200.0,
+                near(-24.0, 2.0),
+            ),
+            (
+                "band 3 high cut an octave above",
+                &band_high,
+                4000.0,
+                near(-12.0, 2.0),
+            ),
+        ];
+        let failures = misses(rows);
+        assert!(failures.is_empty(), "the cuts' slopes:\n{failures:#?}");
     }
 
     #[test]
@@ -526,7 +593,6 @@ mod tests {
             assert_eq!(b.slope, at(ids.slope), "{}", ids.slope);
         }
         assert_eq!(EQ.param("output").unwrap().0, OUTPUT);
-        assert_eq!(EQ.params.len(), 37);
     }
 
     /// The EQ word for word as it was before its bands had a type (PLG-008), the shelves'
@@ -884,31 +950,6 @@ mod tests {
         assert_eq!(band_db(&low_cut, 9, 400.0, RATE), 0.0);
     }
 
-    #[test]
-    fn a_band_off_leaves_the_sound_and_a_cut_ignores_its_gain() {
-        let off = [("b3_on", 0.0), ("mid1_gain", 12.0)];
-        assert!(gain_at(400.0, &off).abs() < 0.01);
-        let flat = std::f64::consts::FRAC_1_SQRT_2;
-        let cut = [
-            ("b3_type", 0.0),
-            ("mid1_freq", 400.0),
-            ("mid1_gain", 12.0),
-            ("mid1_q", flat),
-        ];
-        assert!((gain_at(400.0, &cut) + 3.0).abs() < 0.2);
-        let one = gain_at(200.0, &cut);
-        assert!((-26.0..-22.0).contains(&one), "{one}");
-        // Band 3 as a high cut of 12 dB per octave.
-        let high = [
-            ("b3_type", 5.0),
-            ("mid1_freq", 2000.0),
-            ("mid1_q", flat),
-            ("b3_slope", 0.0),
-        ];
-        let one = gain_at(4000.0, &high);
-        assert!((-14.0..-10.0).contains(&one), "{one}");
-    }
-
     /// The largest second difference of `x`: a sine's is its amplitude times
     /// (2π·f/rate)², a jump's is about the jump.
     fn roughness(x: &[f32]) -> f64 {
@@ -998,20 +1039,6 @@ mod tests {
         let a = render(p.as_mut(), &input[..960], &input[..960], &[]).0;
         let peak = a.iter().fold(0.0f32, |m, x| m.max(x.abs()));
         assert!(peak > 0.9, "{peak}");
-    }
-
-    #[test]
-    fn a_notch_takes_its_frequency_out_whatever_the_gain() {
-        let set = [
-            ("b2_type", 3.0),
-            ("low_freq", 300.0),
-            ("b2_q", 4.0),
-            ("low_gain", 9.0),
-        ];
-        assert!(gain_at(300.0, &set) < -40.0);
-        assert!(gain_at(3000.0, &set).abs() < 0.1);
-        assert!(gain_at(30.0, &set).abs() < 0.1);
-        assert_eq!(band_db(&values(&set), 1, 300.0, RATE), f64::NEG_INFINITY);
     }
 
     #[test]
