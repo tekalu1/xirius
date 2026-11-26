@@ -38,20 +38,24 @@ pub(super) fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
         }
         16 => {
             let t = track_of(|m| m.synth, "instrument")?;
-            let (corner, id, length) = read(s, w, |s, g| {
+            // The lower half of the right edge stretches the part and fills it with its loop.
+            let (grip, id, length) = read(s, w, |s, g| {
                 let r = clip_rect(s, g, t, 0)?;
                 let c = first(s, t).ok_or("no part")?;
-                Ok::<_, String>(((r.right() - 2.0, r.bottom() - 2.0), c.id, c.length))
+                Ok::<_, String>(((r.right() - 2.0, r.bottom() - 4.0), c.id, c.length))
             })?;
             let half = read(s, w, |s, _| s.ticks_to_px(length / 2));
-            drag(corner, (corner.0 - half, corner.1), w, cx);
+            drag(grip, (grip.0 + half, grip.1), w, cx);
             let p = s.borrow().project();
             let l = p.clip_loop(id);
             let now = first(&s.borrow(), t).map(|c| c.length);
-            check(l.is_some(), "no loop")?;
             check(
-                now == Some(length),
-                format!("the part's length went to {now:?}"),
+                l.is_some_and(|l| l.length == length),
+                format!("the loop is {l:?}, not the whole part of {length}"),
+            )?;
+            check(
+                now.is_some_and(|n| n > length),
+                format!("the part's length went to {now:?} from {length}"),
             )?;
             Ok(format!("loop={l:?} length={length}"))
         }
