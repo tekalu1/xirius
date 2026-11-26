@@ -6,7 +6,7 @@ GPUI（`gpui-pre =0.3.8`、Zed の `279fe07` の写し）に入れた修正を�
 
 GPUI は crates.io の公開物をそのまま使っている。フォークも `[patch]` も git の依存も無く、`Cargo.lock` の `gpui-pre` と `gpui-pre-platform` は registry の版とチェックサムで固定されている。上流の癖は、Xirius の側のコードで避けている（`GPUI.md` の「この版で踏んだ癖」）。
 
-`crates/xirius-ui/tests/patched_doc.rs` が、次のどれかが起きて、この表に 1 件も無いときに落とす。
+`crates/xirius-ui/tests/it/patched_doc.rs` が、次のどれかが起きて、この表に 1 件も無いときに落とす。
 
 - `Cargo.toml` に `[patch]` / `[replace]` が入る
 - GPUI の依存が registry 以外（git・path）を指す

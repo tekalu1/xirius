@@ -2,7 +2,7 @@
 //! the copyright that Explorer's 「詳細」 and the Task Manager show, and the icon of the window.
 #![cfg(windows)]
 
-#[path = "../../../packaging/windows/read_version_info.rs"]
+#[path = "../../../../packaging/windows/read_version_info.rs"]
 mod read_version_info;
 
 use std::os::windows::ffi::OsStrExt;

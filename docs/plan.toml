@@ -7310,7 +7310,7 @@ title = "xirius-ui.exe を Windows の GUI 型（subsystem windows）にし、�
 area = "UI"
 phase = "v1"
 source = "1.0-msi-checks.md § UI-290（1.0 の配布、Windows Terminal へのコンソールの引き渡しが壊れた PC での確認）"
-done_when = "xirius-ui.exe の PE ヘッダーの Subsystem が WINDOWS_GUI（2）で、通常の窓の指定（Start-Process -WindowStyle Normal）で起動すると窓が出る。標準出力・標準エラーがパイプやファイルのときはそのまま使い、向き先が無いときだけ AttachConsole(ATTACH_PARENT_PROCESS) で親の端末の CONOUT$ に付ける（console.rs）。--help・--version を足し、パイプへの --help・--version・--bench --list・引数の誤り（終了コード 2）が読める（tests/gui_subsystem.rs）"
+done_when = "xirius-ui.exe の PE ヘッダーの Subsystem が WINDOWS_GUI（2）で、通常の窓の指定（Start-Process -WindowStyle Normal）で起動すると窓が出る。標準出力・標準エラーがパイプやファイルのときはそのまま使い、向き先が無いときだけ AttachConsole(ATTACH_PARENT_PROCESS) で親の端末の CONOUT$ に付ける（console.rs）。--help・--version を足し、パイプへの --help・--version・--bench --list・引数の誤り（終了コード 2）が読める（tests/it/gui_subsystem.rs）"
 status = "done"
 
 [[item]]
@@ -7509,7 +7509,7 @@ title = "MIDI の入力の送り先を Studio Pro の「Instrument Input Follows
 area = "REC"
 phase = "v1"
 source = "midi-routing-report.md § 4. 直し方の案（案 A）"
-done_when = "設定 `midi.follow-selection`（既定で入、キーは変えない）の表示名は「インストゥルメントの入力を選択に合わせる」で、説明は「選んだインストゥルメントトラックを録音準備にし、ほかのインストゥルメントトラックの録音準備を外します」。入のとき、選択中のトラックがインストゥルメントトラックに変わると、そのトラックを録音準備とモニターにし、ほかのインストゥルメントトラックの録音準備とモニターを外す（オーディオトラックは触らず、取り消しの履歴には積まない。曲を開いた後・トラックを足した後に選んだときも同じ）。切のときは選択で録音準備を変えない。MIDI の鍵盤・PC のキーボード・録音中の thru の送り先は同じ「録音準備のインストゥルメントトラック」の規則（トラックの入力の絞り込みは今のまま）。tests/routing.rs で、選択中の 1 本だけが鳴る・選択を移すと前のトラックの録音準備が外れる・PC のキーボードは選択中が鳴る・切のときは録音準備のトラックだけ・オーディオトラックの録音準備は残る・録音準備の残った曲でも選択で 1 本に揃う・「MIDI を演奏」2 回は最後の 1 本だけ、を窓を出さずに確かめる"
+done_when = "設定 `midi.follow-selection`（既定で入、キーは変えない）の表示名は「インストゥルメントの入力を選択に合わせる」で、説明は「選んだインストゥルメントトラックを録音準備にし、ほかのインストゥルメントトラックの録音準備を外します」。入のとき、選択中のトラックがインストゥルメントトラックに変わると、そのトラックを録音準備とモニターにし、ほかのインストゥルメントトラックの録音準備とモニターを外す（オーディオトラックは触らず、取り消しの履歴には積まない。曲を開いた後・トラックを足した後に選んだときも同じ）。切のときは選択で録音準備を変えない。MIDI の鍵盤・PC のキーボード・録音中の thru の送り先は同じ「録音準備のインストゥルメントトラック」の規則（トラックの入力の絞り込みは今のまま）。tests/it/routing.rs で、選択中の 1 本だけが鳴る・選択を移すと前のトラックの録音準備が外れる・PC のキーボードは選択中が鳴る・切のときは録音準備のトラックだけ・オーディオトラックの録音準備は残る・録音準備の残った曲でも選択で 1 本に揃う・「MIDI を演奏」2 回は最後の 1 本だけ、を窓を出さずに確かめる"
 status = "done"
 
 [[item]]
@@ -7518,7 +7518,7 @@ title = "フリーズ中のトラックを録音から外す（録音準備に�
 area = "REC"
 phase = "v1"
 source = "e2e31-report.md § 直し方の案"
-done_when = "SessionHost::record_start は、録音準備のフリーズ中のトラックを録音から外し、「<名前> はフリーズ中のため録音しません」を warnings に入れる（外した結果、録音するトラックが無くなれば conflict で止まる。record.take.add の全部入るか何も入らないかは変えない）。追従（input_follow の follow_selection）は、フリーズ中のインストゥルメントトラックを選んでも録音準備・モニターにせず、ほかのトラックの録音準備を変えない。xirius-session の試験で、フリーズ中のトラックが録音準備でもほかのトラックのテイクが入り警告が出ること・録音準備がフリーズ中のトラックだけなら conflict になることを、tests/routing.rs で追従がフリーズ中のトラックを録音準備にしないことを、窓を出さずに確かめる"
+done_when = "SessionHost::record_start は、録音準備のフリーズ中のトラックを録音から外し、「<名前> はフリーズ中のため録音しません」を warnings に入れる（外した結果、録音するトラックが無くなれば conflict で止まる。record.take.add の全部入るか何も入らないかは変えない）。追従（input_follow の follow_selection）は、フリーズ中のインストゥルメントトラックを選んでも録音準備・モニターにせず、ほかのトラックの録音準備を変えない。xirius-session の試験で、フリーズ中のトラックが録音準備でもほかのトラックのテイクが入り警告が出ること・録音準備がフリーズ中のトラックだけなら conflict になることを、tests/it/routing.rs で追従がフリーズ中のトラックを録音準備にしないことを、窓を出さずに確かめる"
 status = "done"
 
 [[item]]
@@ -8772,7 +8772,7 @@ source = "2026-11-26 の持ち主の承認（試験の監査の §7 の 4・判�
 after = ["ARC-048"]
 done_when = "まず xirius-core の tests/ の統合試験を tests/it/main.rs の mod にまとめ（1 ファイル 1 モジュール、試験の名前は <ファイル>::<試験>）、手元のビルドとリンクの時間・試験の実行ファイルの数と大きさ・main の rust の build と shard の時間を前後で測る。縮むなら、実行ファイルの多いクレートから同じ形に広げる。窓を開く試験・別のプロセスを起こして互いに邪魔する試験・harness = false の試験は分けたまま残し、理由を書く。試験の名前を指す所（scripts/ci_tests.py・scripts/release_ci_gate.py・docs）は名前で直す。試験は減らさない"
 status = "partial"
-remaining = "xirius-core・xirius-session・xirius-engine のほかのクレート"
+remaining = "xirius-core・xirius-session・xirius-engine・xirius-ui のほかのクレート"
 
 [[item]]
 id = "UI-371"

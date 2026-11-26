@@ -81,7 +81,7 @@ let rows = build(entries)?;
 `placement::organize` は試験のとき、組み立てた木ごとに次を検べる（`verify_shape`）。台帳の全対象を、何も足さない状態と全条件行を出した状態の2通りで通す。
 
 - T1 直下が分類1つだけにならない。T2 1行・1件の分類が無い。T3 直下12行以下で分類が無い。T4 分類を作るとき直接の行は1〜4行で表の順。T5 直下12行以内（R4 は除く）。T10 同じ名前の子メニューが同じ階層に2つ無い。T13 直接の行を足したあとに1行の分類が残らない。
-- T7（「戻る」の出し分け）と T11・T12（余白・条件行で形が変わらない）は `context/shape_tests.rs`、T9（入れ替わる行は同じ位置）は `tests/context_layout.rs`、T8（葉が台帳と1対1）は `verify_live_tree`。
+- T7（「戻る」の出し分け）と T11・T12（余白・条件行で形が変わらない）は `context/shape_tests.rs`、T9（入れ替わる行は同じ位置）は `tests/it/context_layout.rs`、T8（葉が台帳と1対1）は `verify_live_tree`。
 
 ## 実際の木の照合
 
