@@ -9,7 +9,7 @@ use xirius_ara::remote_client::RemoteService;
 use xirius_ara::shared_audio::SharedAudio;
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
-mod crash_records;
+use crate::crash_records;
 use crash_records::CrashRecords;
 
 const WAIT: Duration = Duration::from_secs(20);

@@ -7,7 +7,7 @@
 //! Waits are on what happened (the host is down, the state came, the host served every block),
 //! not on a time: a busy machine (a parallel build) makes everything slower. The tests whose
 //! point is keeping up with real time are `#[ignore]`d, as a busy machine cannot keep up; run
-//! them on a quiet machine with `cargo test -p xirius-engine --test sandbox -- --ignored`.
+//! them on a quiet machine with `cargo test -p xirius-engine --test it -- --ignored sandbox::`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,7 +26,7 @@ use xirius_engine::{
 };
 use xirius_vst3::{Module, Plugin, default_vst3_dir};
 
-mod crash_records;
+use crate::crash_records;
 use crash_records::CrashRecords;
 
 const RATE: f64 = 48_000.0;

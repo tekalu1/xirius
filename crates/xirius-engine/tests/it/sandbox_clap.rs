@@ -13,7 +13,7 @@ use xirius_engine::server::{
 };
 use xirius_engine::{AudioEngine, MixSpec, Plan, ProcessSetup, RenderMode, TrackSlot, TrackSpec};
 
-mod crash_records;
+use crate::crash_records;
 use crash_records::CrashRecords;
 
 const RATE: f64 = 48_000.0;

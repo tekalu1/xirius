@@ -19,7 +19,7 @@ use xirius_engine::{
 };
 use xirius_vst3::{Module, Plugin as Vst3Plugin};
 
-mod crash_records;
+use crate::crash_records;
 use crash_records::CrashRecords;
 
 #[derive(Clone, Copy, Debug)]

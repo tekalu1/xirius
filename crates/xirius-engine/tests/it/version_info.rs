@@ -2,7 +2,7 @@
 //! the copyright that Explorer's 「詳細」 and the Task Manager show.
 #![cfg(windows)]
 
-#[path = "../../../packaging/windows/read_version_info.rs"]
+#[path = "../../../../packaging/windows/read_version_info.rs"]
 mod read_version_info;
 
 #[test]

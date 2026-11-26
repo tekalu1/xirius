@@ -51,7 +51,7 @@ tests wait on what happened, not on a time. The tests whose point is keeping up 
 are `#[ignore]`d; run them on a quiet machine:
 
 ```sh
-cargo test -p xirius-engine --test sandbox -- --ignored
+cargo test -p xirius-engine --test it -- --ignored sandbox::
 cargo test -p xirius-session --test it -- --ignored isolation::
 ```
 

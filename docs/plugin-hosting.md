@@ -111,7 +111,7 @@ CLAP のホストは clack（`clack-host`・`clack-extensions` 0.2、MIT OR Apac
 試験:
 
 - `crates/xirius-clap/tests/` は `xirius-test-clap`（自作の CLAP、MIT OR Apache-2.0）で読み込み・パラメーター・状態・音・ノートを確かめる。
-- `crates/xirius-engine/tests/sandbox_clap.rs` は別プロセスのホストで鳴らし、編集の後の状態がホストの再起動で戻ることを確かめる。
+- `crates/xirius-engine/tests/it/sandbox_clap.rs` は別プロセスのホストで鳴らし、編集の後の状態がホストの再起動で戻ることを確かめる。
 - `crates/xirius-plugins/tests/scan_clap.rs` は `.clap` が一覧に入り、キャッシュから読み直せることを確かめる。
 - `crates/xirius-session/tests/it/clap.rs` は曲の CLAP を同じプロセスと別プロセスで鳴らし、編集が曲の状態に入り、その曲を開き直すと同じ音になることを確かめる。
 

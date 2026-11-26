@@ -251,7 +251,7 @@ fn crashes_leave_a_log_and_dump_that_a_later_process_can_find() {
     ] {
         let directory = root.join(kind);
         let child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "crash_child", "--nocapture"])
+            .args(["--exact", "crash_reports::crash_child", "--nocapture"])
             .env("XIRIUS_CRASH_TEST", kind)
             .env("XIRIUS_CRASH_DIR", &directory)
             .stdout(Stdio::null())
@@ -294,7 +294,7 @@ fn crashes_leave_a_log_and_dump_that_a_later_process_can_find() {
 
 fn child(kind: &str, directory: &std::path::Path) -> std::process::Child {
     Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "crash_child", "--nocapture"])
+        .args(["--exact", "crash_reports::crash_child", "--nocapture"])
         .env("XIRIUS_CRASH_TEST", kind)
         .env("XIRIUS_CRASH_DIR", directory)
         .stdout(Stdio::null())
@@ -372,7 +372,7 @@ fn tidying_keeps_every_crash_and_clears_what_runs_without_one_left() {
         .unwrap()
         .as_nanos();
     let mut ended = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "crash_child"])
+        .args(["--exact", "crash_reports::crash_child"])
         .stdout(Stdio::null())
         .spawn()
         .unwrap();
@@ -459,7 +459,7 @@ fn tidying_keeps_only_the_newest_records_with_a_crash_and_lists_those() {
     let mut gone = [0; 2];
     for pid in &mut gone {
         let mut ended = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "crash_child"])
+            .args(["--exact", "crash_reports::crash_child"])
             .stdout(Stdio::null())
             .spawn()
             .unwrap();
