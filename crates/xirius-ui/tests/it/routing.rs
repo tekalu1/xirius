@@ -179,40 +179,53 @@ fn armed(s: &Studio) -> Vec<TrackId> {
         .collect()
 }
 
-/// The MIDI keyboard: selecting B arms it and lets A go; only B sounds.
+/// The MIDI keyboard, A armed and B selected: with the setting on, selecting B arms it and
+/// lets A go, so only B sounds; with it off, the selection touches nothing and the armed A
+/// alone sounds. (The arm moving and being written to the song: `midi_live.rs`
+/// `following_the_selection_leaves_no_step_and_turns_the_arm_back`.)
 #[test]
-fn a_keyboard_note_sounds_on_the_selected_track_only() {
-    let (mut s, a, b) = two_tracks(true);
-    s.select_row(Some(RowKind::Track(b)));
-    assert_eq!(armed(&s), [b], "selecting B armed it and let A go");
-    s.live_midi_input(keyboard_note());
-    s.poll_live_midi();
-    assert_eq!(s.error, None);
-    let p = peaks(&mut s, &[a, b], 4.0);
-    eprintln!(
-        "MIDI keyboard, A was armed, B selected: peak A {:.4}, B {:.4}",
-        p[0], p[1]
-    );
-    assert!(p[1] > 0.01, "the selected track B sounds");
-    assert!(p[0] < 1e-3, "the unselected track A stays silent");
-}
-
-/// Moving the selection moves the arm: A armed, then B chosen lets A go, and the
-/// song file holds the new arm.
-#[test]
-fn the_arm_follows_the_selection_and_is_saved_in_the_song() {
-    let (mut s, a, b) = two_tracks(true);
-    s.select_row(Some(RowKind::Track(a)));
-    s.select_row(Some(RowKind::Track(b)));
-    let p = s.project();
-    assert!(!p.tracks[&a].armed && !p.tracks[&a].monitor, "A let go");
-    assert!(p.tracks[&b].armed && p.tracks[&b].monitor, "B taken over");
-    let saved = serde_json::to_value(&*p.tracks[&b]).unwrap();
-    assert_eq!(
-        saved["armed"],
-        json!(true),
-        "the arm is written to the song"
-    );
+fn a_keyboard_note_sounds_on_the_armed_track_for_each_setting() {
+    let cases = [("setting on", true), ("setting off", false)];
+    let mut failures = Vec::new();
+    for (name, follows) in cases {
+        let (mut s, a, b) = two_tracks_with(true, |song| {
+            if !follows {
+                song.set(
+                    "prefs.set",
+                    json!({"key": "midi.follow-selection", "value": "false"}),
+                )
+                .unwrap();
+            }
+        });
+        s.select_row(Some(RowKind::Track(b)));
+        let (heard, silent) = if follows { (b, a) } else { (a, b) };
+        if armed(&s) != [heard] {
+            failures.push(format!(
+                "{name}: armed {:?}, want only {heard:?}",
+                armed(&s)
+            ));
+        }
+        if s.pc_target() != Some(heard) {
+            failures.push(format!("{name}: the PC keys aim at {:?}", s.pc_target()));
+        }
+        s.live_midi_input(keyboard_note());
+        s.poll_live_midi();
+        if let Some(e) = &s.error {
+            failures.push(format!("{name}: error {e:?}"));
+        }
+        let p = peaks(&mut s, &[heard, silent], 4.0);
+        eprintln!(
+            "MIDI keyboard, {name}: peak heard {:.4}, silent {:.4}",
+            p[0], p[1]
+        );
+        if p[0] <= 0.01 {
+            failures.push(format!("{name}: the armed track is silent ({:.4})", p[0]));
+        }
+        if p[1] >= 1e-3 {
+            failures.push(format!("{name}: the other track sounds ({:.4})", p[1]));
+        }
+    }
+    assert!(failures.is_empty(), "keyboard routing: {failures:#?}");
 }
 
 /// The PC keys play the selected track, not another armed one.
@@ -228,31 +241,6 @@ fn the_pc_keys_play_the_selected_track() {
     assert!(p[1] > 0.01, "the selected B sounds");
     assert!(p[0] < 1e-3, "A stays silent");
     s.pc_key_up("a");
-}
-
-/// The setting off: the selection touches nothing; the armed track alone sounds,
-/// selected or not.
-#[test]
-fn with_the_setting_off_only_the_armed_track_sounds() {
-    let (mut s, a, b) = two_tracks_with(true, |song| {
-        song.set(
-            "prefs.set",
-            json!({"key": "midi.follow-selection", "value": "false"}),
-        )
-        .unwrap();
-    });
-    s.select_row(Some(RowKind::Track(b)));
-    assert_eq!(armed(&s), [a], "selecting B changed nothing");
-    assert_eq!(s.pc_target(), Some(a), "the PC keys aim at the armed one");
-    s.live_midi_input(keyboard_note());
-    s.poll_live_midi();
-    let p = peaks(&mut s, &[a, b], 4.0);
-    eprintln!(
-        "MIDI keyboard, setting off: peak A {:.4}, B {:.4}",
-        p[0], p[1]
-    );
-    assert!(p[0] > 0.01, "the armed A sounds");
-    assert!(p[1] < 1e-3, "the selected B stays silent");
 }
 
 /// An audio track's arm is not the instrument input's business: it stays.

@@ -660,6 +660,11 @@ mod tests {
         let p = s.project();
         assert!(!p.tracks[&a].armed && !p.tracks[&a].monitor);
         assert!(p.tracks[&b].armed && p.tracks[&b].monitor);
+        assert_eq!(
+            serde_json::to_value(&*p.tracks[&b]).unwrap()["armed"],
+            serde_json::json!(true),
+            "the arm is written to the song"
+        );
         assert_eq!(s.song.steps(), steps, "no history step");
     }
 

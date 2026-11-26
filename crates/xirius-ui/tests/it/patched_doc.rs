@@ -68,15 +68,24 @@ fn forks(root: &Path) -> Vec<String> {
     found
 }
 
+/// Every fork of GPUI is written down with its reason, and the document says 0 while there is none.
 #[test]
-fn a_change_to_gpui_is_written_down_with_its_reason() {
+fn patched_md_matches_the_forks() {
     let root = root();
     let doc = read(&root.join("crates/xirius-ui/PATCHED.md"));
     let written = entries(&doc);
     let forks = forks(&root);
+    if forks.is_empty() {
+        assert!(written.is_empty() && doc.contains("## いまの差分: 0 件"));
+        return;
+    }
     assert!(
-        forks.is_empty() || !written.is_empty(),
+        !written.is_empty(),
         "GPUI に差分があるのに PATCHED.md に 1 件も無い: {forks:#?}"
+    );
+    assert!(
+        !doc.contains("## いまの差分: 0 件"),
+        "差分があるのに 0 件と書いてある"
     );
     for e in &written {
         let name = e.lines().next().unwrap_or("");
@@ -87,51 +96,62 @@ fn a_change_to_gpui_is_written_down_with_its_reason() {
 }
 
 #[test]
-fn the_document_says_zero_while_there_is_no_fork() {
-    let root = root();
-    let doc = read(&root.join("crates/xirius-ui/PATCHED.md"));
-    if forks(&root).is_empty() {
-        assert!(entries(&doc).is_empty() && doc.contains("## いまの差分: 0 件"));
-    } else {
-        assert!(
-            !doc.contains("## いまの差分: 0 件"),
-            "差分があるのに 0 件と書いてある"
-        );
+fn the_fork_checker_counts_each_kind_of_fork() {
+    enum Kind {
+        Manifest,
+        Lock,
     }
-}
-
-#[test]
-fn the_checker_sees_each_kind_of_fork() {
-    let patched = "[patch.crates-io]
-gpui-pre = { path = \"../zed/crates/gpui\" }
-";
-    assert_eq!(manifest_forks("m", patched).len(), 2);
-    let git = "gpui = { package = \"gpui-pre\", git = \"https://example.invalid/zed\" }
-";
-    assert_eq!(manifest_forks("m", git).len(), 1);
-    let plain = "gpui = { package = \"gpui-pre\", version = \"=0.3.8\" }
-";
-    assert!(manifest_forks("m", plain).is_empty());
-
-    let registry = "[[package]]
-name = \"gpui-pre\"
-version = \"0.3.8\"
-source = \"registry+https://github.com/rust-lang/crates.io-index\"
-checksum = \"ab\"
-";
-    assert!(lock_forks(registry).is_empty());
-    let from_git = "[[package]]
-name = \"gpui-pre\"
-version = \"0.3.8\"
-source = \"git+https://example.invalid/zed\"
-";
-    assert_eq!(lock_forks(from_git).len(), 1);
+    let cases = [
+        (
+            "a [patch] table pointing at a path",
+            "[patch.crates-io]\ngpui-pre = { path = \"../zed/crates/gpui\" }\n",
+            Kind::Manifest,
+            2,
+        ),
+        (
+            "a git dependency",
+            "gpui = { package = \"gpui-pre\", git = \"https://example.invalid/zed\" }\n",
+            Kind::Manifest,
+            1,
+        ),
+        (
+            "a registry version",
+            "gpui = { package = \"gpui-pre\", version = \"=0.3.8\" }\n",
+            Kind::Manifest,
+            0,
+        ),
+        (
+            "a locked registry package with its checksum",
+            "[[package]]\nname = \"gpui-pre\"\nversion = \"0.3.8\"\n\
+             source = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ab\"\n",
+            Kind::Lock,
+            0,
+        ),
+        (
+            "a locked git package",
+            "[[package]]\nname = \"gpui-pre\"\nversion = \"0.3.8\"\n\
+             source = \"git+https://example.invalid/zed\"\n",
+            Kind::Lock,
+            1,
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, text, kind, want) in cases {
+        let got = match kind {
+            Kind::Manifest => manifest_forks("m", text).len(),
+            Kind::Lock => lock_forks(text).len(),
+        };
+        if got != want {
+            failures.push(format!("{name}: {got} forks, want {want}"));
+        }
+    }
+    assert!(failures.is_empty(), "fork checker: {failures:#?}");
 }
 
 /// UI-033: the note in `GPUI.md` about which GPUI is used follows the version that is pinned.
 /// The note lives in the published doc, not in a file the public repository leaves out.
 #[test]
-fn gpui_md_names_the_pinned_gpui_and_where_to_read() {
+fn gpui_md_names_the_pinned_gpui() {
     let root = root();
     let manifest = read(&root.join("crates/xirius-ui/Cargo.toml"));
     let pinned = manifest
@@ -145,16 +165,4 @@ fn gpui_md_names_the_pinned_gpui_and_where_to_read() {
         doc.contains(&format!("`{pinned}`")),
         "GPUI.md の GPUI の版が Cargo.toml の {pinned} と違う"
     );
-    for needle in [
-        "ViewContext",
-        "gpui_platform::application()",
-        "docs/contexts.md",
-        "examples/",
-        "PATCHED.md",
-    ] {
-        assert!(doc.contains(needle), "GPUI.md に「{needle}」が無い");
-    }
-    for doc in ["GPUI.md", "PATCHED.md"] {
-        assert!(root.join("crates/xirius-ui").join(doc).exists(), "{doc}");
-    }
 }

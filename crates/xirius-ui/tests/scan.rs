@@ -481,24 +481,70 @@ fn bad_row(s: &Studio, g: &xirius_ui::studio::Geometry) -> Option<usize> {
         .position(|p| matches!(p.row, BRow::Bad { .. }))
 }
 
+/// One scan from the settings page's 再スキャン: the page and the browser both list the three
+/// bundles that could not be used, and each of them tries one bundle again.
 #[test]
-fn the_browser_lists_what_could_not_be_used_and_tries_one_again() {
+fn the_settings_page_and_the_browser_list_the_failures_and_retry_one() {
+    use xirius_ui::settings::{Do, Section};
     let root_tmp = temp_dir("bad-group");
     let root = root_tmp.path().to_path_buf();
     let plugins = root.join("VST3");
-    let (n, _) = bundles(&plugins);
+    let (_, _) = bundles(&plugins);
     let cache = root.join("plugins.json");
     let mut s = Studio::new(Song::sample_with(quick_options(&plugins, &cache)));
     s.browser.press_rail(RailTab::Effects);
     let g = s.geometry(1600.0, 1000.0);
+    s.open_settings(Section::Plugins);
+    let at = xirius_ui::studio::Rect::new(0.0, 0.0, 0.0, 0.0);
 
-    // While the first scan runs the group is not there (the list is being made).
-    s.start_plugin_scan().unwrap();
+    // Nothing scanned yet: the page lists nothing (and none of the old mock's plugins).
+    let scene = s.settings_scene(&g);
+    assert!(scene.has_text("なし"));
+    assert!(!scene.has_text("Parametric EQ"));
+
+    // 再スキャン runs `plugin.rescan` and the page shows the scan while it runs; the
+    // browser's group is not there yet (the list is being made).
+    assert!(scene.find(&Do::Rescan).is_some());
+    s.settings_do(&g, Do::Rescan, at);
+    assert!(s.mixer.scan.running());
     assert!(s.browser.scanning);
     assert!(bad_row(&s, &g).is_none());
+    assert!(s.settings_scene(&g).has_text("スキャン中") || s.settings_scene(&g).has_text("検索中"));
+    assert!(s.settings_scene(&g).find(&Do::StopScan).is_some());
     frames_until_done(&mut s);
 
-    // Three bundles failed: the group is at the end, with a reason for each.
+    // The bundles that could not be opened are on the page, each with its reason.
+    let scene = s.settings_scene(&g);
+    for name in ["Crashes On Load", "Hangs On Load", "Not A Dll"] {
+        assert!(scene.has_text(name), "{name} is on the page");
+    }
+    for why in [
+        "応答がありません",
+        "スキャン中に終了しました",
+        "読み込めませんでした",
+    ] {
+        assert!(
+            scene.has_text(why),
+            "{why} is on the page: {:?}",
+            s.mixer.catalog.as_ref().map(|c| &c.failures)
+        );
+    }
+    assert!(scene.has_text("読み込めない（3）"));
+    assert!(scene.find(&Do::Rescan).is_some(), "the scan is over");
+    assert!(scene.find(&Do::StopScan).is_none());
+
+    // One row's button on the page opens that bundle again and only that one.
+    let path = s.browser.bad[0].path.clone();
+    s.settings_do(&g, Do::Retry(path.clone()), at);
+    assert!(s.mixer.scan.running());
+    assert_eq!(s.browser.retrying.as_ref(), Some(&path));
+    frames_until_done(&mut s);
+    assert_eq!(s.browser.retrying, None);
+    assert_eq!(s.mixer.scan.error, None);
+    assert_eq!(s.browser.bad.len(), 3);
+    assert!(s.close_settings());
+
+    // Three bundles failed: the browser's group is at the end, with a reason for each.
     assert_eq!(
         s.browser.bad.len(),
         3,
@@ -515,7 +561,6 @@ fn the_browser_lists_what_could_not_be_used_and_tries_one_again() {
     assert!(whys.contains(&"応答がありません"), "{whys:?}");
     assert!(whys.contains(&"スキャン中に終了しました"), "{whys:?}");
     assert!(whys.contains(&"読み込めませんでした"), "{whys:?}");
-    let _ = n;
 
     // A search leaves it out; clearing the search brings it back.
     s.browser.search.set("kHs".to_string());
@@ -592,63 +637,5 @@ fn the_browser_row_stops_a_scan_too() {
         std::thread::sleep(Duration::from_millis(16));
     }
     assert_eq!(s.mixer.scan.error, None);
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-#[test]
-fn the_settings_plugin_page_scans_again_lists_the_result_and_tries_one_bundle_again() {
-    use xirius_ui::settings::{Do, Section};
-    let root_tmp = temp_dir("settings-page");
-    let root = root_tmp.path().to_path_buf();
-    let plugins = root.join("VST3");
-    let (_, _) = bundles(&plugins);
-    let cache = root.join("plugins.json");
-    let mut s = Studio::new(Song::sample_with(quick_options(&plugins, &cache)));
-    let g = s.geometry(1600.0, 1000.0);
-    s.open_settings(Section::Plugins);
-    let at = xirius_ui::studio::Rect::new(0.0, 0.0, 0.0, 0.0);
-
-    // Nothing scanned yet: the page lists nothing (and none of the old mock's plugins).
-    let scene = s.settings_scene(&g);
-    assert!(scene.has_text("なし"));
-    assert!(!scene.has_text("Parametric EQ"));
-
-    // 再スキャン runs `plugin.rescan` and the page shows the scan while it runs.
-    assert!(scene.find(&Do::Rescan).is_some());
-    s.settings_do(&g, Do::Rescan, at);
-    assert!(s.mixer.scan.running());
-    assert!(s.settings_scene(&g).has_text("スキャン中") || s.settings_scene(&g).has_text("検索中"));
-    assert!(s.settings_scene(&g).find(&Do::StopScan).is_some());
-    frames_until_done(&mut s);
-
-    // The bundles that could not be opened are on the page, each with its reason.
-    let scene = s.settings_scene(&g);
-    for name in ["Crashes On Load", "Hangs On Load", "Not A Dll"] {
-        assert!(scene.has_text(name), "{name} is on the page");
-    }
-    for why in [
-        "応答がありません",
-        "スキャン中に終了しました",
-        "読み込めませんでした",
-    ] {
-        assert!(
-            scene.has_text(why),
-            "{why} is on the page: {:?}",
-            s.mixer.catalog.as_ref().map(|c| &c.failures)
-        );
-    }
-    assert!(scene.has_text("読み込めない（3）"));
-    assert!(scene.find(&Do::Rescan).is_some(), "the scan is over");
-    assert!(scene.find(&Do::StopScan).is_none());
-
-    // One row's button opens that bundle again and only that one.
-    let path = s.browser.bad[0].path.clone();
-    s.settings_do(&g, Do::Retry(path.clone()), at);
-    assert!(s.mixer.scan.running());
-    assert_eq!(s.browser.retrying.as_ref(), Some(&path));
-    frames_until_done(&mut s);
-    assert_eq!(s.browser.retrying, None);
-    assert_eq!(s.mixer.scan.error, None);
-    assert_eq!(s.browser.bad.len(), 3);
     let _ = std::fs::remove_dir_all(&root);
 }
