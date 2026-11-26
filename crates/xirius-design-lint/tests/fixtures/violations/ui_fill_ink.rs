@@ -40,3 +40,9 @@ fn mark(pen: &mut Pen, c: &Colors, r: Rect) {
     pen.round(r, c.fill, Radius::S);
     pen.svg(path, r, c.ink); //~ fill-ink
 }
+
+// 入った札の文字の色（ink_on_toggle）も、塗りの面の対ではない。
+fn toggle_ink_on_fill(pen: &mut Pen, c: &Colors, r: Rect) {
+    pen.round(r, c.fill_hover, Radius::S);
+    pen.text("T", size, weight, c.ink_on_toggle, r, align); //~ fill-ink
+}

@@ -33,6 +33,12 @@ fn mute(pen: &mut Pen, c: &Colors, r: Rect) {
     pen.text("M", size, weight, ink, r, align);
 }
 
+fn solo(pen: &mut Pen, c: &Colors, r: Rect) {
+    let (face, ink) = c.solo_on;
+    pen.round(r, face, Radius::S);
+    pen.text("S", size, weight, ink, r, align);
+}
+
 // 塗りの輪の内側に地の面を置けば、その上の文字は地の色。
 fn field(pen: &mut Pen, c: &Colors, r: Rect) {
     pen.round(r, c.fill, Radius::S);

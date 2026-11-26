@@ -21,7 +21,9 @@ use xirius_design::{Color, Surface, Theme};
 
 const MIN_STEP_DELTA_L: f64 = 1.25;
 
-const NEUTRAL: [Surface; 9] = [
+// 選んだトラックの面（UI-340）は、いまは ClipSel と同じ値で 1 段に数えられる。
+// 値を分けたら、そのまま段の差が測られる。
+const NEUTRAL: [Surface; 10] = [
     Surface::Paper,
     Surface::S0,
     Surface::S1,
@@ -31,6 +33,7 @@ const NEUTRAL: [Surface; 9] = [
     Surface::Sel,
     Surface::Clip,
     Surface::ClipSel,
+    Surface::TrackSel,
 ];
 
 /// CIE L*（0〜100）。
@@ -77,19 +80,6 @@ fn adjacent_surface_steps_are_far_enough_apart_to_tell_in_both_themes() {
         println!(
             "{theme:?}: 隣り合う面の段の差 最小 ΔL* = {worst:.2}（{} 段）",
             steps.len()
-        );
-    }
-}
-
-#[test]
-fn the_selected_track_face_is_the_selected_clip_face_for_now() {
-    // 選んだトラックの面（UI-340）は、いまは選んだクリップの面と同じ値で、段は増えない。
-    // 値を分けるときは、上の NEUTRAL に Surface::TrackSel を足して段の差を測る。
-    for theme in Theme::ALL {
-        assert_eq!(
-            Surface::TrackSel.color(theme),
-            Surface::ClipSel.color(theme),
-            "{theme:?}"
         );
     }
 }

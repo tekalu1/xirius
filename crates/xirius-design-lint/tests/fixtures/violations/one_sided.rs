@@ -28,4 +28,10 @@ fn one_sided() {
         blur_radius: px(0.0),
         spread_radius: px(0.0),
     };
+    let side_shadow = BoxShadow { //~ one-sided-edge
+        color: c,
+        offset: point(px(2.0), px(0.0)),
+        blur_radius: px(0.0),
+        spread_radius: px(0.0),
+    };
 }

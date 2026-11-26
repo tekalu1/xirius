@@ -1,4 +1,5 @@
-//! 見本では書きにくい挙動: 出力の形・設定・ワークスペースの走査・面の上辺の光。
+//! 見本では書きにくい挙動: 出力の形・設定・ワークスペースの走査・例外の印の効き方。
+//! 規則ごとの合否（面の上辺の光・細い線・テストの中を見ないことなど）は fixtures の見本が持つ。
 
 use std::fs;
 
@@ -28,14 +29,6 @@ fn unreadable_source_is_a_parse_error() {
 }
 
 #[test]
-fn a_reasonless_allow_does_not_suppress() {
-    let src = "// design-lint: allow(border)\nfn f() { div().border_1(); }\n";
-    let got = rules(src);
-    assert!(got.contains(&Rule::Border));
-    assert!(got.contains(&Rule::AllowWithoutReason));
-}
-
-#[test]
 fn an_allow_for_another_rule_does_not_suppress() {
     let src = "// design-lint: allow(raw-color) 色の例外\nfn f() { div().border_1(); }\n";
     let got = rules(src);
@@ -47,54 +40,6 @@ fn an_allow_for_another_rule_does_not_suppress() {
 fn meta_rules_cannot_be_allowed() {
     let src = "// design-lint: allow(unused-allow) 試し\nfn f() {}\n";
     assert_eq!(rules(src), vec![Rule::UnknownRule]);
-}
-
-#[test]
-fn test_code_is_skipped() {
-    let src = "#[cfg(test)]\nmod t { fn f() { rgb(0x1); } }\n#[test]\nfn g() { rgb(0x2); }\n";
-    assert!(rules(src).is_empty());
-    let src = "#[cfg(not(test))]\nfn f() { rgb(0x1); }\n";
-    assert_eq!(rules(src), vec![Rule::RawColor]);
-}
-
-// UI-007: 面の上辺の光は無い。中立の色でも、片側だけの光・影・縁は違反。
-#[test]
-fn a_one_sided_light_is_a_violation_even_when_neutral() {
-    let light = "fn f() { div().absolute().top_0().h(px(1.0)).bg(Surface::S3.color(t)); }";
-    assert_eq!(rules(light), vec![Rule::OneSidedEdge]);
-
-    let coloured = "fn f() { div().absolute().top_0().h(px(1.0)).bg(Ink::Blue.color(t)); }";
-    assert_eq!(rules(coloured), vec![Rule::OneSidedEdge, Rule::ColorFamily]);
-
-    // 線で作った光は、線なので違反。
-    let by_border =
-        "fn f() { div().rounded(Radius::M.px()).border_t_1().border_color(Surface::S3.color(t)); }";
-    assert_eq!(
-        rules(by_border),
-        vec![Rule::Border, Rule::Border, Rule::OneSidedEdge]
-    );
-}
-
-#[test]
-fn a_one_sided_box_shadow_is_a_violation_but_a_soft_outer_shadow_is_not() {
-    let top = "fn f() { let s = BoxShadow { color: c, offset: point(px(0.), px(-1.)), blur_radius: px(0.), spread_radius: px(0.) }; }";
-    assert_eq!(rules(top), vec![Rule::OneSidedEdge]);
-    let side = "fn f() { let s = BoxShadow { color: c, offset: point(px(2.), px(0.)), blur_radius: px(0.), spread_radius: px(0.) }; }";
-    assert_eq!(rules(side), vec![Rule::OneSidedEdge]);
-
-    // 浮く面の影: ずらしてぼかした全周の外側の影。
-    let float = "fn f() { let s = BoxShadow { color: c, offset: point(px(0.), px(12.)), blur_radius: px(32.), spread_radius: px(0.) }; }";
-    assert!(rules(float).is_empty());
-    // ずらしが無い（四辺に同じ）影も通す。
-    let even = "fn f() { let s = BoxShadow { color: c, offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: px(1.) }; }";
-    assert!(rules(even).is_empty());
-}
-
-#[test]
-fn rounded_without_a_side_color_is_fine() {
-    assert!(
-        rules("fn f() { div().rounded(Radius::M.px()).bg(Surface::Panel.color(t)); }").is_empty()
-    );
 }
 
 /// A folder of the test's own, removed when dropped (also when the test fails).
@@ -175,22 +120,6 @@ fn config_needs_a_reason_and_rejects_unknown_keys() {
 fn a_missing_config_file_means_defaults() {
     let c = Config::load(std::path::Path::new("definitely/not/here.toml")).unwrap();
     assert!(c.exempt.is_empty());
-}
-
-#[test]
-fn only_structure_line_may_be_a_thin_bar() {
-    // 固定値の細い棒は線。
-    let literal = "fn f() { let a = div().w(px(2.0)).h_full().bg(c); }";
-    assert_eq!(rules(literal), vec![Rule::Line]);
-    // 太さを StructureLine から取れば通る。
-    let api = "fn f() { let a = div().w(px(StructureLine::THICKNESS)).h_full().bg(c); }";
-    assert!(rules(api).is_empty());
-    // 長さに数が混ざっていても、StructureLine を通した引数は数えない。
-    let inset = "fn f() { let a = div().w(px(StructureLine::THICKNESS)).h(px(h - StructureLine::END_INSET * 2.0)).bg(c); }";
-    assert!(rules(inset).is_empty());
-    // 太い面・色の無い物は線ではない。
-    assert!(rules("fn f() { let a = div().w(px(8.0)).h(px(2.0)); }").is_empty());
-    assert!(rules("fn f() { let a = div().w(px(24.0)).h(px(24.0)).bg(c); }").is_empty());
 }
 
 #[test]

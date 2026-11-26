@@ -20,6 +20,17 @@ fn view(theme: Theme) {
         blur_radius: px(32.0),
         spread_radius: px(0.0),
     };
+    // ずらしの無い（四辺に同じ）影も、片側だけの影ではない。
+    let even = BoxShadow {
+        color: shadow_color,
+        offset: point(px(0.0), px(0.0)),
+        blur_radius: px(0.0),
+        spread_radius: px(1.0),
+    };
+
+    // 太い面と、色の無い細い物は、線ではない。
+    let swatch = div().w(px(24.0)).h(px(24.0)).bg(Surface::S1.color(theme));
+    let spacer = div().w(px(8.0)).h(px(2.0));
 
     // 端に貼り付くが、色は付けない物・全面を覆う物は、1 辺の色ではない。
     let overlay = div().absolute().inset_0().bg(Surface::Veil.color(theme));

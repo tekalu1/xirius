@@ -317,10 +317,16 @@ impl StructureLine {
 mod tests {
     use super::*;
 
-    #[test]
-    fn caps_are_fully_round() {
+    // Checked when the tests compile: the caps are fully round, the ends stop short of the
+    // edges (the tight inset still clears the line), and an elbow is wider than the line.
+    const _: () = {
         assert!(StructureLine::CAP.px() >= StructureLine::THICKNESS / 2.0);
-    }
+        assert!(StructureLine::inset(false) == StructureLine::END_INSET);
+        assert!(StructureLine::inset(true) == StructureLine::TIGHT_INSET);
+        assert!(StructureLine::TIGHT_INSET < StructureLine::END_INSET);
+        assert!(StructureLine::TIGHT_INSET >= StructureLine::THICKNESS);
+        assert!(StructureLine::RADIUS.px() > StructureLine::THICKNESS);
+    };
 
     #[test]
     fn gutter_lines_never_touch_row_content() {
@@ -448,17 +454,6 @@ mod tests {
             );
             let shifted = switch.translated(5.0, -3.0);
             assert_eq!(shifted.tip(), (tip.0 + 5.0, tip.1 - 3.0));
-        }
-    }
-
-    #[test]
-    fn ends_stop_short_of_the_edges() {
-        assert_eq!(StructureLine::inset(false), StructureLine::END_INSET);
-        assert_eq!(StructureLine::inset(true), StructureLine::TIGHT_INSET);
-        const {
-            assert!(StructureLine::TIGHT_INSET < StructureLine::END_INSET);
-            assert!(StructureLine::TIGHT_INSET >= StructureLine::THICKNESS);
-            assert!(StructureLine::RADIUS.px() > StructureLine::THICKNESS);
         }
     }
 }
