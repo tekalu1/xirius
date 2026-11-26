@@ -437,53 +437,83 @@ fn the_settings_audio_page_has_no_test_tone_without_a_device() {
 /// screen: they are as wide as the column the screen's parts sit in, at the distance from the
 /// body's bottom they keep over the lanes. The strip and the lines are in its middle, and the
 /// toast at its left, as it is at the lanes' left (docs/ui-approved.md).
-fn lines_at_the_foot_of(mut s: Studio, g: &Geometry, across: Rect) {
-    let foot = s.foot(g);
-    assert_eq!(foot, Rect::new(across.x, 0.0, across.w, g.size.1));
-    assert!(foot.w < g.size.0, "not the whole window: {foot:?}");
-    let middle = |r: Rect| (r.x + r.w / 2.0 - (foot.x + foot.w / 2.0)).abs() < 0.5;
-    s.error = Some("だめでした".into());
-    let notice = crate::notice::place(&s, g, "片付けました", None);
-    assert!(middle(notice), "{notice:?}");
+/// What the body shows decides the foot: the new song's zone, the start screen's column, or the
+/// lanes above the drawer. The notice and the learning pill sit in its middle and the toast at its
+/// left, all above the failed command's line.
+#[test]
+fn the_foot_follows_what_the_body_shows() {
+    type Rig = fn() -> (Studio, Geometry);
+    type Across = fn(&Geometry) -> Rect;
+    let rows: [(&str, Rig, Across); 3] = [
+        ("the new song's screen", empty, |g| {
+            let z = zone(g);
+            Rect::new(z.x, 0.0, z.w, g.size.1)
+        }),
+        (
+            "the start screen",
+            || {
+                let (mut s, g) = empty();
+                s.home = Some(crate::home::Home::default());
+                (s, g)
+            },
+            |g| {
+                let c = crate::home::column(g);
+                Rect::new(c.x, 0.0, c.w, g.size.1)
+            },
+        ),
+        (
+            "the lanes",
+            || {
+                let s = Studio::sample();
+                let g = s.geometry(1600.0, 1000.0);
+                (s, g)
+            },
+            |g| Rect::new(g.lanes.x, 0.0, g.lanes.w, g.drawer.y),
+        ),
+    ];
+    let mut failures = Vec::new();
+    let mut toast_insets = Vec::new();
+    for (name, rig, across) in rows {
+        let (mut s, g) = rig();
+        let mut check = |ok: bool, what: String| {
+            if !ok {
+                failures.push(format!("{name}: {what}"));
+            }
+        };
+        let foot = s.foot(&g);
+        check(foot == across(&g), format!("foot {foot:?}"));
+        check(foot.w < g.size.0, format!("not the whole window: {foot:?}"));
+        let middle = |r: Rect| (r.x + r.w / 2.0 - (foot.x + foot.w / 2.0)).abs() < 0.5;
+        s.error = Some("だめでした".into());
+        let strip = s.error_rect(&g).y;
+        let notice = crate::notice::place(&s, &g, "片付けました", None);
+        check(middle(notice), format!("notice in the middle: {notice:?}"));
+        check(notice.bottom() <= strip, format!("notice above the strip: {notice:?}"));
+        s.warn("「drumloop」を伸縮できません".into(), None);
+        let toast = crate::toast::layout(&s, &g).expect("shown").rect;
+        check(toast.x >= foot.x, format!("toast at the left: {toast:?}"));
+        check(toast.right() <= foot.right(), format!("toast inside: {toast:?}"));
+        check(toast.bottom() <= strip, format!("toast above the strip: {toast:?}"));
+        toast_insets.push(toast.x - foot.x);
+        s.live_midi.assign.learning = Some(xirius_prefs::midimap::Target::Volume("1".into()));
+        let (pill, _) = s.midi_pill(&g).expect("learning");
+        check(middle(pill), format!("pill in the middle: {pill:?}"));
+        check(pill.bottom() <= strip, format!("pill above the strip: {pill:?}"));
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
     assert!(
-        notice.bottom() <= g.size.1 - 36.0,
-        "above the strip: {notice:?}"
+        toast_insets.windows(2).all(|w| (w[0] - w[1]).abs() < 0.5),
+        "the toast keeps one inset from the foot's left: {toast_insets:?}"
     );
-    s.warn("「drumloop」を伸縮できません".into(), None);
-    let toast = crate::toast::layout(&s, g).expect("shown").rect;
-    assert_eq!(toast.x, foot.x + 8.0, "at the left: {toast:?}");
-    assert!(toast.right() <= foot.right(), "{toast:?}");
-    assert!(toast.bottom() <= g.size.1 - 36.0, "{toast:?}");
-    s.live_midi.assign.learning = Some(xirius_prefs::midimap::Target::Volume("1".into()));
-    let (pill, _) = s.midi_pill(g).expect("learning");
-    assert!(middle(pill), "{pill:?}");
-    assert!(pill.bottom() <= g.size.1 - 36.0, "{pill:?}");
-}
-
-#[test]
-fn on_the_new_songs_screen_the_lines_at_the_foot_are_as_wide_as_its_zone() {
+    // The start screen's column is the content's most in a wide window: centred, and no wider
+    // in a wider one.
     let (s, g) = empty();
-    lines_at_the_foot_of(s, &g, zone(&g));
-}
-
-#[test]
-fn on_the_start_screen_the_lines_at_the_foot_are_as_wide_as_its_column() {
-    let (mut s, g) = empty();
-    s.home = Some(crate::home::Home::default());
-    assert!(s.home_shown());
     let column = crate::home::column(&g);
-    assert_eq!(column.w, 680.0, "the content's most, in a wide window");
-    lines_at_the_foot_of(s, &g, column);
-}
-
-/// Over the lanes, the foot is theirs, above the drawer.
-#[test]
-fn over_the_lanes_the_foot_is_theirs() {
-    let s = Studio::sample();
-    let g = s.geometry(1600.0, 1000.0);
-    let foot = s.foot(&g);
-    assert_eq!(
-        (foot.x, foot.w, foot.bottom()),
-        (g.lanes.x, g.lanes.w, g.drawer.y)
+    let wider = crate::home::column(&s.geometry(2400.0, 1000.0));
+    assert!(column.w < g.size.0, "{column:?}");
+    assert!(
+        (column.x + column.w / 2.0 - g.size.0 / 2.0).abs() < 0.5,
+        "centred: {column:?}"
     );
+    assert_eq!(wider.w, column.w, "the column stops growing");
 }

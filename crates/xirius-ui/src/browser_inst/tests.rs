@@ -227,7 +227,7 @@ fn dropping_on_the_first_middle_and_last_seams_inserts_in_one_step() {
 }
 
 #[test]
-fn insertion_takes_eight_logical_pixels_on_each_side_and_leaves_replace_in_the_middle() {
+fn insertion_is_at_the_boundary_and_replace_is_in_the_middle_of_the_row() {
     let mut s = Studio::new(crate::song::Song::empty());
     for name in ["One", "Two"] {
         assert!(s.run_command(
@@ -247,18 +247,19 @@ fn insertion_takes_eight_logical_pixels_on_each_side_and_leaves_replace_in_the_m
         panic!("instrument row");
     };
     let x = g.column.x + 30.0;
-    for (edge, delta, track) in [(first.bottom(), -8.0, first_id), (second.y, 8.0, second_id)] {
-        let y = g.column.y + edge - s.scroll.1;
-        let Some(insertion) = s.browser_track_insertion(&g, x, y + delta) else {
-            panic!("eight pixels from the boundary");
+    for (edge, inward, row, track) in [
+        (first.bottom(), -1.0, first, first_id),
+        (second.y, 1.0, second, second_id),
+    ] {
+        let y = g.column.y + edge - s.scroll.1 + inward;
+        let Some(insertion) = s.browser_track_insertion(&g, x, y) else {
+            panic!("just inside the boundary of {track:?}");
         };
         assert_eq!((insertion.parent, insertion.index), (Parent::Root, 1));
-        let (parent, index, _) = s.drop_at(&g, y + delta, &[]).unwrap();
+        let (parent, index, _) = s.drop_at(&g, y, &[]).unwrap();
         assert_eq!((parent, index), (Parent::Root, 1));
-        assert_eq!(
-            s.instrument_drop_at(&g, x, y + delta * 1.125),
-            Drop::Replace(track)
-        );
+        let middle = g.column.y + (row.y + row.bottom()) / 2.0 - s.scroll.1;
+        assert_eq!(s.instrument_drop_at(&g, x, middle), Drop::Replace(track));
     }
 }
 

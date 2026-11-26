@@ -825,12 +825,16 @@ fn many_tabs_share_the_width_and_stay_inside_the_panel() {
     }
     let l = layout(&b);
     assert_eq!(l.tabs.len(), 7);
-    let panel_right = 52.0 + Layout::BROWSER_W;
     let add = l.add.expect("the plus is there");
-    assert!(add.x + add.w <= panel_right + 0.5);
+    assert!(add.right() <= l.panel.right() + 0.5, "{add:?}");
     for r in &l.tabs {
-        assert!(r.x + r.w <= add.x + 0.5, "{r:?} {add:?}");
+        assert!(r.x >= l.panel.x && r.right() <= add.x + 0.5, "{r:?} {add:?}");
     }
+    assert!(
+        l.tabs.windows(2).all(|w| w[0].right() <= w[1].x + 0.5),
+        "the tabs share the width without overlapping: {:?}",
+        l.tabs
+    );
 }
 
 #[test]

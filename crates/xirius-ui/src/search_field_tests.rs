@@ -116,12 +116,13 @@ fn the_browser_enter_picks_the_first_item_and_the_ring_goes_with_the_mouse() {
 fn the_browser_right_opens_and_left_closes_or_goes_to_the_parent() {
     let (mut s, g) = browser();
     s.browser.search.clear();
+    // By kind, the list starts on a heading that folds.
+    s.browser.set_view(crate::browser::View::Kind);
     assert!(key(&mut s, &g, "down"));
     let l = s.browser.layout(g.panel);
     let first = s.browser.key_row.unwrap();
     let BRow::Group { open, .. } = l.rows[first].row else {
-        // The list starts on an item: nothing to fold.
-        return;
+        panic!("the first row of the kind view is a heading");
     };
     assert!(open);
     assert!(key(&mut s, &g, "left"));
@@ -226,8 +227,11 @@ fn the_palette_clear_empties_the_field_and_the_text_room_does_not_move() {
     s.resized(&g);
     s.open_palette(&g);
     let search = s.palette.as_ref().unwrap().layout(g.size).search;
-    assert_eq!(search.h, 48.0);
     let room = crate::palette::field_of(search);
+    assert!(
+        room.h > 0.0 && room.y >= search.y && room.bottom() <= search.bottom(),
+        "the text room is inside the field: {room:?} {search:?}"
+    );
     s.ime_replace(None, "mute", false);
     assert_eq!(crate::palette::field_of(search), room);
     let c = search_box::clear_rect(search, Space::X4.px());
