@@ -84,7 +84,7 @@ VST3 SDK は 3.8.0 から MIT。3.7.x 以前（GPLv3 か Steinberg の個別契�
 - `third_party/vst3sdk` に submodule として固定する。版は `v3.8.0_build_66`（`9fad9770f2ae8542ab1a548a68c1ad1ac690abe0`）。中身はリポジトリに入れず、gitlink だけを持つ。
 - ビルドは submodule を読まない。ホストは `vst3` crate 0.3（MIT OR Apache-2.0）のバインディングを使い、これは SDK 3.8.0 の pluginterfaces から生成されている（`vst3::Steinberg::Vst::SDKVersionString` は `VST 3.8.0`）。
 - submodule は、SDK の試験道具（validator・hostchecker）をビルドするときだけ取り出す（下の「試験道具」）。
-- `crates/xirius-vst3/tests/sdk_pin.rs` が次を確かめる。
+- `crates/xirius-vst3/tests/it/sdk_pin.rs` が次を確かめる。
   - バインディングの版が 3.8 以上であること。
   - `third_party/vst3sdk` が mode 160000 で、固定した commit を指していること。
   - SDK のヘッダー（`pluginterfaces/`・`ivstaudioprocessor.h`・`ipluginbase.h`・`vstversion.h`）の写しが追跡されていないこと。
@@ -155,14 +155,14 @@ EXT/build/bin/Release/validator.exe -e EXT/bundles/XiriusTest.vst3   # 拡張の
 
 ### SDK のサンプルプラグイン（host-checker ほか）
 
-`host-checker` はホストの側を採点するプラグイン。`again`・`adelay`・`note-expression-synth` は振る舞いがソースから分かるので、ホストの音の結果を確かめられる。`crates/xirius-vst3/tests/sdk_samples.rs` がこれらを窓も装置も無しで動かす。環境変数が無いときは飛ばす。
+`host-checker` はホストの側を採点するプラグイン。`again`・`adelay`・`note-expression-synth` は振る舞いがソースから分かるので、ホストの音の結果を確かめられる。`crates/xirius-vst3/tests/it/sdk_samples.rs` がこれらを窓も装置も無しで動かす。環境変数が無いときは飛ばす。
 
 ```sh
 cmake -S EXT/vst3sdk -B EXT/build-samples -G "Visual Studio 17 2022" -A x64 \
   -DSMTG_ENABLE_VSTGUI_SUPPORT=ON -DSMTG_ADD_VST3_PLUGINS_SAMPLES=ON \
   -DSMTG_CREATE_PLUGIN_LINK=OFF -DSMTG_ADD_VST3_HOSTING_SAMPLES=OFF -DSMTG_RUN_VST_VALIDATOR=OFF
 cmake --build EXT/build-samples --config Release --target host-checker again adelay note-expression-synth
-XIRIUS_VST3_SDK_SAMPLES=EXT/build-samples/VST3/Release cargo test -p xirius-vst3 --test sdk_samples
+XIRIUS_VST3_SDK_SAMPLES=EXT/build-samples/VST3/Release cargo test -p xirius-vst3 --test it sdk_samples::
 ```
 
 ### clap-validator
