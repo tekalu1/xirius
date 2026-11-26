@@ -269,5 +269,80 @@
     "category": "表示",
     "command": "browser.preset.favourite",
     "dynamic": false
+  },
+  {
+    "id": "audio:live-clip-loop",
+    "key": "audio",
+    "source": "crates/xirius-ui/src/context/clip.rs",
+    "asis": [
+      "クリップをループ"
+    ],
+    "tobe": [
+      "クリップ",
+      "クリップをループ"
+    ],
+    "category": "クリップ",
+    "command": "clip.loop.set",
+    "dynamic": false
+  },
+  {
+    "id": "midi:live-clip-loop",
+    "key": "midi",
+    "source": "crates/xirius-ui/src/context/clip.rs",
+    "asis": [
+      "クリップをループ"
+    ],
+    "tobe": [
+      "クリップ",
+      "クリップをループ"
+    ],
+    "category": "クリップ",
+    "command": "clip.loop.set",
+    "dynamic": false
+  },
+  {
+    "id": "multi-audio:live-clip-loop",
+    "key": "multi-audio",
+    "source": "crates/xirius-ui/src/context/clip.rs",
+    "asis": [
+      "クリップをループ"
+    ],
+    "tobe": [
+      "クリップ",
+      "クリップをループ"
+    ],
+    "category": "クリップ",
+    "command": "clip.loop.set",
+    "dynamic": false
+  },
+  {
+    "id": "multi-midi:live-clip-loop",
+    "key": "multi-midi",
+    "source": "crates/xirius-ui/src/context/clip.rs",
+    "asis": [
+      "クリップをループ"
+    ],
+    "tobe": [
+      "クリップ",
+      "クリップをループ"
+    ],
+    "category": "クリップ",
+    "command": "clip.loop.set",
+    "dynamic": false
+  },
+  {
+    "id": "multi-mixed:live-clip-loop",
+    "key": "multi-mixed",
+    "source": "crates/xirius-ui/src/context/clip.rs",
+    "asis": [
+      "クリップをループ"
+    ],
+    "tobe": [
+      "クリップ",
+      "クリップをループ"
+    ],
+    "category": "クリップ",
+    "command": "clip.loop.set",
+    "dynamic": false
   }
 ]

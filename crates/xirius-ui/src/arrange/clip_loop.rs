@@ -1,7 +1,8 @@
-//! The lower right corner of a clip sets its loop (EDT-041): a drag moves where the loop ends,
-//! with Alt where it starts, and the clip keeps its length. The clip then plays up to the loop's
-//! end and the loop again until it ends; it is drawn that way, with a line where each pass
-//! starts and a bar under the loop.
+//! The lower half of a clip's right edge lengthens it filled with its loop (EDT-041, UI-388): a
+//! clip without one loops the whole of what it was, and the drag is one step. With Alt the drag
+//! moves where the loop starts instead, and the clip keeps its length. The clip then plays up to
+//! the loop's end and the loop again until it ends; it is drawn that way, with a line where each
+//! pass starts and a bar under the loop, and the loop's mark among the marks at its top right.
 
 use xirius_core::clipfx::{ClipLoop, pieces};
 use xirius_core::id::{ClipId, TrackId};
@@ -9,21 +10,18 @@ use xirius_core::model::Clip;
 use xirius_core::time::Tick;
 use xirius_design::Radius;
 
-use super::{Drag, Grip, Plan, Preview, Spot};
+use super::{Drag, Ghost, Grip, Plan, Preview, Spot};
 use crate::draw::Pen;
 use crate::studio::{Rect, Studio};
 use crate::tools::Tool;
 
-/// How far up from the clip's bottom the corner reaches.
-pub const CORNER: f32 = 10.0;
-/// The loop mark in the corner.
-const MARK: f32 = 14.0;
 /// The bar under the loop.
 const BAR_H: f32 = 3.0;
 
 impl Studio {
-    /// The corner of `clip` dragged: the loop's end (or with Alt its start) under the pointer.
-    pub(super) fn plan_clip_loop(&self, d: &Drag, clip: &Clip) -> Option<Plan> {
+    /// The lower half of the right edge of `clip` dragged: the clip's end (or with Alt its loop's
+    /// start) under the pointer.
+    pub(super) fn plan_clip_loop(&self, d: &Drag, track: TrackId, clip: &Clip) -> Option<Plan> {
         let p = self.project();
         let shift = d.mods.shift;
         let min_len = self
@@ -39,14 +37,40 @@ impl Studio {
             length: clip.length,
         });
         let dt = self.px_to_ticks(d.at.0 - d.from.0);
+        if !d.mods.alt {
+            // The clip's end follows the pointer, and its loop fills it (UI-388).
+            let end = self.snap_tick(clip.start + clip.length + dt, shift);
+            let length = (end - clip.start).max(min_len);
+            if length == clip.length {
+                return None;
+            }
+            return Some(Plan {
+                command: Some((
+                    "clip.loop.set",
+                    serde_json::json!({ "ids": [clip.id.to_string()], "fill": length }),
+                )),
+                select: None,
+                tip: format!(
+                    "ループで {:.2} 小節",
+                    length as f64 / self.bar_ticks() as f64
+                ),
+                preview: Preview::ClipFill {
+                    ghost: Ghost {
+                        track,
+                        start: clip.start,
+                        length,
+                        color: p
+                            .tracks
+                            .get(&track)
+                            .map_or(0, |tr| crate::draw::track_color(tr)),
+                    },
+                    looped: base,
+                },
+            });
+        }
         let end = base.end().min(clip.length);
-        let (start, end) = if d.mods.alt {
-            let s = self.snap_tick(clip.start + base.start + dt, shift) - clip.start;
-            (s.clamp(0, (end - min_len).max(0)), end)
-        } else {
-            let e = self.snap_tick(clip.start + end + dt, shift) - clip.start;
-            (base.start, e.clamp(base.start + min_len, clip.length))
-        };
+        let start = self.snap_tick(clip.start + base.start + dt, shift) - clip.start;
+        let start = start.clamp(0, (end - min_len).max(0));
         let looped = ClipLoop {
             start,
             length: end - start,
@@ -54,18 +78,7 @@ impl Studio {
         if Some(looped) == was || (was.is_none() && start == 0 && end == clip.length) {
             return None;
         }
-        let tip = if d.mods.alt {
-            let tm = p.time_map();
-            format!(
-                "ループの頭 {}",
-                crate::topbar::bar_beat_tick(&tm, clip.start + start)
-            )
-        } else {
-            format!(
-                "ループ {:.2} 小節",
-                looped.length as f64 / self.bar_ticks() as f64
-            )
-        };
+        let tm = p.time_map();
         Some(Plan {
             command: Some((
                 "clip.loop.set",
@@ -76,7 +89,10 @@ impl Studio {
                 }),
             )),
             select: None,
-            tip,
+            tip: format!(
+                "ループの頭 {}",
+                crate::topbar::bar_beat_tick(&tm, clip.start + start)
+            ),
             preview: Preview::ClipLoop {
                 clip: clip.id,
                 looped,
@@ -84,13 +100,13 @@ impl Studio {
         })
     }
 
-    /// The loop of `clip` as it is drawn: the one its corner is being dragged to, or its own.
+    /// The loop of `clip` as it is drawn: the one its head is being dragged to, or its own.
     pub fn shown_loop(&self, clip: ClipId) -> Option<ClipLoop> {
         if let Some(d) = self.arrange.drag.as_ref().filter(|d| d.started)
             && let Spot::Clip {
+                track,
                 clip: c,
-                grip: Grip::Corner,
-                ..
+                grip: Grip::Loop,
             } = d.spot
             && c == clip
             && d.tool == Tool::Select
@@ -100,32 +116,12 @@ impl Studio {
                 && let Some(Plan {
                     preview: Preview::ClipLoop { looped, .. },
                     ..
-                }) = self.plan_clip_loop(d, k)
+                }) = self.plan_clip_loop(d, track, k)
             {
                 return Some(looped);
             }
         }
         self.project().clip_loop(clip)
-    }
-
-    /// The clip whose corner the pointer is on or is dragging.
-    fn loop_corner(&self) -> Option<(TrackId, ClipId)> {
-        let (spot, tool) = match &self.arrange.drag {
-            Some(d) => (&d.spot, d.tool),
-            None => (
-                &self.arrange.hover,
-                self.holds()
-                    .tool(crate::tools::Area::Arrange, self.tool, self.arrange.mods),
-            ),
-        };
-        match *spot {
-            Spot::Clip {
-                track,
-                clip,
-                grip: Grip::Corner,
-            } if tool == Tool::Select => Some((track, clip)),
-            _ => None,
-        }
     }
 }
 
@@ -165,9 +161,8 @@ pub fn paint_passes(
 }
 
 /// The marks of a looped clip in `r`: a line where each pass starts again and a bar under the
-/// loop; and the loop mark in the corner while the pointer is on it.
+/// loop.
 pub fn paint_mark(pen: &mut Pen, studio: &Studio, clip: &Clip, r: Rect) {
-    let corner = studio.loop_corner().map(|(_, c)| c) == Some(clip.id);
     if let Some(l) = studio.shown_loop(clip.id) {
         pen.mask(r, |pen| {
             let mark = pen.c.line[2];
@@ -183,12 +178,5 @@ pub fn paint_mark(pen: &mut Pen, studio: &Studio, clip: &Clip, r: Rect) {
                 Radius::Pill,
             );
         });
-    }
-    if corner {
-        let s = MARK.min(r.h - 4.0).max(8.0);
-        let m = Rect::new(r.right() - s - 2.0, r.bottom() - s - 2.0, s, s);
-        pen.round(m, pen.c.fill, Radius::Xs);
-        let i = s - 4.0;
-        pen.icon("loop", Rect::new(m.x + 2.0, m.y + 2.0, i, i), pen.c.on_fill);
     }
 }

@@ -111,7 +111,7 @@ const ARRANGE_ZONES: &[Named] = &[
     n("clip-edge", "クリップの端"),
     n("fade-handle", "フェードのハンドル"),
     n("empty", "空白部分"),
-    n("clip-corner", "クリップの右下の角"),
+    n("clip-corner", "クリップの右端の下半分"),
 ];
 
 const LANE_ZONES: &[Named] = &[
@@ -182,7 +182,7 @@ pub const ACTIONS: &[(&str, &str)] = &[
     ("view.zoom.time", "横にズーム"),
     ("view.zoom.data", "縦にズーム"),
     ("view.scroll", "横にスクロール"),
-    ("clip.loop.set", "ループの長さ"),
+    ("clip.loop.set", "ループで伸ばす"),
     ("clip.loop.set --start", "ループの頭"),
 ];
 

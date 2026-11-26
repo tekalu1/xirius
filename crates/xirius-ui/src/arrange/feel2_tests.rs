@@ -150,34 +150,42 @@ fn edt_032_the_wheel_on_the_pencil_picks_the_shape_the_lane_draws_and_alt_draws_
     assert!(s.error.is_none(), "{:?}", s.error);
 }
 
-/// The lower right corner of the first clip of `name` (a point just inside it), and the clip.
-fn corner(s: &Studio, g: &Geometry, name: &str) -> ((f32, f32), xirius_core::model::Clip) {
+/// A point just inside the lower half of the right edge of the first clip of `name`, and the clip.
+fn loop_grip(s: &Studio, g: &Geometry, name: &str) -> ((f32, f32), xirius_core::model::Clip) {
     let t = super::probe::track(s, name);
     let c = s.project().tracks[&t].clips[0].clone();
     let row = *s.tree().row_of(RowKind::Track(t)).unwrap();
     let r = s.clip_rect(g, &row, &c);
-    ((r.right() - 2.0, r.bottom() - 2.0), c)
+    ((r.right() - 2.0, r.bottom() - 4.0), c)
 }
 
 #[test]
-fn edt_041_the_lower_right_corner_sets_the_loop_and_alt_its_head() {
+fn ui_388_the_lower_half_of_the_right_edge_fills_with_the_loop() {
     use xirius_core::clipfx::ClipLoop;
     let (mut s, g) = studio();
     let t = super::probe::track(&s, "Bass");
-    let (at, c) = corner(&s, &g, "Bass");
-    assert!(c.length >= 3 * BAR, "{}", c.length);
+    let (at, c) = loop_grip(&s, &g, "Bass");
     let bar = s.ticks_to_px(BAR);
     let looped = |s: &Studio| s.project().clip_loop(c.id);
-
-    // The corner is a grip of its own; a little higher up is the right edge.
-    s.arrange_move(&g, at.0, at.1, Mods::default());
-    let at_corner = Spot::Clip {
-        track: t,
-        clip: c.id,
-        grip: Grip::Corner,
+    let whole = ClipLoop {
+        start: 0,
+        length: c.length,
     };
-    assert_eq!(s.arrange.hover, at_corner);
-    s.arrange_move(&g, at.0, at.1 - 20.0, Mods::default());
+
+    // The lower half is the loop's grip, with its own pointer; the upper half sizes the clip.
+    s.arrange_move(&g, at.0, at.1, Mods::default());
+    assert_eq!(
+        s.arrange.hover,
+        Spot::Clip {
+            track: t,
+            clip: c.id,
+            grip: Grip::Loop,
+        }
+    );
+    assert_eq!(super::paint::cursor(&s), Some(crate::roll::Cursor::Loop));
+    let row = *s.tree().row_of(RowKind::Track(t)).unwrap();
+    let top = s.clip_rect(&g, &row, &c).y + 4.0;
+    s.arrange_move(&g, at.0, top, Mods::default());
     assert!(matches!(
         s.arrange.hover,
         Spot::Clip {
@@ -186,55 +194,66 @@ fn edt_041_the_lower_right_corner_sets_the_loop_and_alt_its_head() {
         }
     ));
 
-    // A drag one bar to the left ends the loop a bar before the clip ends; the clip keeps its
-    // length and the drawing shows the loop while it is dragged.
+    // Two bars to the right: the clip grows by them and repeats the whole of itself, in one step.
     let steps = s.song.steps();
-    let to = (at.0 - bar, at.1);
+    let to = (at.0 + 2.0 * bar, at.1);
     hold(&mut s, &g, at, to, Mods::default());
     let plan = s.plan(&g, s.arrange.drag.as_ref().unwrap()).unwrap();
-    let want = ClipLoop {
-        start: 0,
-        length: c.length - BAR,
-    };
     assert_eq!(
         plan.command.unwrap(),
         (
             "clip.loop.set",
-            json!({"ids": [c.id.to_string()], "start": 0, "length": c.length - BAR})
+            json!({"ids": [c.id.to_string()], "fill": c.length + 2 * BAR})
         )
     );
-    assert_eq!(
-        plan.tip,
-        format!("ループ {:.2} 小節", (c.length - BAR) as f64 / BAR as f64)
-    );
-    assert_eq!(s.shown_loop(c.id), Some(want));
     assert_eq!(looped(&s), None, "nothing is written until it is let go");
     s.arrange_up(&g, to.0, to.1, Mods::default());
     assert!(s.error.is_none(), "{:?}", s.error);
     assert_eq!(s.song.steps(), steps + 1, "one drag, one step");
-    assert_eq!(looped(&s), Some(want));
-    let (_, now) = corner(&s, &g, "Bass");
-    assert_eq!((now.start, now.length), (c.start, c.length));
+    assert_eq!(looped(&s), Some(whole));
+    let (at, now) = loop_grip(&s, &g, "Bass");
+    assert_eq!((now.start, now.length), (c.start, c.length + 2 * BAR));
 
-    // With Alt the drag moves the loop's head; its end stays.
+    // With Alt the drag moves the loop's head instead; the clip keeps its length.
     let to = (at.0 + bar, at.1);
     hold(&mut s, &g, at, to, alt());
     let plan = s.plan(&g, s.arrange.drag.as_ref().unwrap()).unwrap();
     assert!(plan.tip.starts_with("ループの頭 "), "{}", plan.tip);
     s.arrange_up(&g, to.0, to.1, alt());
     assert!(s.error.is_none(), "{:?}", s.error);
-    assert_eq!(s.song.steps(), steps + 2);
     assert_eq!(
         looped(&s),
         Some(ClipLoop {
             start: BAR,
-            length: c.length - 2 * BAR,
+            length: c.length - BAR,
         })
     );
 
-    // Ctrl+Z takes back the head, then the loop.
+    // Ctrl+Z takes back the head, then the fill: the clip is as it was, without a loop.
     assert!(s.edit_key(&g, "z", ctrl()));
-    assert_eq!(looped(&s), Some(want));
+    assert_eq!(looped(&s), Some(whole));
     assert!(s.edit_key(&g, "z", ctrl()));
     assert_eq!(looped(&s), None);
+    let (_, back) = loop_grip(&s, &g, "Bass");
+    assert_eq!(back.length, c.length);
+}
+
+#[test]
+fn ui_388_ctrl_alt_l_loops_the_selected_clip_and_takes_it_off() {
+    let (mut s, g) = studio();
+    let t = super::probe::track(&s, "Bass");
+    let c = s.project().tracks[&t].clips[0].clone();
+    s.arrange.focus = true;
+    s.arrange.clips = std::collections::BTreeSet::from([(t, c.id)]);
+    let key = Mods {
+        ctrl: true,
+        alt: true,
+        ..Mods::default()
+    };
+    assert!(s.edit_key(&g, "l", key));
+    assert!(s.error.is_none(), "{:?}", s.error);
+    let l = s.project().clip_loop(c.id).expect("looped");
+    assert_eq!((l.start, l.length), (0, c.length));
+    assert!(s.edit_key(&g, "l", key));
+    assert_eq!(s.project().clip_loop(c.id), None);
 }

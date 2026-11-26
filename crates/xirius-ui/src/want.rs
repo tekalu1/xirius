@@ -27,6 +27,8 @@ pub enum Want {
     DragV,
     /// Picked up and moved (a loop, a section, a point): the open hand, closed while held.
     Grab,
+    /// Dragged sideways to lengthen a clip with its loop (UI-388): ↔ with the loop's mark.
+    Loop,
     /// The corner that sizes a window.
     Corner,
     /// A place on the time line: the crosshair.
@@ -54,6 +56,7 @@ impl Want {
             Cursor::Mute => Want::Tool(Shape::Mute),
             Cursor::Audition => Want::Tool(Shape::Audition),
             Cursor::Range => Want::Tool(Shape::Range),
+            Cursor::Loop => Want::Loop,
         }
     }
 }

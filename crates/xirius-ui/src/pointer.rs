@@ -25,10 +25,12 @@ pub enum Shape {
     Mute,
     Audition,
     Range,
+    /// ↔ with the loop's mark: the lower half of a clip's right edge (UI-388).
+    Loop,
 }
 
 impl Shape {
-    pub const ALL: [Shape; 8] = [
+    pub const ALL: [Shape; 9] = [
         Shape::OpenHand,
         Shape::ClosedHand,
         Shape::Pencil,
@@ -37,6 +39,7 @@ impl Shape {
         Shape::Mute,
         Shape::Audition,
         Shape::Range,
+        Shape::Loop,
     ];
 
     /// The working point in the 32-unit square the picture is drawn in.
@@ -46,6 +49,7 @@ impl Shape {
             Shape::Pencil => (4.0, 26.0),
             Shape::Scissors | Shape::Mute | Shape::Audition | Shape::Range => (16.0, 16.0),
             Shape::Eraser => (4.0, 28.0),
+            Shape::Loop => (16.0, 12.0),
         }
     }
 
@@ -60,7 +64,8 @@ impl Shape {
             | Shape::Pencil
             | Shape::Eraser
             | Shape::Mute
-            | Shape::Audition => 0.68,
+            | Shape::Audition
+            | Shape::Loop => 0.68,
         }
     }
 }
@@ -99,6 +104,11 @@ pub fn show(want: Want, crosshair: bool, held: bool) -> Pointer {
         Want::Corner => Pointer::style(CursorStyle::ResizeUpLeftDownRight),
         Want::Locate => Pointer::style(CursorStyle::Crosshair),
         Want::Blocked => Pointer::style(CursorStyle::OperationNotAllowed),
+        // Not a tool: the crosshair setting leaves it.
+        Want::Loop => Pointer {
+            style: CursorStyle::ResizeLeftRight,
+            shape: Some(Shape::Loop),
+        },
         Want::Tool(_) if crosshair => Pointer::style(CursorStyle::Crosshair),
         Want::Tool(shape) => Pointer {
             style: CursorStyle::Crosshair,
@@ -403,6 +413,17 @@ fn parts(shape: Shape) -> (Vec<Prim>, Vec<Prim>) {
             ],
             vec![],
         ),
+        Shape::Loop => (
+            vec![
+                // The ↔ of the edge, and the loop's circling arrow under its right end.
+                Prim::Line((7.0, 12.0), (25.0, 12.0), 3.0),
+                Prim::Poly(&[(2.0, 12.0), (9.0, 6.0), (9.0, 18.0)]),
+                Prim::Poly(&[(30.0, 12.0), (23.0, 6.0), (23.0, 18.0)]),
+                Prim::Ring((21.0, 24.0), 6.0, 2.6),
+                Prim::Poly(&[(13.0, 22.0), (19.0, 22.0), (16.0, 27.0)]),
+            ],
+            vec![],
+        ),
     }
 }
 
@@ -571,6 +592,7 @@ mod tests {
             (Mute, CursorStyle::Crosshair, Some(Shape::Mute)),
             (Audition, CursorStyle::Crosshair, Some(Shape::Audition)),
             (Range, CursorStyle::Crosshair, Some(Shape::Range)),
+            (Loop, CursorStyle::ResizeLeftRight, Some(Shape::Loop)),
         ] {
             assert_eq!(
                 pointer(cursor, false),

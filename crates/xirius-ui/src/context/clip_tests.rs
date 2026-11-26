@@ -337,6 +337,8 @@ fn several_clips_get_the_rows_that_fit_all_of_them() {
         .map(|_| ())
     });
     assert!(press_on(&mut s, &g, "Keys", 0));
+    // More rows than the root holds: the field is in the clip category.
+    assert!(choose(&mut s, &g, "クリップ"));
     let said = |s: &Studio| {
         s.context_rows()
             .into_iter()
