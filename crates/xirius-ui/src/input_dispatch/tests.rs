@@ -514,107 +514,251 @@ fn key_017_automation_hit_areas_are_the_maps_contexts() {
     }
 }
 
-#[test]
-fn key_017_an_automation_click_does_what_the_map_says() {
+/// Where an automation click lands.
+#[derive(Clone, Copy, Debug)]
+enum On {
+    /// The lane's second point.
+    Point,
+    /// The lane before its first point.
+    Empty,
+}
+
+/// What a row of [`key_017_the_automation_and_ruler_gestures_follow_the_map`] does.
+#[derive(Clone, Copy, Debug)]
+enum Gesture {
+    /// A click with the modifiers, a double one when `true`.
+    Click(On, Mods, bool),
+    /// A drag of the point.
+    DragPoint,
+    /// The ruler's wheel with the modifiers.
+    Wheel(Mods),
+    /// A press on the ruler, three bars in.
+    Ruler,
+    /// The modifiers a drag of the point holds with these down.
+    During(Mods),
+}
+
+/// What the gesture must have done.
+#[derive(Clone, Copy, Debug)]
+enum Then {
+    /// The lane's points change by this many.
+    Points(isize),
+    /// The song takes one step.
+    Step,
+    /// Neither the song nor the lane changes.
+    Nothing,
+    /// The point is selected, not taken away.
+    Selects,
+    /// The wheel is spent (not left to the lanes), and the view zooms in time or not.
+    Wheel { spent: bool, zooms: bool },
+    /// The play position moves to the press, or stays.
+    Moves(bool),
+    /// The drag holds Ctrl (the axis lock).
+    Ctrl(bool),
+}
+
+/// One row: on a fresh studio with the cells `maps` set, `gesture` does `then`.
+fn follows(maps: &[(&str, &str, &str)], gesture: Gesture, then: Then) -> Result<(), String> {
     let (mut s, g) = setup();
     let t = crate::arrange::probe::two_lanes(&mut s, &g, "Bass");
     let (px, py) = crate::arrange::probe::point_xy(&s, &g, t, 0, 1);
     let (ex, ey) = empty_lane_xy(&s, &g, t);
-    let before = points_of(&s, "Bass");
-    // As it is: Alt + click takes the point away; a double-click on the empty lane adds one.
-    s.arrange_down(&g, px, py, Mods::alt());
-    s.arrange_up(&g, px, py, Mods::alt());
-    assert_eq!(points_of(&s, "Bass"), before - 1);
-    assert!(s.song.undo());
-    s.arrange_down(&g, ex, ey, Mods::NONE);
-    s.arrange_up(&g, ex, ey, Mods::NONE);
-    assert_eq!(points_of(&s, "Bass"), before, "one click is a marquee");
-    s.arrange.clicks = 2;
-    s.arrange_down(&g, ex, ey, Mods::NONE);
-    s.arrange_up(&g, ex, ey, Mods::NONE);
-    s.arrange.clicks = 1;
-    assert_eq!(points_of(&s, "Bass"), before + 1);
-    assert!(s.song.undo());
-    assert_eq!(points_of(&s, "Bass"), before);
-    // Alt + click only selects, when the map says so.
-    map(&mut s, "automation.select.point.click", "Alt", "select.set");
-    s.arrange_down(&g, px, py, Mods::alt());
-    s.arrange_up(&g, px, py, Mods::alt());
-    assert_eq!(points_of(&s, "Bass"), before);
-    assert!(!s.arrange.points.is_empty());
-    // Nothing for the empty lane's click and drag: no point is added.
-    map(&mut s, "automation.select.empty.click", "none", "");
-    map(&mut s, "automation.select.empty.drag", "none", "");
-    let steps = s.song.steps();
-    s.arrange_down(&g, ex, ey, Mods::NONE);
-    s.arrange_up(&g, ex, ey, Mods::NONE);
-    assert_eq!(s.song.steps(), steps);
-    assert_eq!(points_of(&s, "Bass"), before);
-}
-
-#[test]
-fn key_017_an_automation_drag_follows_the_map() {
-    let (mut s, g) = setup();
-    let t = crate::arrange::probe::two_lanes(&mut s, &g, "Bass");
-    let (px, py) = crate::arrange::probe::point_xy(&s, &g, t, 0, 1);
-    let to = (px + 20.0, py - 12.0);
-    let steps = s.song.steps();
-    crate::arrange::probe::hold(&mut s, &g, (px, py), to, Mods::NONE);
-    s.arrange_up(&g, to.0, to.1, Mods::NONE);
-    assert_eq!(s.song.steps(), steps + 1, "the point moves as it is");
-    assert!(s.song.undo());
-    map(&mut s, "automation.select.point.drag", "none", "");
-    let steps = s.song.steps();
-    crate::arrange::probe::hold(&mut s, &g, (px, py), to, Mods::NONE);
-    s.arrange_up(&g, to.0, to.1, Mods::NONE);
-    assert_eq!(s.song.steps(), steps, "nothing is bound to the drag");
-    // The axis is held by the modifier the map names during the drag.
-    map(
-        &mut s,
-        "automation.select.point.drag",
-        "none",
-        "auto.point.move",
-    );
-    map(
-        &mut s,
-        "automation.select.point.drag",
-        "during.Alt",
-        "auto.point.move --lock",
-    );
-    let mm = s.song.settings().lock().unwrap().mousemap.clone();
-    let ctx = "automation.select.point.drag";
-    assert!(crate::mouse_dispatch::during(&mm, ctx, Mods::alt(), Mods::alt()).ctrl);
-    assert!(!crate::mouse_dispatch::during(&mm, ctx, Mods::NONE, Mods::NONE).ctrl);
-}
-
-#[test]
-fn key_017_the_ruler_click_and_wheel_follow_the_map() {
-    let (mut s, g) = setup();
+    for (context, modifier, action) in maps {
+        map(&mut s, context, modifier, action);
+    }
+    let (points, steps, beat_w, playhead) =
+        (points_of(&s, "Bass"), s.song.steps(), s.beat_w, s.playhead);
     let tick = 3840 * 3;
-    s.press(&g, crate::studio::Hit::Ruler(tick));
-    assert_eq!(s.playhead, tick, "a click moves the play position");
-    let (x, y) = (g.ruler.x + g.ruler.w / 2.0, g.ruler.y + g.ruler.h - 4.0);
-    let before = s.beat_w;
-    assert!(s.ruler_wheel(&g, x, y, 0.0, 120.0, Mods::NONE));
-    assert_ne!(s.beat_w, before, "the wheel zooms in time");
-    // With Ctrl held it is the lanes' (as the pref has it).
-    assert!(!s.ruler_wheel(&g, x, y, 0.0, 120.0, Mods::ctrl()));
-    map(&mut s, "ruler.any.empty.wheel", "Mod", "view.zoom.time");
-    let before = s.beat_w;
-    assert!(s.ruler_wheel(&g, x, y, 0.0, 120.0, Mods::ctrl()));
-    assert_ne!(s.beat_w, before);
-    // The plain wheel scrolls: it is left to the lanes.
-    map(&mut s, "ruler.any.empty.wheel", "none", "view.scroll");
-    let before = s.beat_w;
-    assert!(!s.ruler_wheel(&g, x, y, 0.0, 120.0, Mods::NONE));
-    // Nothing is bound: the wheel is spent and the view stays.
-    map(&mut s, "ruler.any.empty.wheel", "none", "");
-    assert!(s.ruler_wheel(&g, x, y, 0.0, 120.0, Mods::NONE));
-    assert_eq!(s.beat_w, before);
-    // The old arrangement name reaches the same cell.
-    map(&mut s, "arrange.select.ruler.click", "none", "");
-    s.press(&g, crate::studio::Hit::Ruler(0));
-    assert_eq!(s.playhead, tick, "no click on the ruler moves it");
+    let (mut spent, mut ctrl) = (None, None);
+    match gesture {
+        Gesture::Click(on, mods, double) => {
+            let (x, y) = match on {
+                On::Point => (px, py),
+                On::Empty => (ex, ey),
+            };
+            if double {
+                s.arrange.clicks = 2;
+            }
+            s.arrange_down(&g, x, y, mods);
+            s.arrange_up(&g, x, y, mods);
+            s.arrange.clicks = 1;
+        }
+        Gesture::DragPoint => {
+            let to = (px + 20.0, py - 12.0);
+            crate::arrange::probe::hold(&mut s, &g, (px, py), to, Mods::NONE);
+            s.arrange_up(&g, to.0, to.1, Mods::NONE);
+        }
+        Gesture::Wheel(mods) => {
+            let (x, y) = (g.ruler.x + g.ruler.w / 2.0, g.ruler.y + g.ruler.h - 4.0);
+            spent = Some(s.ruler_wheel(&g, x, y, 0.0, 120.0, mods));
+        }
+        Gesture::Ruler => {
+            s.press(&g, crate::studio::Hit::Ruler(tick));
+        }
+        Gesture::During(mods) => {
+            let mm = s.song.settings().lock().unwrap().mousemap.clone();
+            let ctx = "automation.select.point.drag";
+            ctrl = Some(crate::mouse_dispatch::during(&mm, ctx, mods, mods).ctrl);
+        }
+    }
+    let now = points_of(&s, "Bass");
+    let done = match then {
+        Then::Points(by) => now as isize - points as isize == by,
+        Then::Step => s.song.steps() == steps + 1,
+        Then::Nothing => s.song.steps() == steps && now == points,
+        Then::Selects => now == points && !s.arrange.points.is_empty(),
+        Then::Wheel { spent: w, zooms } => spent == Some(w) && (s.beat_w != beat_w) == zooms,
+        Then::Moves(moves) => s.playhead == if moves { tick } else { playhead },
+        Then::Ctrl(held) => ctrl == Some(held),
+    };
+    if !done {
+        return Err(format!(
+            "points {points} -> {now}, steps {steps} -> {}, wheel spent {spent:?}, beat {beat_w} -> {}, \
+             play {playhead} -> {}, ctrl {ctrl:?}",
+            s.song.steps(),
+            s.beat_w,
+            s.playhead
+        ));
+    }
+    Ok(())
+}
+
+/// A cell of the mouse map, changed, changes what the gesture in its context does: the
+/// automation's click and drag, the ruler's click and wheel (KEY-017).
+#[test]
+fn key_017_the_automation_and_ruler_gestures_follow_the_map() {
+    const POINT_CLICK: &str = "automation.select.point.click";
+    const POINT_DRAG: &str = "automation.select.point.drag";
+    const WHEEL: &str = "ruler.any.empty.wheel";
+    // (cell, modifiers, command) set in the map before the gesture
+    type Cells<'a> = &'a [(&'a str, &'a str, &'a str)];
+    let lock: Cells = &[
+        (POINT_DRAG, "none", "auto.point.move"),
+        (POINT_DRAG, "during.Alt", "auto.point.move --lock"),
+    ];
+    let rows: &[(&str, Cells, Gesture, Then)] = &[
+        (
+            "as it is, Alt + click takes the point away",
+            &[],
+            Gesture::Click(On::Point, Mods::alt(), false),
+            Then::Points(-1),
+        ),
+        (
+            "as it is, one click on the empty lane is a marquee",
+            &[],
+            Gesture::Click(On::Empty, Mods::NONE, false),
+            Then::Points(0),
+        ),
+        (
+            "as it is, a double-click on the empty lane adds a point",
+            &[],
+            Gesture::Click(On::Empty, Mods::NONE, true),
+            Then::Points(1),
+        ),
+        (
+            "Alt + click mapped to select only selects",
+            &[(POINT_CLICK, "Alt", "select.set")],
+            Gesture::Click(On::Point, Mods::alt(), false),
+            Then::Selects,
+        ),
+        (
+            "nothing for the empty lane adds no point",
+            &[
+                ("automation.select.empty.click", "none", ""),
+                ("automation.select.empty.drag", "none", ""),
+            ],
+            Gesture::Click(On::Empty, Mods::NONE, false),
+            Then::Nothing,
+        ),
+        (
+            "as it is, the point moves",
+            &[],
+            Gesture::DragPoint,
+            Then::Step,
+        ),
+        (
+            "nothing bound to the drag",
+            &[(POINT_DRAG, "none", "")],
+            Gesture::DragPoint,
+            Then::Nothing,
+        ),
+        (
+            "the modifier the map names holds the axis",
+            lock,
+            Gesture::During(Mods::alt()),
+            Then::Ctrl(true),
+        ),
+        (
+            "without it the axis is free",
+            lock,
+            Gesture::During(Mods::NONE),
+            Then::Ctrl(false),
+        ),
+        (
+            "as it is, a ruler click moves the play position",
+            &[],
+            Gesture::Ruler,
+            Then::Moves(true),
+        ),
+        (
+            "as it is, the wheel zooms in time",
+            &[],
+            Gesture::Wheel(Mods::NONE),
+            Then::Wheel {
+                spent: true,
+                zooms: true,
+            },
+        ),
+        (
+            "as it is, Ctrl + wheel is the lanes' (as the pref has it)",
+            &[],
+            Gesture::Wheel(Mods::ctrl()),
+            Then::Wheel {
+                spent: false,
+                zooms: false,
+            },
+        ),
+        (
+            "Mod + wheel mapped to zoom zooms",
+            &[(WHEEL, "Mod", "view.zoom.time")],
+            Gesture::Wheel(Mods::ctrl()),
+            Then::Wheel {
+                spent: true,
+                zooms: true,
+            },
+        ),
+        (
+            "the wheel mapped to scroll is left to the lanes",
+            &[(WHEEL, "none", "view.scroll")],
+            Gesture::Wheel(Mods::NONE),
+            Then::Wheel {
+                spent: false,
+                zooms: false,
+            },
+        ),
+        (
+            "nothing bound to the wheel spends it and the view stays",
+            &[(WHEEL, "none", "")],
+            Gesture::Wheel(Mods::NONE),
+            Then::Wheel {
+                spent: true,
+                zooms: false,
+            },
+        ),
+        (
+            "the old arrangement name reaches the ruler's click",
+            &[("arrange.select.ruler.click", "none", "")],
+            Gesture::Ruler,
+            Then::Moves(false),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, maps, gesture, then) in rows {
+        if let Err(e) = follows(maps, *gesture, *then) {
+            failures.push(format!("{name}: {gesture:?} -> {then:?}: {e}"));
+        }
+    }
+    assert!(failures.is_empty(), "the map: {failures:#?}");
 }
 
 #[test]
