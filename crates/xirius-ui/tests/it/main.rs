@@ -18,3 +18,4 @@ mod patched_doc;
 mod routing;
 mod source_rules;
 mod version_info;
+mod window_sandbox;

@@ -291,6 +291,15 @@ with the time it was last written in UTC (`(written 2026-11-16T04:19:32Z)`): the
 run's log shows running at that time are the ones to look at first. A run outside `ci_tests.py` (`cargo nextest run`, `cargo test`) uses the person's
 folders: the tests still write nothing there, but nothing checks it.
 
+A window test starts the app with `support::app(root)` (`crates/xirius-ui/tests/support`), which
+gives it a profile, a temporary folder and plugin folders of its own under `root`: run by hand on a
+person's PC, it writes nothing of theirs and loads none of their plugins. `it::window_sandbox`,
+which runs on CI, fails a window test that starts the app another way. `python scripts/ci_tests.py
+--windows --all` runs every window test, one target at a time, inside the same watch as above and
+writes no tag; `--windows --all --list` names them. It runs as on a PC with no plugins installed
+(the common program files folder is an empty one, and the plugin path variables are unset): the
+tests that skip without a real plugin skip, and the real plugins are `--plugins`'s.
+
 ## CI stages
 
 Each OS builds one nextest archive, including normal executables and test plugins. Four

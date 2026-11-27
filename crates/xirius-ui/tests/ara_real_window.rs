@@ -1,5 +1,6 @@
 //! A real ARA plugin on a clip in a parked window (`--script ara-real`, EDT-023, PLG-036,
 //! PLG-055). Needs `XIRIUS_ARA_REAL_PLUGIN`; run by `python scripts/ci_tests.py --plugins`.
+mod support;
 
 fn copy_support(from: &std::path::Path, to: &std::path::Path) {
     std::fs::create_dir_all(to).unwrap();
@@ -57,7 +58,7 @@ fn run(fixture: bool) {
         copy_support(std::path::Path::new(&support), &dir.join("common"));
     }
     let run = |script: &str| {
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"));
+        let mut command = support::app(&dir);
         if fixture {
             command.env("XIRIUS_ARA_NATIVE_FIXTURE", "1");
         } else {

@@ -1,6 +1,7 @@
 //! UI-184: on a real (parked, silent) window, what the window hands to the system as the
 //! pointer is the tool's own picture over a part, the system's "not allowed" where the tool has
 //! nothing to act on, and the system's crosshair when the setting says so.
+mod support;
 
 #[cfg(windows)]
 #[test]
@@ -11,26 +12,10 @@ fn the_window_hands_over_the_tools_pointer() {
         .unwrap();
     let dir = dir_tmp.path().join("pointer-shots");
     std::fs::create_dir_all(&dir).unwrap();
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"));
+    let mut command = support::app(dir_tmp.path());
     command
         .args(["--park", "--silent", "--script", "pointer", "--shot"])
-        .arg(&dir)
-        .env("XIRIUS_CONFIG_DIR", dir.join("prefs"))
-        .env("XIRIUS_CRASH_DIR", dir.join("crashes"));
-    for name in [
-        "USERPROFILE",
-        "APPDATA",
-        "LOCALAPPDATA",
-        "TEMP",
-        "TMP",
-        "CommonProgramFiles",
-        "CommonProgramW6432",
-        "CommonProgramFiles(x86)",
-    ] {
-        let directory = dir.join("profile").join(name);
-        std::fs::create_dir_all(&directory).unwrap();
-        command.env(name, directory);
-    }
+        .arg(&dir);
     let log = dir.join("stderr.log");
     command.stdout(std::process::Stdio::null());
     command.stderr(std::fs::File::create(&log).unwrap());

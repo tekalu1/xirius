@@ -1,10 +1,10 @@
 //! Parked GPUI/PrintWindow probe; real material I/O is held while Esc is dispatched
 //! to this window. No global input, physical audio, or personal song is used.
 #![cfg(feature = "loading-probe")]
+mod support;
 
 use std::{
     fs,
-    process::Command,
     time::{Duration, Instant},
 };
 
@@ -22,7 +22,7 @@ fn material_gate_keeps_the_preparation_card_and_escape_responsive_on_the_real_wi
             let root = tempfile::tempdir().unwrap();
             let log = root.path().join("probe.log");
             let output = fs::File::create(&log).unwrap();
-            let mut child = Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+            let mut child = support::app(root.path())
                 .args([
                     "--park", "--silent", "--script", "prepared", "--size", size, "--shot",
                 ])

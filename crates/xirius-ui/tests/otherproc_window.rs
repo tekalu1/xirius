@@ -1,5 +1,6 @@
 //! UI-289: the real `xirius` program changes the song open in a real parked window, with a
 //! silent output; the window is pressed only through its own input.
+mod support;
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -25,7 +26,7 @@ fn another_app_s_saves_come_in_through_the_window_and_wait_for_a_drag() {
         .map(PathBuf::from)
         .unwrap_or_else(|| temporary.path().join("shots"));
     std::fs::create_dir_all(&pictures).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let output = support::app(temporary.path())
         .args(["--park", "--silent", "--script", "otherproc", "--shot"])
         .arg(&pictures)
         .env("XIRIUS_OTHERPROC_CLI", cli())

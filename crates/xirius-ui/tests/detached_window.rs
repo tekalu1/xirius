@@ -10,7 +10,6 @@
 //! - a move and a size given by the system stay.
 
 use serde_json::Value;
-use std::process::Command;
 
 mod support;
 
@@ -21,7 +20,7 @@ fn run() -> (Value, tempfile::TempDir) {
         .unwrap();
     let dir = tmp.path().to_path_buf();
     support::sample_audio(&dir);
-    let out = Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let out = support::app(&dir)
         .args(["--park", "--silent", "--script", "device-drag", "--shot"])
         .arg(&dir)
         .current_dir(&dir)

@@ -1,6 +1,7 @@
 //! UI-061: on a real (parked, silent) window, a job that stops the person shows its veil only
 //! after 0.2 s and Esc cancels it; work that goes on shows a thin line; a change waiting to
 //! land says 「反映中…」 after 0.3 s.
+mod support;
 
 #[test]
 fn the_veil_comes_after_200_ms_and_esc_cancels_it() {
@@ -10,7 +11,7 @@ fn the_veil_comes_after_200_ms_and_esc_cancels_it() {
         .unwrap();
     let dir = dir_tmp.path().join("wait-shots");
     std::fs::create_dir_all(&dir).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let output = support::app(dir_tmp.path())
         .args(["--park", "--silent", "--script", "wait", "--shot"])
         .arg(&dir)
         .env("XIRIUS_CONFIG_DIR", dir.join("prefs"))

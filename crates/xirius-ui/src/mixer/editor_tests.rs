@@ -30,6 +30,8 @@ static WINDOWS: Mutex<()> = Mutex::new(());
 struct WindowGuard {
     _lock: MutexGuard<'static, ()>,
     previous: Option<std::ffi::OsString>,
+    /// Every test here starts a plugin host, which makes its crash records as it starts.
+    _records: crate::shot::CrashRecords,
 }
 
 impl Drop for WindowGuard {
@@ -46,6 +48,7 @@ impl Drop for WindowGuard {
 }
 
 fn one_at_a_time() -> WindowGuard {
+    let records = crate::shot::CrashRecords::new();
     keep_com();
     let lock = WINDOWS.lock().unwrap_or_else(|e| e.into_inner());
     let previous = std::env::var_os(xirius_vst3::OFFSCREEN_ENV);
@@ -54,6 +57,7 @@ fn one_at_a_time() -> WindowGuard {
     WindowGuard {
         _lock: lock,
         previous,
+        _records: records,
     }
 }
 

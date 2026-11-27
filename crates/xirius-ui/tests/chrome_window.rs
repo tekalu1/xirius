@@ -3,6 +3,8 @@
 //! UI-115: the top bar of a parked window is the window's own caption (drag, double click to
 //! maximise and restore, the edges to resize), asked of the window with messages and no OS input.
 
+mod support;
+
 #[test]
 fn the_top_bar_answers_as_the_caption_and_a_double_click_maximises_and_restores() {
     let dir_tmp = tempfile::Builder::new()
@@ -11,7 +13,7 @@ fn the_top_bar_answers_as_the_caption_and_a_double_click_maximises_and_restores(
         .unwrap();
     let dir = dir_tmp.path().join("chrome");
     std::fs::create_dir_all(&dir).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let output = support::app(dir_tmp.path())
         .args([
             "--bench",
             "--park",

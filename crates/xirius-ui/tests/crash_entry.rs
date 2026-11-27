@@ -1,4 +1,5 @@
 //! A failed process leaves records that a new UI process reaches through About.
+mod support;
 use std::{
     path::Path,
     process::Command,
@@ -74,7 +75,7 @@ fn restarting_the_app_keeps_the_log_and_dump_reachable_from_the_window() {
             .starts_with(b"MDMP")
     );
     let shots = dir.join("shots");
-    let mut app = Command::new(env!("CARGO_BIN_EXE_xirius-ui"));
+    let mut app = support::app(&dir);
     app.args(["--park", "--silent", "--script", "crash-entry", "--shot"])
         .arg(&shots)
         .env("XIRIUS_CRASH_DIR", &records);

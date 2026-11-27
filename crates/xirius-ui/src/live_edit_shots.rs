@@ -221,7 +221,7 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             s.use_plugins((*p.fixture.as_ref().unwrap().catalog).clone());
             eprintln!("live-probe song opened");
             let plugin = fixture_plugin(&s);
-            let editor = s.open_vst3_window(&plugin, "Live Fixture".into(), None).unwrap();
+            let editor = s.open_vst3_window(&plugin, "Live Fixture".into(), 0).unwrap();
             s.mixer.editors.push(editor);
             assert!(s.toggle_play());
             eprintln!("live-probe editor requested");

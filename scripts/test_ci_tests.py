@@ -497,6 +497,74 @@ class ReleaseWindowTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             self.windows(["--windows"], run=run)
 
+    META = {"workspace_members": ["ui", "session"], "packages": [
+        {"id": "ui", "name": "xirius-ui", "targets": [
+            {"name": "it", "kind": ["test"]}, {"name": "crash_entry", "kind": ["test"]},
+            {"name": "a_window", "kind": ["test"]}, {"name": "xirius-ui", "kind": ["lib"]}]},
+        {"id": "session", "name": "xirius-session", "targets": [
+            {"name": "eng067_recapture", "kind": ["test"]}, {"name": "save", "kind": ["test"]}]},
+    ]}
+
+    def test_all_runs_every_window_test_one_at_a_time_and_no_other(self):
+        commands = ci_tests.all_window_commands(self.META)
+        self.assertEqual([c[c.index("-p") + 1:] for c in commands], [
+            ["xirius-session", "--test", "eng067_recapture"],
+            ["xirius-ui", "--test", "a_window", "--test", "crash_entry"],
+            ["xirius-ui", "--lib", "-E", "test(mixer::editor_tests) | test(independent::window_tests)"],
+        ])
+        for command in commands:
+            self.assertEqual(command[command.index("--test-threads") + 1], "1")
+
+    def test_all_runs_inside_the_watch_writes_no_record_and_names_what_was_left(self):
+        def run(command, environment):
+            if "eng067_recapture" in command:
+                Path(environment["TMP"], "left-by-a-window-test").mkdir()
+
+        with patch.object(ci_tests, "metadata", return_value=self.META):
+            code, calls, ran, records, printed = self.windows(["--windows", "--all"], run=run)
+        self.assertEqual(code, 1)
+        build, *tests = ran
+        self.assertEqual(build[0][:3], ["cargo", "build", "--locked"])
+        self.assertIn("--bins", build[0])
+        self.assertEqual([c for c, _ in tests], ci_tests.all_window_commands(self.META))
+        self.assertNotEqual(tests[0][1]["LOCALAPPDATA" if os.name == "nt" else "HOME"],
+                            os.environ.get("LOCALAPPDATA" if os.name == "nt" else "HOME"))
+        self.assertIn("left-by-a-window-test", printed)
+        self.assertEqual(records, [])
+        self.assertFalse([c for c in calls if c[:2] == ("tag", "-a")])
+
+    def test_all_goes_on_after_a_failure_and_fails(self):
+        def run(command, environment):
+            if "nextest" in command:
+                raise subprocess.CalledProcessError(1, command)
+
+        with patch.object(ci_tests, "metadata", return_value=self.META):
+            code, _, ran, _, printed = self.windows(["--windows", "--all"], run=run)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(ran), 1 + 3)
+        self.assertIn("failed: cargo nextest run", printed)
+
+    def test_all_reaches_no_installed_plugin(self):
+        seen = []
+
+        def run(command, environment):
+            if "nextest" not in command:
+                return
+            seen.append({name: environment.get(name) for name in ci_tests.PLUGIN_FOLDERS + ci_tests.PLUGIN_PATHS})
+            for name in ci_tests.PLUGIN_FOLDERS:
+                if os.name == "nt":
+                    self.assertEqual(os.listdir(environment[name]), [])
+
+        named = {name: "somewhere" for name in ci_tests.PLUGIN_PATHS}
+        with patch.object(ci_tests, "metadata", return_value=self.META), patch.dict(os.environ, named):
+            code, _, ran, _, _ = self.windows(["--windows", "--all"], run=run)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(seen), len(ran) - 1)
+        for names in seen:
+            self.assertFalse([n for n in ci_tests.PLUGIN_PATHS if names[n] is not None])
+            if os.name == "nt":
+                self.assertNotIn(os.environ.get("CommonProgramFiles"), [names[n] for n in ci_tests.PLUGIN_FOLDERS])
+
 
 if __name__ == "__main__":
     unittest.main()

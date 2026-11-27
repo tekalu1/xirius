@@ -1,3 +1,4 @@
+mod support;
 #[test]
 fn acid_wav_import_and_undo_follow_palette_clicks_in_a_real_window() {
     let dir_tmp = tempfile::Builder::new()
@@ -6,7 +7,7 @@ fn acid_wav_import_and_undo_follow_palette_clicks_in_a_real_window() {
         .unwrap();
     let dir = dir_tmp.path().join("import-choice-window");
     std::fs::create_dir_all(&dir).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let output = support::app(dir_tmp.path())
         .args(["--park", "--silent", "--script", "importchoice", "--shot"])
         .arg(&dir)
         .env("XIRIUS_CONFIG_DIR", dir.join("prefs"))
