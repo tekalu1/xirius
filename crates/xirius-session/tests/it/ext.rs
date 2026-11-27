@@ -424,33 +424,31 @@ fn the_transport_is_refused_without_an_output() {
 
 // ---- VST3 in a song (PLG-002, PLG-052) ----------------------------------------------------
 
-/// A catalogue of one installed bundle, or `None` (the test skips) when it is not installed.
-fn installed(relative: &str) -> Option<(PathBuf, Arc<Catalog>)> {
-    let path = xirius_vst3::default_vst3_dir().join(relative);
-    if !path.exists() {
-        eprintln!("skipped: {} is not installed", path.display());
-        return None;
-    }
+/// A catalogue of one bundle: the test VST3 (`xirius-test-vst3`), with its "Gain".
+fn fixture() -> (PathBuf, Arc<Catalog>) {
+    xirius_test_vst3::fixture_marker();
+    let path = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     let entries = probe(&path).expect("probe");
-    Some((
+    (
         path,
         Arc::new(Catalog {
             entries,
             failures: vec![],
         }),
-    ))
+    )
 }
 
-/// The leading number of a plugin's display text, e.g. "-6.02 dB" -> -6.02.
-fn leading_number(text: &str) -> f64 {
-    let t: String = text
-        .trim()
-        .chars()
-        .map(|c| if c == '\u{2212}' { '-' } else { c })
-        .take_while(|c| c.is_ascii_digit() || matches!(c, '-' | '+' | '.'))
-        .collect();
-    t.parse()
-        .unwrap_or_else(|_| panic!("no number in {text:?}"))
+/// A catalogue of the installed VST3 instrument `XIRIUS_REAL_VST3_INSTRUMENT` names
+/// (`python scripts/ci_tests.py --plugins`). Its test fails when the variable is not set.
+fn real_instrument() -> Arc<Catalog> {
+    let path = std::env::var_os("XIRIUS_REAL_VST3_INSTRUMENT")
+        .map(PathBuf::from)
+        .expect("XIRIUS_REAL_VST3_INSTRUMENT names an installed VST3 instrument");
+    let entries = probe(&path).expect("probe");
+    Arc::new(Catalog {
+        entries,
+        failures: vec![],
+    })
 }
 
 fn warnings(r: &RunResult) -> Vec<String> {
@@ -475,9 +473,7 @@ fn export(s: &mut Session, out: &Path) -> RunResult {
 #[test]
 fn a_vst3_insert_sounds_in_the_export_and_keeps_its_state_through_save_and_open() {
     let _records = crash_records::CrashRecords::new();
-    let Some((path, catalog)) = installed("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    let (path, catalog) = fixture();
     let uid = catalog.entries[0].uid.clone();
     let dir = Dir::new("vst3");
     let song_dir = dir.path().join("song");
@@ -502,7 +498,7 @@ fn a_vst3_insert_sounds_in_the_export_and_keeps_its_state_through_save_and_open(
     let r = run(
         &mut s,
         "plugin.add",
-        json!({ "track": t, "name": "kHs Gain", "format": "vst3", "uid": uid }),
+        json!({ "track": t, "name": "Test Gain", "format": "vst3", "uid": uid }),
     );
     let pid = id_of(&r);
     let with = dir.path().join("with.wav");
@@ -525,7 +521,8 @@ fn a_vst3_insert_sounds_in_the_export_and_keeps_its_state_through_save_and_open(
         .find(|p| p.title == "Gain")
         .expect("a Gain parameter");
     assert!(plugin.set_param(gain.id, 0.3));
-    let db = leading_number(&plugin.param_text(gain.id, 0.3).unwrap());
+    // Its "Gain" is the output times the value.
+    let db = 20.0 * 0.3f64.log10();
     let state = encode_state(&plugin.get_state().unwrap());
     drop(plugin);
     run(
@@ -541,7 +538,7 @@ fn a_vst3_insert_sounds_in_the_export_and_keeps_its_state_through_save_and_open(
         (lower / want - 1.0).abs() < 0.01,
         "{db} dB: {lower}, expected {want}"
     );
-    eprintln!("kHs Gain in a song: unity {unity:.6}, {db} dB -> {lower:.6} (expected {want:.6})");
+    eprintln!("test gain in a song: unity {unity:.6}, {db} dB -> {lower:.6} (expected {want:.6})");
 
     // Saved, closed and opened again: the reference and the state come back, and so does the
     // sound.
@@ -580,35 +577,44 @@ fn a_vst3_insert_sounds_in_the_export_and_keeps_its_state_through_save_and_open(
 }
 
 #[test]
-fn a_vst3_instrument_plays_the_notes_of_its_track() {
+#[ignore = "needs XIRIUS_REAL_VST3_INSTRUMENT (python scripts/ci_tests.py --plugins)"]
+fn installed_vst3_instrument_plays_the_notes_of_its_track() {
     let _records = crash_records::CrashRecords::new();
-    let Some((_, catalog)) = installed("Vital.vst3") else {
-        return;
-    };
-    let Some(entry) = catalog
+    let catalog = real_instrument();
+    let entry = catalog
         .entries
         .iter()
         .find(|e| e.kind == xirius_core::model::PluginKind::Instrument)
         .cloned()
-    else {
-        eprintln!("skipped: Vital offers no instrument class");
-        return;
-    };
-    let dir = Dir::new("vital");
-    let mut s = song("vital", config(dir.path(), OutputMode::None, Some(catalog)));
+        .expect("an instrument class");
+    let dir = Dir::new("instrument");
+    let mut s = song(
+        "instrument",
+        config(dir.path(), OutputMode::None, Some(catalog)),
+    );
     let t = voice(&mut s, "Lead", 1.0);
     run(
         &mut s,
         "plugin.add",
         json!({ "track": t, "name": entry.name, "kind": "instrument", "format": "vst3", "uid": entry.uid }),
     );
-    let out = dir.path().join("vital.wav");
+    let out = dir.path().join("instrument.wav");
     let r = export(&mut s, &out);
     assert!(warnings(&r).is_empty(), "{:?}", warnings(&r));
     let rms = rms_between(&out, 0.2, 1.8);
-    eprintln!("Vital in a song: RMS {rms:.6}");
+    eprintln!("{} in a song: RMS {rms:.6}", entry.name);
     assert!(rms > 0.005, "{rms}");
+}
 
+#[test]
+fn a_missing_instrument_is_a_warning_and_the_song_still_exports() {
+    let _records = crash_records::CrashRecords::new();
+    let (_, catalog) = fixture();
+    let dir = Dir::new("missing");
+    let mut s = song(
+        "missing",
+        config(dir.path(), OutputMode::None, Some(catalog)),
+    );
     // A missing plugin is a warning and the song still exports, with the stand-in voice.
     let other = voice(&mut s, "Other", 1.0);
     run(

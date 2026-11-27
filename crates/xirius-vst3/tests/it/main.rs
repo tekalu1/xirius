@@ -14,6 +14,7 @@
 //! would load the same fixture from the other files' tests at the same time.
 
 mod concurrent_load;
+mod gain;
 mod note_names;
 mod real_plugins;
 mod sdk_pin;

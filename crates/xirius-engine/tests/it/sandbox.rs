@@ -1,8 +1,8 @@
 //! Plugins in the host process (OPEN-02, PLG-022/023/024/052/078). The host's
 //! output arrives in the same block. A host that crashes,
 //! hangs or cannot load leaves the dry signal playing, and a restart brings
-//! the plugin back with the state it had. Nothing goes to a device. Tests that need an
-//! installed plugin skip when it is missing.
+//! the plugin back with the state it had. Nothing goes to a device. The plugins are the test
+//! ones: `xirius-test-vst3` (its "Gain") and, for an instrument, `xirius-test-clap`.
 //!
 //! Waits are on what happened (the host is down, the state came, the host served every block),
 //! not on a time: a busy machine (a parallel build) makes everything slower. The tests whose
@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use xirius_engine::builtin::Sine;
+use xirius_engine::clap_plugin::ClapProcessor;
 use xirius_engine::engine::{self, EngineConfig};
 use xirius_engine::plugin::Vst3Processor;
 use xirius_engine::server::{
@@ -24,7 +25,7 @@ use xirius_engine::{
     AudioEngine, Command, MixSpec, NoteKind, Plan, ProcessSetup, Processor, RenderMode, TimedNote,
     Timeline, TrackSlot, TrackSpec,
 };
-use xirius_vst3::{Module, Plugin, default_vst3_dir};
+use xirius_vst3::{Module, Plugin};
 
 use crate::crash_records;
 use crash_records::CrashRecords;
@@ -33,9 +34,14 @@ const RATE: f64 = 48_000.0;
 const BLOCK: usize = 256;
 const RT_LATENCY: usize = xirius_engine::server::DEFAULT_LATENCY as usize;
 const OFFLINE_LATENCY: usize = 0;
-/// kHs Gain's "Gain" parameter at 0.3 is -12 dB.
-const GAIN_PARAM: (u32, f64) = (1, 0.3);
+/// The test plugin's "Gain" at 0.25: the output times 0.25, -12.04 dB.
+const GAIN_PARAM: (u32, f64) = (xirius_test_vst3::GAIN_PARAMETER, 0.25);
 const SINE_RMS: f64 = 0.353_553;
+
+/// The level of [`GAIN_PARAM`] in dB.
+fn quiet_db() -> f64 {
+    db(GAIN_PARAM.1)
+}
 
 fn setup(mode: RenderMode) -> ProcessSetup {
     ProcessSetup {
@@ -45,14 +51,19 @@ fn setup(mode: RenderMode) -> ProcessSetup {
     }
 }
 
-fn installed(name: &str) -> Option<PathBuf> {
-    let p = default_vst3_dir().join(name);
-    if p.exists() {
-        Some(p)
-    } else {
-        eprintln!("skipped: {} is not installed", p.display());
-        None
-    }
+/// The test plugin's folder of the build (`target/<profile>/deps`).
+fn deps() -> PathBuf {
+    std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+/// `xirius-test-vst3`, as the build left it (a bundle of it on macOS).
+fn fixture() -> PathBuf {
+    xirius_test_vst3::fixture_marker();
+    xirius_test_vst3::fixture_path(&deps())
 }
 
 fn server() -> PluginServer {
@@ -96,9 +107,7 @@ fn local(bundle: &Path, params: &[(u32, f64)]) -> Vst3Processor {
 #[test]
 fn automation_sent_before_a_block_matches_the_same_process() {
     let _records = CrashRecords::new();
-    let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    let bundle = fixture();
     let server = server();
     let (mut remote, link) = remote(&server, bundle.clone(), &[GAIN_PARAM]);
     remote.prepare(&setup(RenderMode::Offline));
@@ -153,9 +162,7 @@ fn automation_sent_before_a_block_matches_the_same_process() {
 fn automation_keeps_its_offsets_inside_the_input_block() {
     let _records = CrashRecords::new();
     use xirius_vst3::ParamChange;
-    let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    let bundle = fixture();
     let server = server();
     let (mut remote, link) = remote(&server, bundle.clone(), &[GAIN_PARAM]);
     remote.prepare(&setup(RenderMode::Offline));
@@ -364,11 +371,9 @@ fn assert_continuous(x: &[f32], from: usize) {
 #[test]
 fn offline_the_remote_plugin_matches_the_plugin_in_process_faster_than_real_time() {
     let _records = CrashRecords::new();
-    let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    let bundle = fixture();
     let frames = 10 * RATE as usize;
-    let ((wet, latency, opened, took), st) = served("offline kHs Gain", || {
+    let ((wet, latency, opened, took), st) = served("offline test gain", || {
         let server = server();
         let started = Instant::now();
         let (plugin, link) = remote(&server, bundle.clone(), &[GAIN_PARAM]);
@@ -403,7 +408,7 @@ fn offline_the_remote_plugin_matches_the_plugin_in_process_faster_than_real_time
         .fold(0.0f32, f32::max);
     let speed = frames as f64 / RATE / took.as_secs_f64();
     eprintln!(
-        "offline kHs Gain: opened in {:.0} ms, 10 s rendered in {:.0} ms ({speed:.0}x real \
+        "offline test gain: opened in {:.0} ms, 10 s rendered in {:.0} ms ({speed:.0}x real \
          time), max difference from in-process {max_diff:e}, wet blocks {}, dry {}",
         opened.as_secs_f64() * 1e3,
         took.as_secs_f64() * 1e3,
@@ -421,9 +426,7 @@ fn offline_the_remote_plugin_matches_the_plugin_in_process_faster_than_real_time
 #[test]
 fn delay_compensation_lines_the_remote_plugin_up_to_the_sample() {
     let _records = CrashRecords::new();
-    let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    let bundle = fixture();
     for (mode, l) in [
         (RenderMode::Offline, OFFLINE_LATENCY),
         (RenderMode::Realtime, RT_LATENCY),
@@ -471,9 +474,7 @@ fn delay_compensation_lines_the_remote_plugin_up_to_the_sample() {
 #[test]
 fn offline_a_crash_leaves_the_dry_signal_playing() {
     let _records = CrashRecords::new();
-    let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    let bundle = fixture();
     let server = server();
     let (plugin, link) = remote(&server, bundle, &[GAIN_PARAM]);
     let (mut audio, _) = engine_for(
@@ -487,6 +488,7 @@ fn offline_a_crash_leaves_the_dry_signal_playing() {
     let st = server.status(&link);
     assert!(st.crashed);
     // STATUS_ACCESS_VIOLATION
+    #[cfg(windows)]
     assert_eq!(st.exit_code, Some(0xC000_0005));
     assert_continuous(&out, OFFLINE_LATENCY);
     // Wet (-12 dB) before the crash, dry (unity) after it.
@@ -499,7 +501,7 @@ fn offline_a_crash_leaves_the_dry_signal_playing() {
         st.wet_blocks,
         st.dry_blocks
     );
-    assert!((db(early / SINE_RMS) + 12.0).abs() < 0.1);
+    assert!((db(early / SINE_RMS) - quiet_db()).abs() < 0.1);
     assert!((tail / SINE_RMS - 1.0).abs() < 1e-3);
 }
 
@@ -508,9 +510,7 @@ fn offline_a_crash_leaves_the_dry_signal_playing() {
 /// device, which a busy machine cannot keep up with: that one runs with `--ignored`.
 fn a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_back(mode: RenderMode) {
     let _records = CrashRecords::new();
-    let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    let bundle = fixture();
     let paced = mode == RenderMode::Realtime;
     let server = server();
     let (plugin, link) = remote(&server, bundle, &[]);
@@ -600,9 +600,9 @@ fn a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_back(mode: Rende
         st.crashes
     );
     assert_continuous(&out, l);
-    assert!((db(edited / SINE_RMS) + 12.0).abs() < 0.1);
+    assert!((db(edited / SINE_RMS) - quiet_db()).abs() < 0.1);
     assert!((dry / SINE_RMS - 1.0).abs() < 1e-3);
-    assert!((db(back / SINE_RMS) + 12.0).abs() < 0.1);
+    assert!((db(back / SINE_RMS) - quiet_db()).abs() < 0.1);
     assert!(!st.crashed);
     assert_eq!(st.crashes, 1);
     assert!(killed_at < restarted_at);
@@ -622,9 +622,7 @@ fn in_real_time_a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_bac
 #[test]
 fn a_hung_host_is_killed_and_bypassed() {
     let _records = CrashRecords::new();
-    let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    let bundle = fixture();
     let server = server();
     let (plugin, link) = remote(&server, bundle, &[GAIN_PARAM]);
     let (mut audio, _) = engine_for(
@@ -644,9 +642,7 @@ fn a_hung_host_is_killed_and_bypassed() {
 #[test]
 fn a_host_that_goes_down_is_put_on_the_plugin_that_took_it_down() {
     let _records = CrashRecords::new();
-    let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    let bundle = fixture();
     let server = server();
     let (a, link_a) = remote(&server, bundle.clone(), &[GAIN_PARAM]);
     let (b, link_b) = remote(&server, bundle, &[GAIN_PARAM]);
@@ -696,9 +692,7 @@ fn a_plugin_that_cannot_load_is_bypassed() {
 #[test]
 fn a_state_set_by_the_song_is_not_reported_back() {
     let _records = CrashRecords::new();
-    let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    let bundle = fixture();
     let server = server();
     let (plugin, link) = remote(&server, bundle, &[]);
     let (mut audio, _) = engine_for(
@@ -727,13 +721,24 @@ fn a_state_set_by_the_song_is_not_reported_back() {
 }
 
 /// An instrument gets its notes on their frame: its first sound comes exactly `L` after the
-/// same plugin's in-process one.
+/// same plugin's in-process one, on the note's frame. The instrument is `xirius-test-clap`, which
+/// plays a held key from the note's sample on.
 #[test]
 fn a_remote_instrument_plays_its_notes_on_the_frame() {
     let _records = CrashRecords::new();
-    let Some(bundle) = installed("Vital.vst3") else {
-        return;
-    };
+    xirius_test_clap::fixture_marker();
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("sandbox");
+    std::fs::create_dir_all(&dir).unwrap();
+    let bundle = dir.join(format!("instrument-{}.clap", std::process::id()));
+    std::fs::copy(
+        deps().join(format!(
+            "{}xirius_test_clap{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        )),
+        &bundle,
+    )
+    .unwrap();
     let note_at = 1000u64;
     let track = |p: Box<dyn Processor>| {
         let mut t = TrackSpec::new("synth", p);
@@ -769,15 +774,16 @@ fn a_remote_instrument_plays_its_notes_on_the_frame() {
         let first = out.iter().position(|&x| x != 0.0);
         (first, rms(&out), latency)
     };
-    let ((remote_first, remote_rms, remote_latency), st) = served("Vital", || {
+    let ((remote_first, remote_rms, remote_latency), st) = served("instrument", || {
         let server = server();
         let link = PluginLink::new();
         let plugin = RemotePlugin::new(
             server.clone(),
             link.clone(),
             RemoteSpec {
-                name: "Vital".into(),
+                name: "instrument".into(),
                 bundle: bundle.clone(),
+                class: Some(xirius_clap::class_key(xirius_test_clap::ID)),
                 instrument: true,
                 ..RemoteSpec::default()
             },
@@ -785,13 +791,21 @@ fn a_remote_instrument_plays_its_notes_on_the_frame() {
         let r = onset(Box::new(plugin));
         (r, server.status(&link))
     });
-    let (local_first, local_rms, _) = onset(Box::new(local(&bundle, &[])));
+    let clap = xirius_clap::Bundle::load(&bundle).unwrap();
+    let local = ClapProcessor::new(
+        xirius_clap::Plugin::new(&clap, xirius_test_clap::ID)
+            .unwrap()
+            .audio()
+            .unwrap(),
+    );
+    let (local_first, local_rms, _) = onset(Box::new(local));
     eprintln!(
-        "Vital: first sound in-process at {local_first:?}, remote at {remote_first:?} (L \
+        "instrument: first sound in-process at {local_first:?}, remote at {remote_first:?} (L \
          {remote_latency}), RMS {local_rms:.4} / {remote_rms:.4}"
     );
     assert_eq!(st.error, None);
     assert_eq!((st.dry_blocks, st.misses), (0, 0));
+    assert_eq!(local_first, Some(note_at as usize));
     assert_eq!(
         remote_first,
         local_first.map(|f| f + remote_latency as usize)

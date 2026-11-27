@@ -44,6 +44,7 @@ tempfile = "3"
 # Count allocations on the audio path instead of aborting, so the test can report them.
 assert_no_alloc = { version = "1.1", features = ["warn_debug"] }
 xirius-test-clap = { path = "../xirius-test-clap" }
+xirius-test-vst3 = { path = "../xirius-test-vst3" }
 
 # The version information of the programs (LIC-022, packaging/windows/version_info.rs).
 [target.'cfg(windows)'.build-dependencies]

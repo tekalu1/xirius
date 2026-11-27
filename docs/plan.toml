@@ -8814,6 +8814,16 @@ done_when = "xirius-ui の窓の試験は、どれもアプリを tests/support 
 status = "done"
 
 [[item]]
+id = "ARC-057"
+title = "入っていないプラグインを飛ばして通る試験を、試験用の VST3・CLAP に移す"
+area = "ARC"
+phase = "v1.1"
+source = "2026-11-27 の持ち主の承認（試験の整理の 7 段の 2、G9、推奨どおり）"
+after = ["ARC-056"]
+done_when = "試験用の VST3 に、出力に掛かり状態に保存される Gain を足す。人の PC に入ったプラグインが無いと飛ばして通っていた試験（xirius-vst3 の real_plugins・concurrent_load・vendor_editor_windows、xirius-engine の vst3・sandbox、xirius-session の ext・presets・isolation、xirius-plugins と xirius-ui の scan、xirius-ui の mixer::editor_tests）は、試験用の VST3・CLAP で同じ道を通るか、入ったプラグインを XIRIUS_REAL_VST3_EFFECT・XIRIUS_REAL_VST3_INSTRUMENT で名指す #[ignore] の試験になり、変数が無いと落ちる。#[ignore] の試験は ci_tests.py の PLUGIN_TESTS に載り --plugins が流す。SDK のサンプルの試験も #[ignore] で、変数が無いと落ちる。守る物の無い試験は消し、代わりに守る試験を報告に書く。試験用の Gain を効かなくすると、Gain の試験が落ちる（わざと壊して確かめる）"
+status = "done"
+
+[[item]]
 id = "UI-371"
 title = "画面外の窓試験を現行の仕様にそろえ、トラック一覧の UIA を読めるようにする"
 area = "UI"

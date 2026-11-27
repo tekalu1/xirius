@@ -1,15 +1,15 @@
-//! Loads, creates and tears down plugins installed on this machine from many threads at once,
-//! offline. Each test skips when its plugin is not installed.
+//! Loads, creates and tears down the test VST3 (`xirius-test-vst3`) from many threads at once,
+//! offline.
 //!
 //! A watchdog ends the run when no thread gets a step further for [`stall`], printing where
 //! each thread is and who holds the plugin turn, so a deadlock fails instead of waiting.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 
-use xirius_vst3::{Module, Plugin, default_vst3_dir, turn_report};
+use xirius_vst3::{Module, Plugin, turn_report};
 
 const THREADS: usize = 8;
 const BLOCK: usize = 256;
@@ -106,13 +106,38 @@ fn round(path: &Path, steps: &Steps, t: usize) {
     steps.at(t, "between rounds");
 }
 
-/// `THREADS` threads start together and each runs `n` rounds of `relative`.
-fn hammer(name: &'static str, relative: &str, n: usize) {
-    let path = default_vst3_dir().join(relative);
-    if !path.exists() {
-        eprintln!("skipped: {} is not installed", path.display());
-        return;
+fn deps() -> PathBuf {
+    xirius_test_vst3::fixture_marker();
+    std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+/// A second module of the same code: a copy of the test VST3 under a name of its own (the DLL
+/// on Windows, the bundle's files on macOS).
+fn fixture_copy() -> PathBuf {
+    let deps = deps();
+    let fixture = xirius_test_vst3::fixture_path(&deps);
+    let dir =
+        xirius_test_vst3::copies_dir(&deps).join(format!("concurrent-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dst = dir.join("Second.vst3");
+    if fixture.is_dir() {
+        std::fs::create_dir_all(dst.join("Contents/MacOS")).unwrap();
+        for file in ["Contents/Info.plist", "Contents/MacOS/Fixture"] {
+            std::fs::copy(fixture.join(file), dst.join(file)).unwrap();
+        }
+    } else {
+        std::fs::copy(fixture, &dst).unwrap();
     }
+    dst
+}
+
+/// `THREADS` threads start together and each runs `n` rounds of the test VST3.
+fn hammer(name: &'static str, n: usize) {
+    let path = xirius_test_vst3::fixture_path(&deps());
     let start = Barrier::new(THREADS);
     let steps = Steps::new(name);
     std::thread::scope(|s| {
@@ -134,25 +159,16 @@ fn hammer(name: &'static str, relative: &str, n: usize) {
 }
 
 #[test]
-fn khs_gain_loads_and_unloads_from_many_threads_at_once() {
-    hammer("khs_gain", "Kilohearts/kHs Gain.vst3", rounds(20));
+fn a_plugin_loads_and_unloads_from_many_threads_at_once() {
+    hammer("hammer", rounds(20));
 }
 
-#[test]
-fn supermassive_loads_and_unloads_from_many_threads_at_once() {
-    hammer("supermassive", "ValhallaSupermassive.vst3", rounds(5));
-}
-
-/// Two plugins of the same vendor framework at once, and every thread keeps one instance
-/// alive while the others come and go, so the module is shared rather than reloaded.
+/// Two modules of the same code at once, and every thread keeps one instance alive while the
+/// others come and go, so the module is shared rather than reloaded.
 #[test]
 fn instances_come_and_go_while_others_keep_the_module() {
-    let gain = default_vst3_dir().join("Kilohearts/kHs Gain.vst3");
-    let delay = default_vst3_dir().join("Kilohearts/kHs Delay.vst3");
-    if !gain.exists() || !delay.exists() {
-        eprintln!("skipped: kHs Gain or kHs Delay is not installed");
-        return;
-    }
+    let gain = xirius_test_vst3::fixture_path(&deps());
+    let delay = fixture_copy();
     let n = rounds(10);
     let start = Barrier::new(THREADS);
     let steps = Steps::new("instances_come_and_go");

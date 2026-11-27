@@ -7,13 +7,15 @@ fail there for reasons that are not the app's. Everything else runs here.
 
     python scripts/ci_tests.py            # run
     python scripts/ci_tests.py --list     # print the cargo commands only
-    python scripts/ci_tests.py --plugins  # the tests with a real ARA plugin, before a release
+    python scripts/ci_tests.py --plugins  # the tests with real plugins, before a release
     python scripts/ci_tests.py --windows --tag v1.0.1
                                           # the window tests a release needs, and its tag
 
-The tests with a real ARA plugin are `#[ignore]`d, so a run without one never passes them by
-skipping: each needs its variable set to the plugin's file (`docs/ara-verification.md`), and
-fails when it is not.
+The tests with a real plugin (an ARA plugin, an installed VST3 effect and instrument) are
+`#[ignore]`d, so a run without one never passes them by skipping: each needs its variables set
+to the plugins' files (`docs/ara-verification.md`, `docs/testing.md`), and fails when they are
+not. Without a real plugin, the same paths run on the test plugins (`xirius-test-vst3`,
+`xirius-test-clap`).
 
 `--windows` runs the window tests a release needs a record of (`release_ci_gate.WINDOW_TESTS`)
 on the checkout's commit, which must have no changes. On a pass it prints the record and writes
@@ -56,12 +58,16 @@ WINDOW_TESTS = {
 }
 # Unit tests inside a library that open windows.
 WINDOW_UNIT_TESTS = ["mixer::editor_tests", "independent::window_tests"]
-# The integration tests that need a real ARA plugin, by package and target: the variable that
-# names the plugin's file.
+# The tests that need a real plugin, by package, target ("lib" for a library's unit tests) and
+# test-name filter (None for the whole target): the variables that name the plugins' files.
 PLUGIN_TESTS = {
-    ("xirius-ara", "test_plugin"): "XIRIUS_ARA_TEST_PLUGIN",
-    ("xirius-session", "ara_real"): "XIRIUS_ARA_REAL_PLUGIN",
-    ("xirius-ui", "ara_real_window"): "XIRIUS_ARA_REAL_PLUGIN",
+    ("xirius-ara", "test_plugin", None): ("XIRIUS_ARA_TEST_PLUGIN",),
+    ("xirius-session", "ara_real", None): ("XIRIUS_ARA_REAL_PLUGIN",),
+    ("xirius-ui", "ara_real_window", None): ("XIRIUS_ARA_REAL_PLUGIN",),
+    ("xirius-vst3", "it", "real_plugins::"): ("XIRIUS_REAL_VST3_EFFECT", "XIRIUS_REAL_VST3_INSTRUMENT"),
+    ("xirius-vst3", "vendor_editor_windows", None): ("XIRIUS_REAL_VST3_EFFECT", "XIRIUS_REAL_VST3_INSTRUMENT"),
+    ("xirius-session", "it", "ext::installed_"): ("XIRIUS_REAL_VST3_INSTRUMENT",),
+    ("xirius-ui", "lib", "mixer::editor_tests::installed_"): ("XIRIUS_REAL_VST3_INSTRUMENT",),
 }
 
 
@@ -108,9 +114,14 @@ def commands():
 
 def plugin_commands():
     return [
-        ["cargo", "test", "-p", package, "--test", target, "--", "--ignored", "--nocapture"]
-        for (package, target) in sorted(PLUGIN_TESTS)
+        ["cargo", "test", "-p", package, *(["--lib"] if target == "lib" else ["--test", target]), "--",
+         *([name] if name else []), "--ignored", "--nocapture"]
+        for (package, target, name) in sorted(PLUGIN_TESTS, key=lambda k: (k[0], k[1], k[2] or ""))
     ]
+
+
+def plugin_variables():
+    return sorted({v for names in PLUGIN_TESTS.values() for v in names})
 
 
 NEXTEST_VERSION = "0.9.151"
@@ -307,7 +318,7 @@ def metadata():
 # none, and the real plugins are `--plugins`'s.
 PLUGIN_FOLDERS = ("CommonProgramFiles", "CommonProgramW6432", "CommonProgramFiles(x86)")
 PLUGIN_PATHS = ("XIRIUS_VST3_PATH", "CLAP_PATH", "XIRIUS_TEST_VST3_INSTRUMENT", "XIRIUS_ARA_REAL_PLUGIN",
-                "XIRIUS_ARA_REAL_COMMON_FILES")
+                "XIRIUS_ARA_REAL_COMMON_FILES", "XIRIUS_REAL_VST3_EFFECT", "XIRIUS_REAL_VST3_INSTRUMENT")
 
 
 def windows_all(args):
@@ -384,7 +395,7 @@ def main():
         return int(not context_catalog.check(args.check_coverage, Path(__file__).resolve().parent.parent))
     if args.plugins:
         if not args.list:
-            missing = sorted({v for v in PLUGIN_TESTS.values() if not os.environ.get(v)})
+            missing = [v for v in plugin_variables() if not os.environ.get(v)]
             if missing:
                 parser.error("set " + ", ".join(missing) + " to the plugins' files")
         selected = plugin_commands()

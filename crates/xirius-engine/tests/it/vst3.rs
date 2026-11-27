@@ -1,15 +1,18 @@
-//! Installed VST3 plugins inside the mixer, offline (ARC-011). Each test skips when its plugin
-//! is not installed.
+//! Plugins inside the mixer in process, offline (ARC-011): the test VST3 effect
+//! (`xirius-test-vst3`, its "Gain") as an insert, and the test CLAP plugin (`xirius-test-clap`,
+//! which plays a held key) as an instrument.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use xirius_engine::builtin::Sine;
+use xirius_engine::clap_plugin::ClapProcessor;
 use xirius_engine::engine::{self, EngineConfig};
 use xirius_engine::plugin::Vst3Processor;
 use xirius_engine::{
     Command, MixSpec, NoteKind, Plan, ProcessSetup, RenderMode, TrackSlot, TrackSpec,
 };
-use xirius_vst3::{Module, Plugin, default_vst3_dir};
+use xirius_vst3::{Module, Plugin};
 
 const SETUP: ProcessSetup = ProcessSetup {
     sample_rate: 48_000.0,
@@ -17,13 +20,17 @@ const SETUP: ProcessSetup = ProcessSetup {
     mode: RenderMode::Offline,
 };
 
-fn load(relative: &str) -> Option<(Plugin, Vst3Processor)> {
-    let path = default_vst3_dir().join(relative);
-    if !path.exists() {
-        eprintln!("skipped: {} is not installed", path.display());
-        return None;
-    }
-    let module = Arc::new(Module::load(&path).expect("load"));
+fn deps() -> PathBuf {
+    std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+fn load() -> (Plugin, Vst3Processor) {
+    xirius_test_vst3::fixture_marker();
+    let module = Arc::new(Module::load(&xirius_test_vst3::fixture_path(&deps())).expect("load"));
     let class = module
         .classes()
         .into_iter()
@@ -31,7 +38,7 @@ fn load(relative: &str) -> Option<(Plugin, Vst3Processor)> {
         .expect("an audio class");
     let mut plugin = Plugin::new(module, &class).expect("create");
     let processor = Vst3Processor::new(plugin.audio().expect("audio part"));
-    Some((plugin, processor))
+    (plugin, processor)
 }
 
 fn plan(track: TrackSpec) -> Plan {
@@ -60,9 +67,7 @@ fn render_rms(audio: &mut engine::AudioEngine, frames: usize) -> f64 {
 
 #[test]
 fn an_effect_plugin_runs_as_an_insert() {
-    let Some((plugin, gain)) = load("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    let (plugin, gain) = load();
     let mut t = TrackSpec::new("sine", Box::new(Sine::new(440.0, 0.5)));
     t.inserts.push(Box::new(gain));
     let (mut audio, _control) = engine::create(plan(t), EngineConfig::default());
@@ -78,20 +83,34 @@ fn an_effect_plugin_runs_as_an_insert() {
         .id;
     assert!(plugin.set_param(id, 0.0));
     let quiet = render_rms(&mut audio, 48_000);
-    eprintln!(
-        "kHs Gain insert: RMS {rms:.6}, at {} RMS {quiet:.6}",
-        plugin.param_text(id, 0.0).unwrap_or_default()
-    );
+    eprintln!("test gain insert: RMS {rms:.6}, at 0 RMS {quiet:.6}");
     assert!(quiet < rms / 10.0, "RMS {quiet}");
 }
 
 #[test]
 fn an_instrument_plugin_plays_engine_notes() {
-    let Some((_plugin, vital)) = load("Vital.vst3") else {
-        return;
-    };
+    xirius_test_clap::fixture_marker();
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("vst3");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(format!("instrument-{}.clap", std::process::id()));
+    std::fs::copy(
+        deps().join(format!(
+            "{}xirius_test_clap{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        )),
+        &file,
+    )
+    .unwrap();
+    let bundle = xirius_clap::Bundle::load(&file).unwrap();
+    let synth = ClapProcessor::new(
+        xirius_clap::Plugin::new(&bundle, xirius_test_clap::ID)
+            .unwrap()
+            .audio()
+            .unwrap(),
+    );
     let (mut audio, mut control) = engine::create(
-        plan(TrackSpec::new("vital", Box::new(vital))),
+        plan(TrackSpec::new("synth", Box::new(synth))),
         EngineConfig::default(),
     );
     assert_eq!(render_rms(&mut audio, 4800), 0.0);
@@ -115,7 +134,7 @@ fn an_instrument_plugin_plays_engine_notes() {
         .expect("queue a note");
     render_rms(&mut audio, 4 * 48_000);
     let released = render_rms(&mut audio, 9600);
-    eprintln!("Vital track: note RMS {playing:.6}, after release {released:.2e}");
+    eprintln!("instrument track: note RMS {playing:.6}, after release {released:.2e}");
     assert!(playing > 1e-3, "RMS {playing}");
     assert!(released < playing / 100.0, "RMS {released}");
 }

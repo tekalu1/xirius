@@ -8334,6 +8334,7 @@ dependencies = [
  "xirius-clap",
  "xirius-params",
  "xirius-test-clap",
+ "xirius-test-vst3",
  "xirius-vst3",
 ]
 

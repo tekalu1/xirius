@@ -3,7 +3,7 @@
 //! each bundle.
 //!
 //! The bundles are made here: one the child is told to crash on, one it is told to hang on,
-//! and a DLL that is not one. When kHs Gain is installed, a copy of it is opened as well.
+//! a DLL that is not one, and a copy of the test VST3 (`xirius-test-vst3`) that opens.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -46,22 +46,28 @@ fn fake_bundle(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
     b
 }
 
-/// The bundles of every test; the number of them, and whether kHs Gain is one.
-fn bundles(plugins: &Path) -> (usize, bool) {
+/// The name the test VST3 gives its one effect.
+const FIXTURE: &str = "Xirius Test Latency";
+
+/// The bundles of every test; the number of them. The test VST3 is copied under a name of its
+/// own: the DLL on Windows, the bundle's files on macOS.
+fn bundles(plugins: &Path) -> usize {
     fake_bundle(plugins, "Crashes On Load", b"MZ");
     fake_bundle(plugins, "Hangs On Load", b"MZ");
     fake_bundle(plugins, "Not A Dll", b"this is not a library");
-    let src = xirius_vst3::default_vst3_dir().join(r"Kilohearts\kHs Gain.vst3");
-    if src.is_file() {
-        std::fs::copy(src, plugins.join("kHs Gain.vst3")).unwrap();
-        (4, true)
+    xirius_test_vst3::fixture_marker();
+    let fixture =
+        xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
+    let dst = plugins.join("Test Gain.vst3");
+    if fixture.is_dir() {
+        std::fs::create_dir_all(dst.join("Contents/MacOS")).unwrap();
+        for file in ["Contents/Info.plist", "Contents/MacOS/Fixture"] {
+            std::fs::copy(fixture.join(file), dst.join(file)).unwrap();
+        }
     } else {
-        eprintln!(
-            "skipped the real plugin: {} is not installed",
-            src.display()
-        );
-        (3, false)
+        std::fs::copy(fixture, dst).unwrap();
     }
+    4
 }
 
 fn options(plugins: &Path, cache: &Path) -> ScanOptions {
@@ -87,7 +93,7 @@ fn options(plugins: &Path, cache: &Path) -> ScanOptions {
 }
 
 /// How long the scan gives one bundle. The hanging bundle holds the scan this long, so its
-/// progress can be seen. On Windows only the child's own time counts, so the real plugin, opened
+/// progress can be seen. On Windows only the child's own time counts, so the test VST3, opened
 /// by a child kept waiting for a processor on a busy machine, is not taken for a hanging one
 /// (ARC-037).
 const BUNDLE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -164,7 +170,7 @@ fn with_no_list_the_window_scans_by_itself_and_a_crash_does_not_stop_it() {
     let root_tmp = temp_dir("autoscan");
     let root = root_tmp.path().to_path_buf();
     let plugins = root.join("VST3");
-    let (n, real) = bundles(&plugins);
+    let n = bundles(&plugins);
     let cache = root.join("cache").join("plugins.json");
     let mut s = Studio::new(Song::sample_with(options(&plugins, &cache)));
     let steps = s.song().steps();
@@ -206,11 +212,9 @@ fn with_no_list_the_window_scans_by_itself_and_a_crash_does_not_stop_it() {
     let catalog = s.mixer.catalog.clone().expect("the scan's list");
     assert_eq!(catalog.failures.len(), 3, "{:?}", catalog.failures);
     let names = effect_names(&mut s);
-    if real {
-        assert!(names.iter().any(|x| x.starts_with("kHs Gain")), "{names:?}");
-        s.browser.press_rail(RailTab::Effects);
-        assert!(s.browser.library().iter().any(|x| x.name == "kHs Gain"));
-    }
+    assert!(names.iter().any(|x| x.starts_with(FIXTURE)), "{names:?}");
+    s.browser.press_rail(RailTab::Effects);
+    assert!(s.browser.library().iter().any(|x| x.name == FIXTURE));
     // Scanning is not an edit of the song.
     assert_eq!(s.song().steps(), steps);
     let _ = std::fs::remove_dir_all(&root);
@@ -221,7 +225,7 @@ fn scanning_again_from_the_insert_list_fills_it_when_done() {
     let root_tmp = temp_dir("rescan");
     let root = root_tmp.path().to_path_buf();
     let plugins = root.join("VST3");
-    let (_, real) = bundles(&plugins);
+    bundles(&plugins);
     let cache = root.join("plugins.json");
     let mut s = Studio::new(Song::sample_with(quick_options(&plugins, &cache)));
 
@@ -276,9 +280,8 @@ fn scanning_again_from_the_insert_list_fills_it_when_done() {
         names.contains(&"Comp — Test Audio".to_string()),
         "{names:?}"
     );
-    assert_eq!(
-        real,
-        names.iter().any(|x| x.starts_with("kHs Gain")),
+    assert!(
+        names.iter().any(|x| x.starts_with(FIXTURE)),
         "{names:?} {:?}",
         s.mixer.catalog.as_ref().map(|c| &c.failures)
     );
@@ -489,7 +492,7 @@ fn the_settings_page_and_the_browser_list_the_failures_and_retry_one() {
     let root_tmp = temp_dir("bad-group");
     let root = root_tmp.path().to_path_buf();
     let plugins = root.join("VST3");
-    let (_, _) = bundles(&plugins);
+    bundles(&plugins);
     let cache = root.join("plugins.json");
     let mut s = Studio::new(Song::sample_with(quick_options(&plugins, &cache)));
     s.browser.press_rail(RailTab::Effects);
@@ -563,7 +566,7 @@ fn the_settings_page_and_the_browser_list_the_failures_and_retry_one() {
     assert!(whys.contains(&"読み込めませんでした"), "{whys:?}");
 
     // A search leaves it out; clearing the search brings it back.
-    s.browser.search.set("kHs".to_string());
+    s.browser.search.set("Latency".to_string());
     assert!(
         s.browser
             .rows()

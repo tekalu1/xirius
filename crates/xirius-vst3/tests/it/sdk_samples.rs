@@ -1,7 +1,8 @@
 //! Hosts the VST3 SDK's own sample plugins (PLG-042): `host-checker`, which scores the host on
 //! the calls it sees, plus `again`, `adelay` and `note-expression-synth`, whose behaviour is
 //! known from their sources. Build them from the pinned SDK (docs/plugin-hosting.md) and point
-//! `XIRIUS_VST3_SDK_SAMPLES` at the folder holding the `.vst3` bundles; without it the tests skip.
+//! `XIRIUS_VST3_SDK_SAMPLES` at the folder holding the `.vst3` bundles. The tests are `#[ignore]`d
+//! and run with `-- --ignored`; without the variable they fail.
 //! Everything runs offline: no audio device, no window.
 
 use std::path::PathBuf;
@@ -12,11 +13,9 @@ use xirius_vst3::{Module, Note, Plugin};
 const RATE: f64 = 48_000.0;
 const BLOCK: usize = 512;
 
-fn load(bundle: &str) -> Option<Plugin> {
-    let Some(dir) = std::env::var_os("XIRIUS_VST3_SDK_SAMPLES") else {
-        eprintln!("skipped: XIRIUS_VST3_SDK_SAMPLES is not set");
-        return None;
-    };
+fn load(bundle: &str) -> Plugin {
+    let dir = std::env::var_os("XIRIUS_VST3_SDK_SAMPLES")
+        .expect("XIRIUS_VST3_SDK_SAMPLES names the folder of the built SDK samples");
     let path = PathBuf::from(dir).join(bundle);
     assert!(path.exists(), "{} is not built", path.display());
     let module = Arc::new(Module::load(&path).expect("load"));
@@ -25,7 +24,7 @@ fn load(bundle: &str) -> Option<Plugin> {
         .into_iter()
         .find(|c| c.is_audio_processor())
         .expect("an audio class");
-    Some(Plugin::new(module, &class).expect("create"))
+    Plugin::new(module, &class).expect("create")
 }
 
 fn param(plugin: &Plugin, title: &str) -> u32 {
@@ -58,10 +57,9 @@ fn sine(phase: &mut f64, out: &mut [f32]) {
 }
 
 #[test]
+#[ignore = "needs XIRIUS_VST3_SDK_SAMPLES (built from the pinned SDK, docs/plugin-hosting.md)"]
 fn host_checker_scores_the_host_and_takes_its_state_back() {
-    let Some(mut plugin) = load("host-checker.vst3") else {
-        return;
-    };
+    let mut plugin = load("host-checker.vst3");
     let score = param(&plugin, "Scoring");
     let before = plugin.param(score).unwrap();
     let mut audio = plugin.audio().expect("audio");
@@ -103,10 +101,9 @@ fn host_checker_scores_the_host_and_takes_its_state_back() {
 }
 
 #[test]
+#[ignore = "needs XIRIUS_VST3_SDK_SAMPLES (built from the pinned SDK, docs/plugin-hosting.md)"]
 fn again_scales_by_its_gain() {
-    let Some(mut plugin) = load("again.vst3") else {
-        return;
-    };
+    let mut plugin = load("again.vst3");
     let gain = param(&plugin, "Gain");
     assert!(plugin.set_param(gain, 0.25));
     let mut audio = plugin.audio().expect("audio");
@@ -133,10 +130,9 @@ fn again_scales_by_its_gain() {
 }
 
 #[test]
+#[ignore = "needs XIRIUS_VST3_SDK_SAMPLES (built from the pinned SDK, docs/plugin-hosting.md)"]
 fn adelay_delays_an_impulse_by_its_time() {
-    let Some(mut plugin) = load("adelay.vst3") else {
-        return;
-    };
+    let mut plugin = load("adelay.vst3");
     let delay = param(&plugin, "Delay");
     // 0.01 s at 48 kHz.
     assert!(plugin.set_param(delay, 0.01));
@@ -163,10 +159,9 @@ fn adelay_delays_an_impulse_by_its_time() {
 }
 
 #[test]
+#[ignore = "needs XIRIUS_VST3_SDK_SAMPLES (built from the pinned SDK, docs/plugin-hosting.md)"]
 fn note_expression_synth_sounds_on_a_note() {
-    let Some(mut plugin) = load("note-expression-synth.vst3") else {
-        return;
-    };
+    let mut plugin = load("note-expression-synth.vst3");
     let mut audio = plugin.audio().expect("audio");
     audio.prepare(RATE, BLOCK, true).expect("prepare");
     assert!(audio.has_event_input());

@@ -71,6 +71,9 @@ pub fn copies_dir(deps: &std::path::Path) -> std::path::PathBuf {
 pub const CRASH_PARAMETER: u32 = 3;
 /// Independent observable value for consecutive owner-command regression tests.
 pub const MIX_PARAMETER: u32 = 2;
+/// "Gain": the output times its value (1, unity, by default), at the sample its points name.
+/// A gain other than unity is saved after the latency, as four more bytes (an `f32`).
+pub const GAIN_PARAMETER: u32 = 4;
 pub const CRASH_EXIT_CODE: i32 = 86;
 /// The keys its one program names (`IUnitInfo` program pitch names), and what it calls them.
 pub const NOTE_NAMES: [(u8, &str); 2] = [(36, "Fixture Kick"), (38, "Fixture Snare")];
@@ -218,6 +221,7 @@ impl IPluginFactoryTrait for Factory {
             arrangements_ok: AtomicU32::new(0),
             delay: Arc::new(AtomicU32::new(0)),
             mix: AtomicU32::new(0),
+            gain: AtomicU32::new(1f32.to_bits()),
             #[cfg(target_os = "windows")]
             number,
             home: std::thread::current().id(),
@@ -242,6 +246,8 @@ struct Latency {
     /// Shared with the editor's view, which shows it.
     delay: Arc<AtomicU32>,
     mix: AtomicU32,
+    /// [`GAIN_PARAMETER`], as `f32` bits.
+    gain: AtomicU32,
     /// Which instance of this process this is (1 for the first), shown in the editor.
     #[cfg(target_os = "windows")]
     number: u32,
@@ -317,6 +323,17 @@ impl Latency {
             if self.delay.swap(delay, Ordering::Relaxed) != delay {
                 self.notify_latency();
             }
+            let mut more = [0u8; 4];
+            let mut got = 0;
+            // SAFETY: as above; a state of four bytes has no gain, and is unity.
+            let gain = if unsafe { stream.read(more.as_mut_ptr().cast(), 4, &mut got) } == kResultOk
+                && got == 4
+            {
+                f32::from_le_bytes(more).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            self.gain.store(gain.to_bits(), Ordering::Relaxed);
         }
         result
     }
@@ -331,16 +348,23 @@ impl Latency {
         let Some(stream) = (unsafe { vst3::ComRef::from_raw(state) }) else {
             return kInvalidArgument;
         };
-        let value = if STATE_VOLATILE.load(Ordering::Relaxed) != 0
+        let volatile = STATE_VOLATILE.load(Ordering::Relaxed) != 0
             || std::env::var_os("XIRIUS_FIXTURE_VOLATILE_STATE").as_deref()
-                == Some(std::ffi::OsStr::new("1"))
-        {
+                == Some(std::ffi::OsStr::new("1"));
+        let value = if volatile {
             STATE_COUNTER.fetch_add(1, Ordering::Relaxed)
         } else {
             self.delay.load(Ordering::Relaxed)
         };
         let mut bytes = value.to_le_bytes();
         // SAFETY: valid stream and a four-byte buffer that outlives the call.
+        let result = unsafe { stream.write(bytes.as_mut_ptr().cast(), 4, std::ptr::null_mut()) };
+        let gain = f32::from_bits(self.gain.load(Ordering::Relaxed));
+        if result != kResultOk || volatile || gain == 1.0 {
+            return result;
+        }
+        let mut bytes = gain.to_le_bytes();
+        // SAFETY: as above.
         unsafe { stream.write(bytes.as_mut_ptr().cast(), 4, std::ptr::null_mut()) }
     }
     fn notify_latency(&self) {
@@ -505,8 +529,24 @@ impl IAudioProcessorTrait for Latency {
                 }
                 return kResultOk;
             }
+            // The gain's points in this block, in order: (offset, value).
+            let mut gains = [(0i32, 0f32); 32];
+            let mut gain_points = 0;
             if let Some(changes) = vst3::ComRef::from_raw(data.inputParameterChanges) {
                 for i in 0..changes.getParameterCount() {
+                    if let Some(queue) = vst3::ComRef::from_raw(changes.getParameterData(i))
+                        && queue.getParameterId() == GAIN_PARAMETER
+                    {
+                        for point in 0..queue.getPointCount() {
+                            let (mut offset, mut value) = (0, 0.0);
+                            if gain_points < gains.len()
+                                && queue.getPoint(point, &mut offset, &mut value) == kResultOk
+                            {
+                                gains[gain_points] = (offset, value.clamp(0.0, 1.0) as f32);
+                                gain_points += 1;
+                            }
+                        }
+                    }
                     if let Some(queue) = vst3::ComRef::from_raw(changes.getParameterData(i))
                         && queue.getParameterId() == CRASH_PARAMETER
                     {
@@ -535,7 +575,12 @@ impl IAudioProcessorTrait for Latency {
                     }
                 }
             }
-            // A call without buffers only flushes parameters: nothing to do.
+            let gains = &gains[..gain_points];
+            let mut gain = f32::from_bits(self.gain.load(Ordering::Relaxed));
+            // A call without buffers only flushes parameters: nothing else to do.
+            if let Some(&(_, last)) = gains.last() {
+                self.gain.store(last.to_bits(), Ordering::Relaxed);
+            }
             if data.numInputs < 1
                 || data.numOutputs < 1
                 || data.inputs.is_null()
@@ -553,11 +598,15 @@ impl IAudioProcessorTrait for Latency {
             let delay = self.delay.load(Ordering::Relaxed) as usize;
             let buffers = &mut *self.buffers.get();
             let position = &mut *self.position.get();
+            let mut next = gains.iter().peekable();
             for i in 0..data.numSamples as usize {
+                while let Some(&(_, value)) = next.next_if(|p| p.0 <= i as i32) {
+                    gain = value;
+                }
                 for (ch, buffer) in buffers.iter_mut().enumerate() {
                     let value = *(*input.add(ch)).add(i);
                     buffer[*position] = value;
-                    *(*output.add(ch)).add(i) = buffer[(*position + 512 - delay) % 512];
+                    *(*output.add(ch)).add(i) = buffer[(*position + 512 - delay) % 512] * gain;
                 }
                 *position = (*position + 1) % 512;
             }
@@ -576,10 +625,10 @@ impl IEditControllerTrait for Latency {
         unsafe { self.save(state) }
     }
     unsafe fn getParameterCount(&self) -> int32 {
-        3
+        4
     }
     unsafe fn getParameterInfo(&self, index: int32, info: *mut ParameterInfo) -> tresult {
-        if !(0..3).contains(&index) || info.is_null() {
+        if !(0..4).contains(&index) || info.is_null() {
             return kInvalidArgument;
         }
         // SAFETY: checked writable SDK output; all parameters use bounded normalized values.
@@ -588,14 +637,23 @@ impl IEditControllerTrait for Latency {
             (*info).id = match index {
                 0 => 1,
                 1 => CRASH_PARAMETER,
-                _ => MIX_PARAMETER,
+                2 => MIX_PARAMETER,
+                _ => GAIN_PARAMETER,
             };
-            (*info).stepCount = if index == 1 { 1 } else { 256 };
+            (*info).stepCount = match index {
+                1 => 1,
+                3 => 0,
+                _ => 256,
+            };
+            if index == 3 {
+                (*info).defaultNormalizedValue = 1.0;
+            }
             (*info).flags = 1;
             let title = match index {
                 0 => "Latency",
                 1 => "Crash",
-                _ => "Mix",
+                2 => "Mix",
+                _ => "Gain",
             };
             for (dst, src) in (*info).title.iter_mut().zip(title.encode_utf16()) {
                 *dst = src;
@@ -619,22 +677,37 @@ impl IEditControllerTrait for Latency {
     ) -> tresult {
         kResultFalse
     }
-    unsafe fn normalizedParamToPlain(&self, _: ParamID, value: ParamValue) -> ParamValue {
-        value * 256.0
+    unsafe fn normalizedParamToPlain(&self, id: ParamID, value: ParamValue) -> ParamValue {
+        if id == GAIN_PARAMETER {
+            value
+        } else {
+            value * 256.0
+        }
     }
-    unsafe fn plainParamToNormalized(&self, _: ParamID, value: ParamValue) -> ParamValue {
-        value / 256.0
+    unsafe fn plainParamToNormalized(&self, id: ParamID, value: ParamValue) -> ParamValue {
+        if id == GAIN_PARAMETER {
+            value
+        } else {
+            value / 256.0
+        }
     }
     unsafe fn getParamNormalized(&self, id: ParamID) -> ParamValue {
         if id == 1 {
             f64::from(self.delay.load(Ordering::Relaxed)) / 256.0
         } else if id == MIX_PARAMETER {
             f64::from(self.mix.load(Ordering::Relaxed)) / 256.0
+        } else if id == GAIN_PARAMETER {
+            f64::from(f32::from_bits(self.gain.load(Ordering::Relaxed)))
         } else {
             0.0
         }
     }
     unsafe fn setParamNormalized(&self, id: ParamID, value: ParamValue) -> tresult {
+        if id == GAIN_PARAMETER {
+            self.gain
+                .store((value.clamp(0.0, 1.0) as f32).to_bits(), Ordering::Relaxed);
+            return kResultOk;
+        }
         if id == MIX_PARAMETER {
             self.mix.store(
                 (value.clamp(0.0, 1.0) * 256.0).round() as u32,
