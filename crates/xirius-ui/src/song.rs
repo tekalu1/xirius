@@ -956,7 +956,7 @@ impl Song {
     /// A new song with no tracks: the screen shows where to start (UI-074).
     pub fn empty() -> Song {
         Song::start(
-            Session::new(EMPTY_NAME),
+            Project::new(EMPTY_NAME),
             crate::mixer::scan::options(),
             default_trash(),
             None,
@@ -968,7 +968,7 @@ impl Song {
     /// person using it, not to a song, so they are carried over and not read again.
     pub fn empty_after(old: &Song) -> Song {
         Song::start(
-            Session::new(EMPTY_NAME),
+            Project::new(EMPTY_NAME),
             old.scan.clone(),
             old.trash.clone(),
             Some((old.settings.clone(), old.io.clone())),
@@ -979,7 +979,7 @@ impl Song {
     /// carries its settings and device list over as [`Song::empty_after`] does.
     pub fn imported_after(old: &Song, project: Project) -> Song {
         Song::start(
-            Session::with_registry(project, xirius_session::commands::shared_registry()),
+            project,
             old.scan.clone(),
             old.trash.clone(),
             Some((old.settings.clone(), old.io.clone())),
@@ -994,10 +994,17 @@ impl Song {
             .unwrap_or_else(|| Arc::new(xirius_session::os::trash))
     }
 
+    /// The sample song's project. It comes out the same each time (an id is from the project's
+    /// own counter), so it is built once and copied: a test opens it many times.
     pub(crate) fn sample_project() -> Project {
-        let mut b = Builder::new();
-        b.build();
-        b.session.project().clone()
+        static BUILT: std::sync::OnceLock<Project> = std::sync::OnceLock::new();
+        BUILT
+            .get_or_init(|| {
+                let mut b = Builder::new();
+                b.build();
+                b.session.project().clone()
+            })
+            .clone()
     }
 
     pub(crate) fn opened(&mut self, sample: bool, draft: bool) {
@@ -1016,9 +1023,7 @@ impl Song {
         trash: Option<Trash>,
         carried: Option<(xirius_prefs::Shared, xirius_session::audio_settings::Shared)>,
     ) -> Song {
-        let mut b = Builder::new();
-        b.build();
-        let mut song = Song::start(b.session, scan, trash, carried);
+        let mut song = Song::start(Song::sample_project(), scan, trash, carried);
         song.sample = true;
         song
     }
@@ -1026,13 +1031,13 @@ impl Song {
     /// The screen's song from `built`, with an empty history. `carried` is the settings and the
     /// device list of the song it takes the place of (none: this is the first, in memory).
     fn start(
-        built: Session,
+        built: Project,
         scan: ScanOptions,
         trash: Option<Trash>,
         carried: Option<(xirius_prefs::Shared, xirius_session::audio_settings::Shared)>,
     ) -> Song {
         let registry = xirius_session::commands::shared_registry();
-        let mut session = Session::with_registry(built.project().clone(), registry.clone());
+        let mut session = Session::with_registry(built, registry.clone());
         // A test's song keeps its places, presets and app files in a folder of its own, removed
         // with it, so a test never reads or writes the person's, nor another test's.
         #[cfg(test)]

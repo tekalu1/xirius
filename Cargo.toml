@@ -25,5 +25,10 @@ debug = "line-tables-only"
 [profile.dev.package.sha2]
 opt-level = 3
 
+# An export measures its loudness and true peak (EXP-018). Unoptimized, measuring each stem of a
+# few bars takes about a second, and the export tests write many.
+[profile.dev.package.ebur128]
+opt-level = 3
+
 [profile.test]
 debug = "line-tables-only"
