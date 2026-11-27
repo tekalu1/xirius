@@ -762,6 +762,28 @@ mod refused_start_tests {
     }
 }
 
+/// A test that asked the host to go down sees it go, even when the automatic restart, on a
+/// thread of its own as soon as the host is down, has taken `crashed` back before it looks.
+#[cfg(test)]
+mod wait_down_tests {
+    use super::*;
+
+    #[test]
+    fn a_host_that_went_down_and_was_restarted_before_the_wait_looked_went_down() {
+        let server = PluginServer::new(None);
+        server.inner.lock().epoch = 1;
+        server.kill();
+        server.inner.went_down(1, None, false, false);
+        // The restart's first step, before the waiting test gets the lock.
+        server.inner.restart(server.inner.lock(), false).unwrap();
+        assert!(!server.crashed());
+        assert!(server.wait_down(Duration::ZERO));
+        // Asked again, it waits for the host to go down again.
+        server.kill();
+        assert!(!server.wait_down(Duration::ZERO));
+    }
+}
+
 #[cfg(test)]
 mod capture_tests {
     use super::*;
@@ -1510,6 +1532,10 @@ struct State {
     recovering: bool,
     exit_code: Option<u32>,
     crashes: u64,
+    /// The crashes counted when a test last asked the host to go down (a kill or a fault).
+    /// [`PluginServer::wait_down`] waits for one more: an automatic restart takes `crashed`
+    /// back at once, maybe before the waiting test gets to look.
+    crashes_when_asked: u64,
     recent_crashes: VecDeque<Instant>,
     /// The newest host generation whose start was refused (wrong protocol, no greeting): its
     /// ending is not a crash, whenever it is seen.
@@ -2288,6 +2314,10 @@ impl PluginServer {
     /// Makes the plugin's audio thread crash or hang after `after_blocks` more blocks. For
     /// tests of what happens when a plugin fails.
     pub fn fault(&self, link: &PluginLink, kind: Fault, after_blocks: u64) {
+        {
+            let mut st = self.inner.lock();
+            st.crashes_when_asked = st.crashes;
+        }
         self.with_slot(link, |o| {
             Some(ToHost::Fault {
                 slot: o.slot,
@@ -2299,16 +2329,19 @@ impl PluginServer {
 
     /// Kills the host process as a crash would end it.
     pub fn kill(&self) {
-        if let Some(p) = &self.inner.lock().proc {
+        let mut st = self.inner.lock();
+        st.crashes_when_asked = st.crashes;
+        if let Some(p) = &st.proc {
             p.stop.store(KILL, Ordering::Release);
         }
     }
 
-    /// Waits until the host process has gone down (after [`PluginServer::kill`] or a fault).
+    /// Waits until the host process is down, or has gone down since the last
+    /// [`PluginServer::kill`] or fault even if an automatic restart has brought it back.
     pub fn wait_down(&self, timeout: Duration) -> bool {
         let end = Instant::now() + timeout;
         let mut st = self.inner.lock();
-        while !st.crashed {
+        while !st.crashed && st.crashes == st.crashes_when_asked {
             let now = Instant::now();
             if now >= end {
                 return false;
