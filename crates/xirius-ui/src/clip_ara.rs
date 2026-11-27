@@ -26,6 +26,7 @@ use xirius_session::ara::{Phase, Report};
 use xirius_session::output::OutputMode;
 use xirius_vst3::{EditorAction, EditorBar};
 
+use crate::arrange::clipfx::FxEdit;
 use crate::draw::{Align, Pen};
 use crate::popup::{Action, PopupKind};
 use crate::studio::{Geometry, Rect, Studio};
@@ -225,7 +226,14 @@ impl Studio {
     /// Where the badge of `clip` (at `r`) sits: right after its name, before the marks, and at
     /// the name's start when the clip is too narrow for the name. It stays inside the clip: a
     /// busy badge without the room drops its percent, and the box is cut at the clip's end.
-    pub fn ara_badge_rect(&self, track: &Track, clip: &Clip, r: Rect, badge: &Badge) -> Rect {
+    pub fn ara_badge_rect(
+        &self,
+        track: &Track,
+        clip: &Clip,
+        r: Rect,
+        badge: &Badge,
+        edits: &[(ClipId, FxEdit)],
+    ) -> Rect {
         let pad = Space::X1.px();
         let mut name_x = r.x + pad;
         if crate::draw::clip_badge(self, track.id).is_some() {
@@ -236,7 +244,8 @@ impl Studio {
         let end = if marks.is_empty() {
             r.right()
         } else {
-            crate::clip_marks::marks_left(&marks, r, name_w, ara_reserve()) - 2.0
+            let flag = crate::clip_marks::fade_flag(self, track, clip, r, edits);
+            crate::clip_marks::marks_left(&marks, r, name_w, ara_reserve(), flag) - 2.0
         };
         let end = end.min(r.right());
         let full = badge.width();
@@ -260,7 +269,8 @@ impl Studio {
         let t = p.tracks.get(&track)?;
         let c = t.clips.iter().find(|c| c.id == clip)?;
         let r = self.clip_rect(g, &row, c);
-        let at = self.ara_badge_rect(t, c, r, &badge);
+        let edits = crate::arrange::clipfx_paint::drag_edits(self, g);
+        let at = self.ara_badge_rect(t, c, r, &badge, &edits);
         let x = at.x.max(r.x);
         let w = at.right().min(r.right()) - x;
         let h = at.bottom().min(r.bottom()) - at.y;

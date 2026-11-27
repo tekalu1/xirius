@@ -1595,7 +1595,10 @@ impl Studio {
                 let stacks = xirius_core::takes::stacks(track);
                 if let Some((clip, r)) = self.clip_at(g, row, track, &stacks, x, y) {
                     if let Some(badge) = self.ara_badge(clip.id)
-                        && self.ara_badge_rect(track, clip, r, &badge).contains(x, y)
+                        && let edits = crate::arrange::clipfx_paint::drag_edits(self, g)
+                        && self
+                            .ara_badge_rect(track, clip, r, &badge, &edits)
+                            .contains(x, y)
                     {
                         return Hit::Ara(t, clip.id);
                     }

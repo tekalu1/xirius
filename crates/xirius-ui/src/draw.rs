@@ -1148,7 +1148,9 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
                         studio.wave_zoom,
                         cr.x,
                     );
-                    paint_clip(pen, track, clip, cr, selected, takes, &height, studio, None);
+                    paint_clip(
+                        pen, track, clip, cr, selected, takes, &height, &edits, studio, None,
+                    );
                     // A dropped file's clip comes up from its ghost (UI-386): the lane shows
                     // through less and less.
                     if let Some(alpha) =
@@ -1928,9 +1930,9 @@ pub(crate) fn takes_under(
         .filter(|n| *n > 1)
 }
 
-/// One clip in the lanes. `ghost` is the see-through clip of a file being dragged (UI-381): the
-/// face at that opacity, no border or marks, the name, and the waveform once its peaks are
-/// made.
+/// One clip in the lanes, its marks clear of the fade drag under way (`edits`). `ghost` is the
+/// see-through clip of a file being dragged (UI-381): the face at that opacity, no border or
+/// marks, the name, and the waveform once its peaks are made.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_clip(
     pen: &mut Pen,
@@ -1940,6 +1942,7 @@ pub(crate) fn paint_clip(
     selected: bool,
     takes: Option<usize>,
     height: &crate::wave::Height,
+    edits: &[(xirius_core::id::ClipId, crate::arrange::clipfx::FxEdit)],
     studio: &Studio,
     ghost: Option<f32>,
 ) {
@@ -2024,10 +2027,11 @@ pub(crate) fn paint_clip(
             r.right()
         } else {
             let name_w = pen.measure(&clip.name, FontSize::Caption, name_weight);
-            crate::clip_marks::paint_marks(pen, &marks, r, name_w, reserve) - 2.0
+            let flag = crate::clip_marks::fade_flag(studio, track, clip, r, edits);
+            crate::clip_marks::paint_marks(pen, &marks, r, name_w, reserve, flag) - 2.0
         };
         if let Some(badge) = &ara {
-            let at = studio.ara_badge_rect(track, clip, r, badge);
+            let at = studio.ara_badge_rect(track, clip, r, badge, edits);
             let hot = studio.arrange.hover
                 == crate::arrange::Spot::Ara {
                     track: track.id,

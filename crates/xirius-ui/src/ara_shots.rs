@@ -250,7 +250,7 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             s.beat_w *= 34.0 / w;
             let r = s.clip_rect(g, &row, &clip);
             let badge = s.ara_badge(c).unwrap();
-            let at = s.ara_badge_rect(&p.tracks[&t], &clip, r, &badge);
+            let at = s.ara_badge_rect(&p.tracks[&t], &clip, r, &badge, &[]);
             assert_eq!(at.w, crate::clip_ara::BOX_W);
             assert!(at.x >= r.x && at.right() <= r.right(), "{at:?} {r:?}");
         }
