@@ -157,7 +157,9 @@ const VOCAL: &str = "Vocal";
 /// The loop's tempo: four bars of it are 9.6 seconds.
 const LOOP_BPM: f64 = 100.0;
 /// The file: three minutes of the loop, so its stretched sound takes a few seconds to make.
-const LOOP_SECS: f64 = 180.0;
+/// The tests play no window and see no working sound: half a minute (more than the four
+/// bars the clip shows and the bar the drag adds) makes each sound six times sooner.
+const LOOP_SECS: f64 = if cfg!(test) { 30.0 } else { 180.0 };
 
 fn shots_dir() -> PathBuf {
     std::env::temp_dir().join(format!("xirius-audioproc-shots-{}", std::process::id()))
