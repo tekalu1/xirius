@@ -1,6 +1,109 @@
 # Xirius の方針と進み具合の正本。ここを直したら `python scripts/plan.py check` を通す。
 # 説明は docs/PLAN.md。
 
+# 流れを通す試験（`tests`、docs/PLAN.md）を書くようになる前に済みにした項目。
+# 新しく済みにする項目は、ここに足さず `tests` を書く。
+done_before_tests = [
+    "REC-002", "REC-003", "REC-005", "REC-006", "REC-007", "EDT-001", "EDT-002", "EDT-003",
+    "EDT-004", "EDT-005", "EDT-006", "EDT-007", "MIX-001", "MIX-002", "MIX-003", "MIX-004",
+    "MIX-005", "MIX-006", "MIX-007", "PLG-001", "PLG-002", "PLG-003", "PLG-006", "PLG-008",
+    "PLG-009", "PLG-010", "PLG-011", "PLG-012", "PLG-013", "AUT-001", "AUT-002", "TMP-001",
+    "ARR-001", "ARR-002", "BRW-001", "BRW-002", "BRW-003", "BRW-004", "EXP-001", "EXP-002",
+    "EXP-003", "EXP-004", "EXP-047", "EXP-048", "EXP-049", "OPS-002", "OPS-003", "OPS-004",
+    "OPS-005", "OPS-006", "OPS-007", "OPS-008", "AI-001", "AI-002", "PRJ-001", "UI-001",
+    "EXP-008", "AI-003", "PRJ-002", "AI-004", "ARC-001", "ARC-002", "ARC-003", "ARC-004",
+    "ARC-005", "ENG-002", "LIC-002", "UI-003", "UI-004", "UI-006", "UI-007", "UI-008",
+    "UI-009", "UI-010", "UI-011", "UI-012", "UI-013", "UI-014", "UI-015", "AI-005",
+    "AI-006", "EDT-010", "UI-016", "UI-017", "BRW-005", "BRW-006", "BRW-007", "BRW-008",
+    "BRW-009", "BRW-010", "BRW-011", "PLG-016", "MIX-011", "MIX-012", "MIX-013", "ARR-003",
+    "TMP-002", "ARR-004", "UI-018", "UI-019", "UI-020", "EDT-012", "EDT-013", "EDT-014",
+    "AUT-004", "AUT-005", "AUT-006", "AUT-007", "OPS-011", "MIX-014", "MIX-015", "MIX-016",
+    "MIX-017", "MIX-018", "MIX-019", "MIX-020", "MIX-021", "UI-021", "MIX-022", "MIX-023",
+    "MIX-024", "MIX-025", "MIX-026", "UI-022", "EXP-009", "EXP-010", "EXP-011", "EXP-012",
+    "EXP-013", "EXP-014", "EXP-015", "EXP-016", "EXP-017", "EXP-018", "EXP-019", "EXP-020",
+    "EXP-021", "EXP-022", "EXP-023", "CTX-001", "CTX-002", "CTX-003", "CTX-004", "CTX-005",
+    "CTX-006", "CTX-007", "CTX-008", "CTX-009", "CTX-010", "OPS-012", "OPS-014", "OPS-015",
+    "CTX-011", "CTX-012", "CTX-013", "CTX-014", "CTX-015", "CTX-016", "CTX-017", "CTX-018",
+    "CTX-019", "CTX-020", "CTX-021", "CTX-022", "CTX-023", "CTX-024", "CTX-025", "CTX-026",
+    "CTX-027", "CTX-028", "CTX-029", "CTX-030", "CTX-031", "CTX-032", "CTX-033", "CTX-034",
+    "CTX-035", "CTX-036", "CTX-037", "CTX-038", "CTX-039", "CTX-040", "CTX-041", "CTX-042",
+    "CTX-043", "CTX-044", "CTX-045", "CTX-046", "CTX-047", "CTX-048", "CTX-049", "CTX-050",
+    "CTX-051", "CTX-052", "CTX-053", "CTX-054", "EDT-015", "EDT-016", "EDT-103", "EDT-104",
+    "EDT-105", "EDT-106", "EDT-107", "EDT-108", "EDT-109", "EDT-110", "EDT-111", "EDT-131",
+    "KEY-046", "CTX-080", "EDT-017", "EDT-018", "EDT-019", "EDT-020", "EDT-021", "EDT-022",
+    "ARR-005", "ARR-006", "PLG-017", "PLG-018", "PLG-019", "PLG-020", "PLG-021", "BRW-012",
+    "BRW-013", "BRW-014", "BRW-015", "BRW-016", "MIX-027", "MIX-028", "MIX-029", "MIX-030",
+    "MIX-031", "MIX-032", "MIX-033", "MIX-034", "MIX-035", "MIX-036", "EXP-024", "EXP-025",
+    "EXP-026", "EXP-027", "EDT-025", "EDT-026", "EDT-027", "EDT-028", "EDT-029", "EDT-030",
+    "EDT-031", "EDT-032", "EDT-033", "EDT-034", "EDT-035", "EDT-036", "EDT-037", "EDT-038",
+    "EDT-039", "EDT-040", "EDT-041", "EDT-042", "EDT-043", "EDT-044", "EDT-045", "EDT-046",
+    "EDT-047", "EDT-048", "EDT-049", "EDT-050", "EDT-051", "EDT-052", "EDT-053", "EDT-054",
+    "EDT-055", "EDT-056", "EDT-057", "EDT-058", "EDT-059", "EDT-060", "EDT-061", "EDT-062",
+    "EDT-063", "EDT-064", "EDT-065", "EDT-066", "EDT-067", "AUT-008", "AUT-009", "AUT-010",
+    "AUT-011", "AUT-012", "EDT-068", "EDT-069", "EDT-070", "EDT-071", "EDT-072", "EDT-073",
+    "EDT-074", "EDT-075", "REC-009", "EDT-076", "KEY-001", "KEY-002", "KEY-004", "KEY-006",
+    "KEY-007", "KEY-008", "KEY-009", "KEY-010", "KEY-011", "KEY-012", "KEY-013", "KEY-015",
+    "KEY-016", "KEY-017", "KEY-018", "KEY-019", "KEY-020", "KEY-021", "KEY-022", "KEY-023",
+    "SET-001", "SET-002", "SET-003", "SET-004", "SET-005", "SET-006", "SET-007", "SET-008",
+    "KEY-025", "VER-001", "VER-006", "CTX-055", "CTX-056", "CTX-057", "CTX-058", "CTX-059",
+    "CTX-060", "UI-024", "UI-027", "UI-028", "UI-029", "UI-030", "UI-031", "UI-032",
+    "UI-033", "UI-035", "UI-036", "UI-037", "UI-038", "UI-039", "UI-040", "UI-042",
+    "ARC-006", "ARC-007", "ARC-008", "ARC-009", "ARC-010", "ARC-011", "ARC-012", "ARC-013",
+    "ARC-014", "ARC-015", "ENG-004", "ENG-005", "ENG-006", "ENG-008", "ENG-009", "ENG-010",
+    "ENG-011", "ENG-013", "PLG-022", "PLG-023", "PLG-024", "PLG-025", "ENG-014", "ENG-015",
+    "ENG-016", "ENG-017", "ENG-018", "ENG-019", "ENG-020", "ENG-021", "ENG-022", "ENG-023",
+    "ENG-024", "ENG-027", "PLG-027", "PLG-028", "PLG-030", "PLG-039", "PLG-041", "PLG-042",
+    "LIC-003", "LIC-005", "LIC-007", "LIC-009", "LIC-010", "LIC-011", "LIC-013", "LIC-014",
+    "ARC-016", "AI-007", "ARC-017", "AI-008", "AI-009", "AI-010", "AI-011", "AI-012",
+    "AI-013", "ENG-030", "PLG-043", "AI-014", "ARC-018", "ARC-020", "ENG-031", "ENG-032",
+    "AI-015", "AI-016", "AI-017", "AI-018", "UI-044", "UI-045", "UI-046", "UI-047",
+    "ARC-021", "PLG-044", "AI-019", "PRJ-004", "PRJ-005", "PRJ-006", "ARC-022", "AI-020",
+    "AI-021", "UI-049", "UI-050", "UI-051", "UI-052", "UI-053", "UI-054", "UI-056",
+    "UI-057", "UI-058", "UI-060", "ARC-023", "ARC-024", "AI-022", "AI-023", "AI-024",
+    "UI-061", "ENG-033", "UI-062", "UI-063", "UI-064", "UI-065", "UI-066", "UI-067",
+    "UI-068", "UI-069", "UI-070", "PRJ-007", "PRJ-008", "PLG-045", "PLG-046", "AUT-013",
+    "AUT-014", "AUT-015", "AUT-016", "ENG-034", "ENG-035", "ENG-036", "EDT-079", "EDT-080",
+    "EDT-081", "EDT-082", "EDT-083", "ENG-037", "UI-072", "UI-073", "UI-075", "UI-076",
+    "UI-077", "UI-078", "UI-079", "UI-082", "UI-083", "REC-010", "REC-011", "REC-012",
+    "REC-013", "REC-014", "REC-015", "REC-016", "UI-086", "REC-017", "REC-018", "REC-019",
+    "REC-020", "REC-021", "REC-022", "REC-023", "UI-150", "UI-151", "PLG-050", "PLG-051",
+    "PLG-052", "PLG-053", "PLG-054", "PLG-055", "PLG-056", "AI-025", "AI-026", "AI-027",
+    "AI-028", "AI-029", "AI-030", "AI-031", "AI-032", "AI-033", "AI-034", "UI-087",
+    "UI-088", "UI-089", "UI-090", "UI-091", "UI-092", "UI-093", "UI-095", "UI-096",
+    "UI-097", "UI-098", "UI-099", "UI-100", "UI-101", "UI-102", "UI-103", "UI-104",
+    "UI-105", "UI-106", "UI-107", "UI-108", "UI-109", "UI-110", "UI-111", "UI-112",
+    "AI-035", "AI-036", "AI-037", "PRJ-009", "PRJ-010", "PRJ-011", "PRJ-012", "PRJ-013",
+    "PRJ-014", "PRJ-015", "PRJ-016", "PRJ-018", "PRJ-019", "PRJ-020", "ARC-026", "MIX-037",
+    "MIX-038", "ARR-007", "AUT-017", "KEY-026", "ARC-027", "LIC-015", "UI-116", "UI-117",
+    "UI-118", "UI-119", "UI-120", "UI-121", "UI-122", "UI-123", "UI-124", "UI-125",
+    "UI-126", "UI-127", "UI-128", "UI-240", "UI-241", "UI-242", "UI-243", "UI-244",
+    "ARC-028", "ARC-046", "ARC-029", "ARC-030", "ARC-031", "ARC-032", "ARC-033", "ARC-034",
+    "ARC-035", "ARC-036", "UI-180", "UI-181", "UI-182", "UI-183", "UI-184", "UI-185",
+    "UI-200", "EDT-137", "EDT-138", "EDT-139", "LIC-031", "LIC-032", "LIC-033", "LIC-034",
+    "LIC-035", "LIC-036", "LIC-037", "LIC-038", "LIC-039", "LIC-040", "LIC-041", "LIC-042",
+    "LIC-043", "ENG-060", "UI-170", "UI-171", "UI-280", "UI-281", "UI-260", "UI-261",
+    "UI-262", "UI-263", "PLG-059", "ENG-061", "LIC-016", "ARC-037", "ARC-038", "EDT-134",
+    "ARC-039", "ARC-040", "ARC-041", "EDT-135", "LIC-017", "LIC-018", "LIC-019", "LIC-021",
+    "ENG-062", "ENG-080", "LIC-023", "LIC-022", "ARC-042", "UI-283", "EDT-136", "UI-284",
+    "UI-285", "ARC-043", "ARC-044", "ENG-063", "PRJ-021", "PRJ-022", "PRJ-023", "LIC-024",
+    "LIC-025", "UI-286", "UI-287", "UI-288", "UI-289", "ENG-064", "ENG-065", "PRJ-024",
+    "ENG-066", "ENG-067", "PRJ-025", "ENG-068", "ENG-069", "ENG-070", "ENG-071", "EDT-140",
+    "UI-290", "PLG-060", "UI-291", "UI-292", "UI-293", "UI-294", "UI-295", "UI-296",
+    "UI-297", "LIC-030", "UI-303", "UI-304", "UI-300", "UI-302", "UI-301", "ARC-045",
+    "UI-305", "UI-306", "UI-308", "UI-307", "UI-309", "REC-024", "REC-025", "UI-310",
+    "UI-311", "UI-312", "UI-313", "UI-315", "UI-316", "UI-317", "UI-319", "MCP-001",
+    "MCP-002", "MCP-003", "MCP-004", "MCP-005", "MCP-007", "MCP-008", "MCP-009", "CLI-001",
+    "CLI-002", "UI-320", "PLG-063", "PLG-071", "ENG-074", "ENG-077", "ENG-078", "PRJ-026",
+    "MIX-047", "UI-340", "CLI-003", "UI-339", "REC-026", "PRJ-029", "PRJ-030", "PRJ-031",
+    "PRJ-027", "BRW-019", "BRW-020", "BRW-022", "UI-344", "UI-345", "UI-349", "UI-351",
+    "UI-352", "UI-353", "UI-354", "UI-355", "UI-357", "UI-358", "UI-356", "PLG-076",
+    "MIX-051", "PLG-077", "UI-360", "UI-361", "UI-362", "UI-365", "UI-366", "UI-367",
+    "UI-368", "ARC-047", "ARC-048", "ARC-049", "ARC-051", "ARC-052", "ARC-053", "ARC-054",
+    "ARC-055", "ARC-056", "ARC-057", "UI-371", "UI-370", "UI-373", "UI-375", "UI-376",
+    "UI-377", "EDT-141", "PRJ-032", "PRJ-033", "PRJ-034", "AI-038", "UI-379", "UI-380",
+    "UI-382", "UI-383", "UI-384", "UI-385", "UI-386", "UI-387", "UI-388", "UI-389",
+]
+
 [[item]]
 id = "REC-001"
 title = "オーディオ／インストゥルメントの録音・停止"
@@ -10,6 +113,9 @@ source = "mockups/daw-plan.html § 機能のマトリクス/録音"
 done_when = "入力を選んで録音→停止すると、クリップがトラックに置かれて再生できる"
 status = "partial"
 remaining = "本物の入力（オーディオ機器のループバック）で録音→停止→クリップが置かれた。共有モードで別アプリの音と、Xirius 自身の再生音・テスト音・内蔵音源の音を Loopback 経由で実信号として録れた（排他の出力も 機器のループバック は運ぶ）。残り: マイク・アナログの実入力での録音（実機に入力を挿す人手の確認）"
+tests = [
+    "xirius-ui user_flow_tests::the_record_key_records_a_take_space_stops_it_and_another_process_opens_it_at_its_length",
+]
 
 [[item]]
 id = "REC-002"
@@ -976,6 +1082,9 @@ phase = "mvp"
 source = "mockups/rev2-spec.md § メインの個別の直し/4"
 done_when = "Ctrl+Z / Ctrl+Shift+Z と履歴の頭のボタンで取り消し・やり直しができる"
 status = "done"
+tests = [
+    "xirius-core::it core::every_history_command_undoes_and_redoes",
+]
 
 [[item]]
 id = "UI-016"
@@ -2994,6 +3103,9 @@ phase = "mvp"
 source = "reports/06-editing-feel.md § 5 ; reports/06-editing-feel.md § 2.9"
 done_when = "両方のキーで Redo ができ、Ctrl+V で貼り付く"
 status = "done"
+tests = [
+    "xirius-core::it core::every_history_command_undoes_and_redoes",
+]
 
 [[item]]
 id = "KEY-004"
@@ -5379,6 +5491,10 @@ phase = "mvp"
 source = "reports/02-audio-plugin-license.md § 5.3"
 done_when = "知らせずに音色を変えるプラグインでも、保存・名前を付けて保存・版の保存・曲を離れる・窓を閉じるときに、今の状態が曲に入り、開き直すと戻る（アプリ内・別プロセスの両方の試験がある）"
 status = "done"
+tests = [
+    "xirius-ui user_flow_tests::a_vst3_knob_turned_while_playing_is_saved_and_exports_the_same_in_another_process",
+    "xirius-ui user_flow_tests::a_clap_knob_turned_while_playing_is_saved_and_exports_the_same_in_another_process",
+]
 
 [[item]]
 id = "PLG-058"
@@ -5826,6 +5942,9 @@ phase = "mvp"
 source = "mockups/rev4-spec.md § 個別の直し/5"
 done_when = "曲名を押したメニューが並びのとおりに出て、保存・別名で保存・バージョンの一覧・書き出しが選べる"
 status = "done"
+tests = [
+    "xirius-ui save_flow_tests::every_key_the_song_menu_shows_does_what_its_row_does",
+]
 
 [[item]]
 id = "PRJ-018"
@@ -8508,6 +8627,10 @@ after = ["UI-261", "PRJ-029"]
 done_when = "起動すると前回の曲を開かず、ロゴだけの帯の下に「新規 Ctrl+N」「開く… Ctrl+O」「DAWproject を開く…」と、検索付きの「最近の曲」の一覧（最後にサンプル）を出し、一番上の行が選ばれて Enter・クリックで開く。はじめての起動はサンプルだけで検索を出さず新規にフォーカス、落ちた後の復元は直接開く。Tab・↑↓・Home・End・Enter・文字入力・Ctrl+N・Ctrl+O が働き、中身 520 px 未満は 1 列。開くのを中止するとスタート画面に戻り中止した行が選ばれたまま。新しい曲の画面は入口の 3 つだけで、狭い窓では詰める。オーディオデバイスが無いときは両方の画面に「オーディオデバイスなし」（「再スキャン」「オーディオの設定…」）。テスト音は設定のオーディオの出力だけで、鳴らす間だけ L・R の 120×6 px のメーター。開く進捗の「中止 Esc」は中身の幅で保存の幕と同じ部品。曲の名前のメニューの「閉じる」（Ctrl+W）で曲を閉じてスタート画面へ戻り（未保存は既存の保存の確認）、終了は Ctrl+Q・Alt+F4 だけ。Studio Pro の配置の取り込みの Close も「閉じる」へ向く。窓を開かない試験と、両テーマ・広い窓と狭い窓の撮影で確かめる"
 status = "done"
 note = "曲の名前のメニューの「閉じる」（Ctrl+W）は、Mod+W が既定の配置で app.quit に割り当て済みだったため一度保留し、2026-11-03 の利用者の決定で、Ctrl+W を「閉じる」（project.close）に、終了を Ctrl+Q（Mod+Q）と Alt+F4（OS の窓を閉じる経路）だけにした。決定の文の「Mod+F4」は Windows では Ctrl+F4 になるので、同じ日の利用者の決定で Windows の慣例（Ctrl+F4 = 文書を閉じる、Alt+F4 = アプリを終わる）に合わせ、Ctrl+F4（Mod+F4）も「閉じる」（project.close）に割り当てた。Alt+F4 は OS の予約のまま窓を閉じる経路で終わる。PRJ-029 の、起動の採用前に中止したとき次回の起動先を保つ扱い（preserve_startup_open）は外した: 起動で前回の曲を開かなくなり、中止はスタート画面へ戻って中止した行を選んだままにするため、保つ先が無い。曲の中から始めた開くのを中止したときは、これまでどおり元の曲を保つ。行を開く操作は、2026-11-15 の利用者の決定でダブルクリックから 1 回のクリックに変えた（選ぶのは ↑↓・Home・End と右クリックだけ）"
+tests = [
+    "xirius-ui save_flow_tests::every_key_the_start_screen_shows_does_what_its_button_does",
+    "xirius-ui save_flow_tests::a_click_on_a_row_of_the_start_screen_opens_that_song",
+]
 
 [[item]]
 id = "UI-351"
@@ -8762,6 +8885,15 @@ source = "2026-11-26 の持ち主の承認（試験の監査の §6・§7 の 3�
 after = ["ARC-049"]
 done_when = "headless の窓（OS が窓に入力を渡す口）で、別名で保存の Ctrl+Shift+S が保存先を聞き、答えた場所へ本物の保存が書き、音符・プラグインのつまみ・ミュート・名前・テンポを変えて Ctrl+S で保存した曲を別のプロセスで開くと全体が同じで、project.json そのものも同じ（開くは履歴から戻すので、ファイルの欠けを隠さない）。曲の数は書いた値と最後のビットまで同じに読み戻る（serde_json の float_roundtrip。既定の読みは 1 段ずれ、開き直した曲のつまみの値が変わっていた）。曲のメニューとスタート画面の、キーを表示する行・ボタンは、どれも押したときと表示のキーを押したときで同じ結果になる（行から作る試験。UI-378）。曲のメニューの開く…に答えると同じ曲が開き、曲のメニューとスタート画面の最近の曲の行は、行のどこを押してもその行が取り、クリックでその曲が開く（スタート画面の最初の行の下のテンポの帯が取らない。UI-350）。各試験はわざと壊すと落ちることを確かめた。試験は減らさない"
 status = "done"
+tests = [
+    "xirius-ui save_flow_tests::ctrl_s_saves_every_kind_of_change_and_another_process_opens_the_same_song",
+    "xirius-ui save_flow_tests::ctrl_shift_s_asks_where_to_save_the_song_as",
+    "xirius-ui save_flow_tests::open_in_the_song_menu_opens_the_folder_answered_with_the_same_song",
+    "xirius-ui save_flow_tests::a_click_on_a_recent_row_in_the_song_menu_opens_that_song",
+    "xirius-ui save_flow_tests::a_click_on_a_row_of_the_start_screen_opens_that_song",
+    "xirius-ui save_flow_tests::every_key_the_song_menu_shows_does_what_its_row_does",
+    "xirius-ui save_flow_tests::every_key_the_start_screen_shows_does_what_its_button_does",
+]
 
 [[item]]
 id = "ARC-052"
@@ -8832,6 +8964,31 @@ source = "2026-11-27 の持ち主の承認（試験の整理の 7 段の 3、推
 after = ["ARC-057"]
 done_when = "xirius-ui の user_flow_tests が、画面の無い窓のキーで CI に流れる。録音: 録音のキーで録音準備のトラックに録り、Space で止め、Ctrl+S で保存し、別のプロセスで開いたテイクが同じ長さで、ファイルが曲のフォルダーにある。再生: Space で無音の出力にクリップの音量が出て、もう一度 Space で止めると、エンジンの答えを待つ時間を過ぎても止まったままで無音になる。プラグイン: 試験用の VST3 と CLAP を窓と同じ非同期の道で開き、再生中にノブを変えると出力が変わり、Ctrl+S で保存し、別のプロセスで開いた曲のノブと書き出しの中身のハッシュが同じ。G1 と save_flow_tests とは重ねない。わざと壊して（テイクを曲に入れない・ノブを保存しない・止めてもエンジンを止めない・Gain を効かなくする）落ちることを確かめる"
 status = "done"
+tests = [
+    "xirius-ui user_flow_tests::the_record_key_records_a_take_space_stops_it_and_another_process_opens_it_at_its_length",
+    "xirius-ui user_flow_tests::space_plays_a_clip_into_the_silent_output_and_space_again_stops_it_to_silence",
+    "xirius-ui user_flow_tests::a_vst3_knob_turned_while_playing_is_saved_and_exports_the_same_in_another_process",
+    "xirius-ui user_flow_tests::a_clap_knob_turned_while_playing_is_saved_and_exports_the_same_in_another_process",
+]
+
+[[item]]
+id = "ARC-059"
+title = "済みにする項目に、その流れを通す試験の名前を書かせる（G14）"
+area = "ARC"
+phase = "v1.1"
+source = "2026-11-27 の持ち主の承認（試験の整理の 7 段の 4、G14、推奨どおり）"
+after = ["ARC-058"]
+done_when = "plan.toml の項目に tests の欄（cargo nextest list の名前か scripts の試験）があり、新しく済みにする項目に無いと plan.py check が落ちる（書く前に済みにした項目は done_before_tests に並べ、減らすだけにする。PR の plan の CI は、元のブランチの一覧から増えると落ちる）。スクリプトの試験はあることを plan.py check が、nextest の試験は CI の Windows のビルドで ci_tests.py --archive が cargo nextest list と突き合わせて確かめる。人の操作の流れを通す試験がある済みの項目（録音・再生・プラグインのノブ・保存と開く・曲のメニュー・スタート画面・取り消し）に名前を埋める。docs/testing.md の機能を足すときの流れに書く。わざと壊して落ちることを確かめる"
+status = "done"
+tests = [
+    "scripts/test_plan.py CheckTests.test_done_needs_tests",
+    "scripts/test_plan.py CheckTests.test_done_before_tests_names_done_items_without_tests_once",
+    "scripts/test_plan.py CheckTests.test_done_before_tests_only_shrinks_from_an_earlier_plan",
+    "scripts/test_plan.py CheckTests.test_check_since_reads_the_plan_at_a_git_ref_and_a_pull_request_runs_it",
+    "scripts/test_plan.py CheckTests.test_tests_are_nextest_names_or_script_tests_that_exist",
+    "scripts/test_ci_tests.py PlanTestsTests.test_a_test_an_item_names_must_be_listed",
+    "scripts/test_ci_tests.py PlanTestsTests.test_the_archive_checks_them_on_windows",
+]
 
 [[item]]
 id = "UI-371"
@@ -8985,6 +9142,9 @@ source = "2026-11-25 の持ち主の承認（save-model.html の案 A）"
 after = ["PRJ-017", "UI-376"]
 done_when = "既定のキーで Mod+Shift+S が project.save-as（別名で保存）に、track.solo.clear が Mod+Alt+S になり、ほかのキーとぶつからない。曲のメニューの「別名で保存… Ctrl+Shift+S」の添え書きと実際のキーが一致する。キーの表と押したときの動きを試験で確かめる"
 status = "done"
+tests = [
+    "xirius-ui save_flow_tests::ctrl_shift_s_asks_where_to_save_the_song_as",
+]
 
 [[item]]
 id = "UI-379"

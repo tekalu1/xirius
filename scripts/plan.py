@@ -4,9 +4,11 @@
 docs/plan.toml is the only source of truth. Progress is the `status` of each item:
 absent = not started, "partial" (with a one-line `remaining`), "done".
 An item may name the items to build first in `after = ["UI-001", ...]`.
+A done item names the tests that run its flow in `tests` (unless it is in `done_before_tests`).
 
 Subcommands:
-  check                          validate docs/plan.toml (exit 1 on failure)
+  check [--since REF]            validate docs/plan.toml (exit 1 on failure); with REF, also
+                                 fail if done_before_tests gains an item the plan at REF lacks
   status [--phase P] [--area A]  done / partial / not started per phase and per area
          [--open]                ... and list the partial and not-started items
 
@@ -15,7 +17,9 @@ Standard library only (Python 3.11+).
 from __future__ import annotations
 
 import argparse
+import ast
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -30,6 +34,10 @@ STATUSES = ["done", "partial"]
 
 ID_RE = re.compile(r"^([A-Z]{2,4})-(\d{3})$")
 DECIDED_RE = re.compile(r"^\d{4}-\d{2}-\d{2}: \S")
+# A test in `tests`: a script's (`scripts/test_plan.py CheckTests.test_ok`), or as
+# `cargo nextest list` names it, binary and test (`xirius-core::it core::every_...`).
+PYTHON_TEST_RE = re.compile(r"^(scripts/[\w/]+\.py) (\w+)\.(\w+)$")
+NEXTEST_RE = re.compile(r"^[\w-]+(::[\w/-]+)? \S+$")
 
 
 # ---------------------------------------------------------------- plan
@@ -129,6 +137,7 @@ def check(plan: dict, research_dir: Path = RESEARCH_DIR) -> list[str]:
                 elif not DECIDED_RE.match(decided):
                     errors.append(f"open {o['id']}: decided must start with the date, YYYY-MM-DD: ...")
     check_after(plan.get("item", []), errors)
+    check_tests(plan, errors)
     if not plan.get("item"):
         errors.append("plan has no [[item]]")
     return errors
@@ -176,6 +185,90 @@ def check_after(items: list[dict], errors: list[str]) -> None:
                 stack.append((nxt, iter(graph.get(nxt, []))))
                 path.append(nxt)
                 on_path.add(nxt)
+
+
+def python_test_exists(path: str, cls: str, method: str, root: Path = ROOT) -> bool:
+    file = root / path
+    if not file.is_file():
+        return False
+    tree = ast.parse(file.read_text(encoding="utf-8"))
+    return any(
+        isinstance(node, ast.ClassDef) and node.name == cls
+        and any(isinstance(f, ast.FunctionDef) and f.name == method for f in node.body)
+        for node in tree.body
+    )
+
+
+def check_tests(plan: dict, errors: list[str]) -> None:
+    """`tests`: the tests that run an item's flow. A done item names them, unless it was marked
+    done before items named tests (`done_before_tests`, which only shrinks). A script's test must
+    exist here; `ci_tests.py --archive` checks the others against `cargo nextest list`."""
+    before = plan.get("done_before_tests", [])
+    if not isinstance(before, list) or not all(isinstance(b, str) for b in before):
+        errors.append("done_before_tests must be a list of item ids")
+        before = []
+    items = {it.get("id"): it for it in plan.get("item", [])}
+    listed: set[str] = set()
+    for b in before:
+        it = items.get(b)
+        if b in listed:
+            errors.append(f"done_before_tests names {b} twice")
+        elif it is None:
+            errors.append(f"done_before_tests names {b}, which is not an [[item]]")
+        elif it.get("status") != "done" or "tests" in it:
+            errors.append(f"done_before_tests names {b}, which is not a done item without tests: take it out")
+        listed.add(b)
+    for eid, it in items.items():
+        if "tests" not in it:
+            if it.get("status") == "done" and eid not in listed:
+                errors.append(f"item {eid}: status = \"done\" needs tests, the tests that run its flow")
+            continue
+        tests = it["tests"]
+        if not isinstance(tests, list) or not tests or not all(isinstance(t, str) for t in tests):
+            errors.append(f"item {eid}: tests must be a non-empty list of test names")
+            continue
+        for t in tests:
+            py = PYTHON_TEST_RE.match(t)
+            if py:
+                if not python_test_exists(*py.groups()):
+                    errors.append(f"item {eid}: tests names {t}, which is not a test there")
+            elif not NEXTEST_RE.match(t):
+                errors.append(
+                    f"item {eid}: tests names {t!r}: write `<binary> <test>` as `cargo nextest list` does, "
+                    "or `scripts/<file>.py <Class>.<method>`"
+                )
+
+
+def grown_done_before_tests(plan: dict, earlier: dict) -> list[str]:
+    """The items `plan` lists in `done_before_tests` that the `earlier` plan did not. The list only
+    shrinks: an item marked done since names its tests. Nothing while `earlier` has no list."""
+    if not isinstance(earlier.get("done_before_tests"), list):
+        return []
+    had = set(earlier["done_before_tests"])
+    now = plan.get("done_before_tests", [])
+    return [
+        f"done_before_tests gains {b}: an item marked done now names its tests instead"
+        for b in (now if isinstance(now, list) else [])
+        if b not in had
+    ]
+
+
+def plan_at(ref: str) -> dict:
+    """docs/plan.toml as the git `ref` has it."""
+    shown = subprocess.run(
+        ["git", "show", f"{ref}:docs/plan.toml"], cwd=ROOT, capture_output=True, encoding="utf-8", check=True
+    )
+    return tomllib.loads(shown.stdout)
+
+
+def nextest_names(plan: dict) -> list[tuple[str, str]]:
+    """(item id, test) for each test in `tests` that nextest runs."""
+    return [
+        (it["id"], t)
+        for it in plan.get("item", [])
+        for t in it.get("tests", [])
+        if isinstance(t, str) and not PYTHON_TEST_RE.match(t)
+    ]
 
 
 # -------------------------------------------------------------- status
@@ -249,7 +342,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plan", default=str(PLAN_PATH))
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("check")
+    c = sub.add_parser("check")
+    c.add_argument("--since", metavar="REF", help="also fail if done_before_tests gains an item the plan at git REF lacks")
     p = sub.add_parser("status", help="done / partial / not started per phase and per area")
     p.add_argument("--phase", choices=PHASES)
     p.add_argument("--area", help="id prefix, e.g. UI")
@@ -260,6 +354,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "check":
         errors = check(plan)
+        if args.since:
+            errors += grown_done_before_tests(plan, plan_at(args.since))
         for e in errors:
             print("ERROR:", e, file=sys.stderr)
         if errors:

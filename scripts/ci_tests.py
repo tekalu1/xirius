@@ -44,6 +44,7 @@ from pathlib import Path
 
 import context_catalog
 import leftovers
+import plan
 import release_ci_gate
 
 # The integration tests that open windows, by package.
@@ -169,6 +170,29 @@ MP3_CASES = {
     ("xirius-session::export_mp3", "loudness_and_true_peak_are_those_of_the_mp3"),
     ("xirius-ui", "export::tests::an_mp3_card_shows_its_bitrate_and_loudness_over_true_peak"),
 }
+
+
+def listed_tests(listing):
+    """`<binary> <test>` for each test of `cargo nextest list --message-format json`."""
+    return {f"{binary} {name}" for binary, suite in listing["rust-suites"].items() for name in suite["testcases"]}
+
+
+def missing_plan_tests(plan_data, listed):
+    """The tests the items of docs/plan.toml name in `tests` that nextest does not list."""
+    return [f"{eid}: {name}" for eid, name in plan.nextest_names(plan_data) if name not in listed]
+
+
+def check_plan_tests():
+    """Fail on a test docs/plan.toml names that is not there. Run on Windows, where every test
+    builds (some are Windows-only), after prepare(), so the listing compiles nothing."""
+    listing = subprocess.check_output(
+        ["cargo", "nextest", "list", "--locked", "--workspace", "--lib", "--bins", "--tests",
+         "--run-ignored", "all", "--message-format", "json"],
+        text=True,
+    )
+    missing = missing_plan_tests(plan.load_plan(), listed_tests(json.loads(listing)))
+    if missing:
+        raise RuntimeError("docs/plan.toml names tests that are not there (renamed or removed?): " + ", ".join(missing))
 
 
 def require_mp3_cases(junits):
@@ -417,6 +441,8 @@ def main():
     if args.archive:
         nextest_version()
         prepare()
+        if sys.platform == "win32":
+            check_plan_tests()
         run(["cargo", "nextest", "archive", "--locked", "--build-jobs", "6", *nextest_targets(),
              "--archive-file", str(args.archive)])
         return 0

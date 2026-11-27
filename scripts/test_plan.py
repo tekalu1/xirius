@@ -2,8 +2,9 @@ import io
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import plan as ps  # noqa: E402
@@ -24,6 +25,7 @@ def mini_plan():
 def with_status():
     p = mini_plan()
     p["item"][0]["status"] = "done"
+    p["item"][0]["tests"] = ["xirius-ui a::b"]
     p["item"][1]["status"] = "partial"
     p["item"][1]["remaining"] = "保存が無い"
     return p
@@ -75,6 +77,7 @@ class CheckTests(unittest.TestCase):
         p = mini_plan()
         p["item"][0]["remaining"] = "x"
         p["item"][1]["status"] = "done"
+        p["item"][1]["tests"] = ["xirius-ui a::b"]
         p["item"][1]["remaining"] = "x"
         errs = [e for e in ps.check(p, self.rd) if "only for" in e]
         self.assertEqual(len(errs), 2)
@@ -140,6 +143,75 @@ class CheckTests(unittest.TestCase):
             "OPEN-01: source file not found under temporary/research: reports/missing.md",
         ])
         self.assertEqual(ps.check(p, self.rd / "missing"), [])
+
+    def test_done_needs_tests(self):
+        p = mini_plan()
+        p["item"][1]["status"] = "done"
+        self.assertEqual(
+            ps.check(p, self.rd), ['item UI-002: status = "done" needs tests, the tests that run its flow']
+        )
+        p["item"][1]["tests"] = ["xirius-ui user_flow_tests::reopen_child"]
+        self.assertEqual(ps.check(p, self.rd), [])
+        del p["item"][1]["tests"]
+        p["done_before_tests"] = ["UI-002"]
+        self.assertEqual(ps.check(p, self.rd), [])
+
+    def test_done_before_tests_names_done_items_without_tests_once(self):
+        p = with_status()
+        p["done_before_tests"] = ["UI-001", "UI-002", "UI-009", "UI-002"]
+        errs = ps.check(p, self.rd)
+        self.assertIn("done_before_tests names UI-001, which is not a done item without tests: take it out", errs)
+        self.assertIn("done_before_tests names UI-002, which is not a done item without tests: take it out", errs)
+        self.assertIn("done_before_tests names UI-009, which is not an [[item]]", errs)
+        self.assertIn("done_before_tests names UI-002 twice", errs)
+        p["done_before_tests"] = "UI-001"
+        self.assertIn("done_before_tests must be a list of item ids", ps.check(p, self.rd))
+
+    def test_done_before_tests_only_shrinks_from_an_earlier_plan(self):
+        earlier = {"done_before_tests": ["UI-001", "UI-002"]}
+        self.assertEqual(ps.grown_done_before_tests({"done_before_tests": ["UI-002"]}, earlier), [])
+        self.assertEqual(ps.grown_done_before_tests({}, earlier), [])
+        self.assertEqual(
+            ps.grown_done_before_tests({"done_before_tests": ["UI-002", "ENG-001"]}, earlier),
+            ["done_before_tests gains ENG-001: an item marked done now names its tests instead"],
+        )
+        self.assertEqual(ps.grown_done_before_tests({"done_before_tests": ["ENG-001"]}, {}), [])
+
+    def test_check_since_reads_the_plan_at_a_git_ref_and_a_pull_request_runs_it(self):
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(ps.main(["check", "--since", "HEAD"]), 0)
+        err = io.StringIO()
+        with mock.patch.object(ps, "plan_at", return_value={"done_before_tests": []}), redirect_stderr(err):
+            self.assertEqual(ps.main(["check", "--since", "HEAD"]), 1)
+        self.assertIn("done_before_tests gains", err.getvalue())
+        workflow = (ps.ROOT / ".github" / "workflows" / "plan.yml").read_text(encoding="utf-8")
+        self.assertIn('git fetch --no-tags --depth=1 origin "$BASE"', workflow)
+        self.assertIn("python scripts/plan.py check --since FETCH_HEAD", workflow)
+
+    def test_tests_are_nextest_names_or_script_tests_that_exist(self):
+        p = mini_plan()
+        p["item"][1]["tests"] = [
+            "xirius-core::it core::every_history_command_undoes_and_redoes",
+            "xirius-ui save_flow_tests::ctrl_shift_s_asks_where_to_save_the_song_as",
+            "scripts/test_plan.py CheckTests.test_ok",
+        ]
+        self.assertEqual(ps.check(p, self.rd), [])
+        p["item"][1]["tests"] = ["reopen_child", "scripts/test_plan.py CheckTests.test_none"]
+        errs = ps.check(p, self.rd)
+        self.assertIn(
+            "item UI-002: tests names 'reopen_child': write `<binary> <test>` as `cargo nextest list` does, "
+            "or `scripts/<file>.py <Class>.<method>`",
+            errs,
+        )
+        self.assertIn("item UI-002: tests names scripts/test_plan.py CheckTests.test_none, which is not a test there", errs)
+        for bad in ([], "xirius-ui a", ["xirius-ui a", 1]):
+            p["item"][1]["tests"] = bad
+            self.assertEqual(ps.check(p, self.rd), ["item UI-002: tests must be a non-empty list of test names"])
+
+    def test_nextest_names(self):
+        p = with_status()
+        p["item"][1]["tests"] = ["scripts/test_plan.py CheckTests.test_ok", "xirius-ui b::c"]
+        self.assertEqual(ps.nextest_names(p), [("UI-001", "xirius-ui a::b"), ("UI-002", "xirius-ui b::c")])
 
 
 class StatusTests(unittest.TestCase):

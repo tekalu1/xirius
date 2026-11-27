@@ -60,6 +60,10 @@ do not go through nextest and have no such limit.
 
 ## Adding a feature
 
+A plan item marked done names, in `tests`, the tests that run its flow as a person does it
+(`docs/PLAN.md`): `plan.py check` fails a done item without them, and the CI's Windows build fails a
+name `cargo nextest list` does not list.
+
 Some tests are made from the tables the code already keeps: a new row gets its checks without a
 new test, and a row left without them fails the run, naming the row.
 

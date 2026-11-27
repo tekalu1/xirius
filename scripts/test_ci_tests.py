@@ -145,6 +145,28 @@ class FlakyTests(unittest.TestCase):
         self.assertIn("pattern: junit-${{ matrix.os }}-*", aggregate)
 
 
+class PlanTestsTests(unittest.TestCase):
+    LISTING = {"rust-suites": {
+        "xirius-ui": {"testcases": {"user_flow_tests::reopen_child": {}, "save_flow_tests::a": {}}},
+        "xirius-core::it": {"testcases": {"core::every_history_command_undoes_and_redoes": {}}},
+    }}
+
+    def test_a_test_an_item_names_must_be_listed(self):
+        listed = ci_tests.listed_tests(self.LISTING)
+        self.assertIn("xirius-core::it core::every_history_command_undoes_and_redoes", listed)
+        plan = {"item": [
+            {"id": "ARC-058", "tests": ["xirius-ui user_flow_tests::reopen_child", "scripts/test_plan.py CheckTests.test_ok"]},
+            {"id": "EDT-011", "tests": ["xirius-core::it core::every_history_command_undoes_and_redoes", "xirius-ui gone"]},
+            {"id": "UI-001"},
+        ]}
+        self.assertEqual(ci_tests.missing_plan_tests(plan, listed), ["EDT-011: xirius-ui gone"])
+
+    def test_the_archive_checks_them_on_windows(self):
+        source = (Path(__file__).resolve().parent / "ci_tests.py").read_text(encoding="utf-8")
+        archive = source.split("    if args.archive:\n", 1)[1].split("        return 0", 1)[0]
+        self.assertIn('if sys.platform == "win32":\n            check_plan_tests()', archive)
+
+
 class LeftoverTests(unittest.TestCase):
     def watch(self, tmp, processes=()):
         place = Path(tmp) / "place"

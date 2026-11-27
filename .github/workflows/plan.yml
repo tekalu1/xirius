@@ -17,5 +17,13 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: python scripts/plan.py check
+      - if: github.event_name != 'pull_request'
+        run: python scripts/plan.py check
+      # A pull request also may not add to done_before_tests (docs/PLAN.md).
+      - if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE"
+          python scripts/plan.py check --since FETCH_HEAD
       - run: python scripts/test_plan.py
