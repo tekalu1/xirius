@@ -314,7 +314,19 @@ fn a_host_that_goes_down_during_an_export_recovers_without_silence() {
         levels[levels.len() - 1]
     );
     assert!(quiet >= 4, "{levels:?}");
-    assert!(dry >= 4, "{levels:?}");
+    // How much song plays dry is the host's restart on the wall clock times the export's
+    // speed, which differs by machine (under a second on a fast one, so no quarter-second
+    // window need be dry). A restart takes well over 20 ms and the export runs faster than
+    // real time, so the gap fills at least one window of 10 ms.
+    let dry_10ms = out
+        .left
+        .chunks(RATE as usize / 100)
+        .filter(|c| db(rms(c) / unity()).abs() < 0.1)
+        .count();
+    assert!(
+        dry_10ms >= 1,
+        "the plugin of the killed host never played dry: {levels:?}"
+    );
     // Both transitions can straddle a measurement window. Neither may be silent.
     assert!(quiet + dry + 2 >= levels.len(), "{levels:?}");
     assert!(levels.iter().all(|level| *level > g.quiet_db - 0.2));
