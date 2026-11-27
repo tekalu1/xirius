@@ -3,6 +3,7 @@
 //! keys and fills the song's settings, on a song made in the test's own folder. `--script
 //! pool-tidy` orders the list by name and puts the recordings nothing uses in a bin of the test's
 //! own through 「使われていない録音を整理」.
+mod support;
 
 #[test]
 fn the_song_files_tab_follows_the_presses_drags_and_keys_of_a_real_window() {
@@ -12,7 +13,7 @@ fn the_song_files_tab_follows_the_presses_drags_and_keys_of_a_real_window() {
         .unwrap();
     let shots = tmp.path().join("shots");
     std::fs::create_dir_all(&shots).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let output = support::app(tmp.path())
         .args(["--park", "--silent", "--script", "pool", "--shot"])
         .arg(&shots)
         .env("XIRIUS_POOL_DIR", tmp.path().join("song"))
@@ -45,7 +46,7 @@ fn the_order_and_the_cleanup_dialog_follow_the_presses_and_keys_of_a_real_window
     let shots = tmp.path().join("shots");
     std::fs::create_dir_all(&shots).unwrap();
     let bin = tmp.path().join("bin");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let output = support::app(tmp.path())
         .args(["--park", "--silent", "--script", "pool-tidy", "--shot"])
         .arg(&shots)
         .env("XIRIUS_POOL_DIR", tmp.path().join("song"))

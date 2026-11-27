@@ -10,7 +10,7 @@ fn saving_marks_copy_cancel_failure_retry_and_close_drain_through_the_window() {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| temporary.path().join("shots"));
     std::fs::create_dir_all(&pictures).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let output = support::app(temporary.path())
         .current_dir(temporary.path())
         .args(["--park", "--silent", "--script", "saving", "--shot"])
         .arg(&pictures)

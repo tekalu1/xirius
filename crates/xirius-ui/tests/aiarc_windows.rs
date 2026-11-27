@@ -1,3 +1,4 @@
+mod support;
 #[test]
 fn palette_values_run_through_clicks_in_a_parked_window() {
     let dir_tmp = tempfile::Builder::new()
@@ -6,7 +7,7 @@ fn palette_values_run_through_clicks_in_a_parked_window() {
         .unwrap();
     let dir = dir_tmp.path().join("aiarc-shots");
     std::fs::create_dir_all(&dir).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let output = support::app(dir_tmp.path())
         .args(["--park", "--silent", "--script", "aiarc", "--shot"])
         .arg(&dir)
         .env("XIRIUS_CONFIG_DIR", dir.join("prefs"))

@@ -434,11 +434,12 @@ pub fn play(
         return;
     };
     match stage {
-        // Keys' row in sight above the drawer, as a person would scroll it.
+        // Keys' row in sight above the column's foot (UI-376), as a person would scroll it.
         0 => {
             if let Some(row) = s.tree().row_of(RowKind::Track(t)).cloned() {
                 let bottom = s.row_y(&g, &row) + row.h;
-                let over = bottom - (g.column.y + g.column.h);
+                let foot = crate::head_foot::rect(&g).map_or(g.column.bottom(), |r| r.y);
+                let over = bottom - foot;
                 if over > 0.0 {
                     s.scroll.1 += over;
                     s.clamp_scroll(&g);

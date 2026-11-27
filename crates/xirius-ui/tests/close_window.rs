@@ -7,8 +7,9 @@
 //! looks for a song to reopen asks first, by design, and the window stays: the close is sent
 //! again until the process ends, with no fixed wait for the start.
 #![cfg(windows)]
+mod support;
 
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
@@ -51,7 +52,7 @@ fn launch() -> (Child, tempfile::TempDir) {
         r#"{"songs": [], "open": "sample"}"#,
     )
     .unwrap();
-    let child = Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let child = support::app(tmp.path())
         .args(["--park", "--silent"])
         .env("XIRIUS_CONFIG_DIR", tmp.path().join("prefs"))
         .env("XIRIUS_CRASH_DIR", tmp.path().join("crashes"))

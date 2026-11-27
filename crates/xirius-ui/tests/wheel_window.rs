@@ -1,5 +1,6 @@
 //! EDT-136: on a real (parked, silent) window, a wheel turned with Ctrl and Shift held, in the
 //! shape Windows sends it (sideways, nothing upright), widens the roll and the arrangement.
+mod support;
 
 #[cfg(windows)]
 #[test]
@@ -10,7 +11,7 @@ fn ctrl_shift_and_the_wheel_widen_time_as_windows_sends_it() {
         .unwrap();
     let dir = dir_tmp.path().join("wheel-shots");
     std::fs::create_dir_all(&dir).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let output = support::app(dir_tmp.path())
         .args(["--park", "--silent", "--script", "wheel", "--shot"])
         .arg(&dir)
         .env("XIRIUS_CONFIG_DIR", dir.join("prefs"))

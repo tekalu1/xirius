@@ -1,4 +1,5 @@
 //! UI-039: on a real (parked, silent) window, a view that did not change is not painted again.
+mod support;
 
 #[test]
 fn an_unchanged_overview_is_not_painted_again_and_a_changed_one_is_painted_once() {
@@ -8,7 +9,7 @@ fn an_unchanged_overview_is_not_painted_again_and_a_changed_one_is_painted_once(
         .unwrap();
     let dir = dir_tmp.path().join("repaint-shots");
     std::fs::create_dir_all(&dir).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let output = support::app(dir_tmp.path())
         .args(["--park", "--silent", "--script", "repaint", "--shot"])
         .arg(&dir)
         .env("XIRIUS_CONFIG_DIR", dir.join("prefs"))

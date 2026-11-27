@@ -1,5 +1,6 @@
 //! UI-048: on a real (parked, silent) window, the pointer drags the browser's panel and the
 //! track head to the widths asked for.
+mod support;
 
 #[test]
 fn the_browser_and_the_track_head_are_resized_by_their_edges() {
@@ -9,7 +10,7 @@ fn the_browser_and_the_track_head_are_resized_by_their_edges() {
         .unwrap();
     let dir = dir_tmp.path().join("side-shots");
     std::fs::create_dir_all(&dir).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let output = support::app(dir_tmp.path())
         .args(["--park", "--silent", "--script", "side", "--shot"])
         .arg(&dir)
         .env("XIRIUS_CONFIG_DIR", dir.join("prefs"))

@@ -17,7 +17,6 @@
 //! `_window`).
 
 use serde_json::Value;
-use std::process::Command;
 
 mod support;
 
@@ -28,7 +27,7 @@ fn run() -> (Value, tempfile::TempDir) {
         .unwrap();
     let dir = tmp.path().to_path_buf();
     support::sample_audio(&dir);
-    let out = Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let out = support::app(&dir)
         .args(["--park", "--silent", "--script", "device-verify", "--shot"])
         .arg(&dir)
         .current_dir(&dir)
@@ -62,7 +61,7 @@ fn run_placed() -> (Value, tempfile::TempDir) {
         .unwrap();
     let dir = tmp.path().to_path_buf();
     support::sample_audio(&dir);
-    let out = Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let out = support::app(&dir)
         .args([
             "--at",
             "100,100",
@@ -216,7 +215,7 @@ fn foreground_device_windows_respect_clear_space_and_keep_their_frame_origin() {
         .tempdir()
         .unwrap();
     let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let status = Command::new("python")
+    let status = std::process::Command::new("python")
         .arg(repo.join("scripts/test_plugin_presets.py"))
         .args(["--case", "device-placement", "--work"])
         .arg(dir.path().join("work"))

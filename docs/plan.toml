@@ -8804,6 +8804,16 @@ done_when = "main の rust の最も長い shard が 6 段の前（Windows 176 s
 status = "done"
 
 [[item]]
+id = "ARC-056"
+title = "窓の試験を身代わりのフォルダーで流し、持ち主のフォルダーに書かない"
+area = "ARC"
+phase = "v1.1"
+source = "2026-11-27 の持ち主の承認（試験の整理の 7 段の 1、推奨どおり）"
+after = ["ARC-055"]
+done_when = "xirius-ui の窓の試験は、どれもアプリを tests/support の app(root) で起こし、プロファイル（Windows の LOCALAPPDATA・APPDATA・USERPROFILE、ほかの OS の HOME）・一時フォルダー・プラグインのフォルダー・設定・クラッシュの記録を root の下に向ける。別の起こし方をした窓の試験は CI で走る it::window_sandbox が名指して落とす（わざと壊して確かめる）。WINDOW_UNIT_TESTS の mixer::editor_tests はプラグインのホストを起こす前に自分の XIRIUS_CRASH_DIR を持ち、Crashes を作らない。python scripts/ci_tests.py --windows --all は窓の試験の全部を 1 つずつ leftovers の見張りの中で流し、タグを作らない。そのとき CI と同じに、試験の起こすプログラムを先にビルドし、人のプラグインのフォルダーとプラグインのパスの変数を外す"
+status = "done"
+
+[[item]]
 id = "UI-371"
 title = "画面外の窓試験を現行の仕様にそろえ、トラック一覧の UIA を読めるようにする"
 area = "UI"

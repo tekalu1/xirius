@@ -80,14 +80,7 @@ def missing_window_tests(meta):
 
 
 def commands():
-    meta = json.loads(
-        subprocess.run(
-            ["cargo", "metadata", "--no-deps", "--format-version", "1"],
-            check=True,
-            capture_output=True,
-            encoding="utf-8",
-        ).stdout
-    )
+    meta = metadata()
     missing = missing_window_tests(meta)
     if missing:
         raise RuntimeError("WINDOW_TESTS names no test target (take it off): " + ", ".join(missing))
@@ -243,6 +236,26 @@ def window_commands():
             for package, target in release_ci_gate.WINDOW_TESTS]
 
 
+def all_window_commands(meta):
+    """Every test that opens a window (`--windows --all`), one at a time: for a run on a PC
+    before a release, with no record."""
+    members = set(meta["workspace_members"])
+    runs = []
+    for package in sorted(meta["packages"], key=lambda p: p["name"]):
+        if package["id"] not in members:
+            continue
+        name = package["name"]
+        tests = sorted(t["name"] for t in package["targets"]
+                       if "test" in t["kind"] and opens_windows(name, t["name"]))
+        if tests:
+            runs.append(["cargo", "nextest", "run", "--locked", "--no-fail-fast", "--test-threads", "1",
+                         "-p", name, *[v for t in tests for v in ("--test", t)]])
+    units = " | ".join(f"test({unit})" for unit in WINDOW_UNIT_TESTS)
+    runs.append(["cargo", "nextest", "run", "--locked", "--no-fail-fast", "--test-threads", "1",
+                 "-p", "xirius-ui", "--lib", "-E", units])
+    return runs
+
+
 def git(*args):
     return subprocess.run(["git", *args], check=True, capture_output=True, encoding="utf-8").stdout.strip()
 
@@ -285,12 +298,55 @@ def windows(args):
     return 0
 
 
+def metadata():
+    return json.loads(subprocess.run(["cargo", "metadata", "--no-deps", "--format-version", "1"], check=True,
+                                     capture_output=True, encoding="utf-8").stdout)
+
+
+# The variables the programs find installed plugins by: `--windows --all` runs as on a PC with
+# none, and the real plugins are `--plugins`'s.
+PLUGIN_FOLDERS = ("CommonProgramFiles", "CommonProgramW6432", "CommonProgramFiles(x86)")
+PLUGIN_PATHS = ("XIRIUS_VST3_PATH", "CLAP_PATH", "XIRIUS_TEST_VST3_INSTRUMENT", "XIRIUS_ARA_REAL_PLUGIN",
+                "XIRIUS_ARA_REAL_COMMON_FILES")
+
+
+def windows_all(args):
+    """Runs every window test with the person's folders and plugins out of reach (`leftovers.py`)."""
+    selected = all_window_commands(metadata())
+    if args.list:
+        for command in selected:
+            print(" ".join(command))
+        return 0
+    nextest_version()
+    # The programs the tests start beside their build (the plugin and ARA hosts), as for CI.
+    prepare()
+    environment = os.environ.copy()
+    environment["CARGO_BUILD_JOBS"] = "6"
+    for name in PLUGIN_PATHS:
+        environment.pop(name, None)
+    with tempfile.TemporaryDirectory(prefix="xirius-no-plugins-") as nothing, \
+            leftovers.Watch(Path(__file__).resolve().parent.parent, environment) as watch:
+        if os.name == "nt":
+            watch.environment.update({name: nothing for name in PLUGIN_FOLDERS})
+        failed = []
+        for command in selected:
+            try:
+                run(command, watch.environment)
+            except subprocess.CalledProcessError as error:
+                failed.append(" ".join(error.cmd))
+        failures = watch.finish()
+    for line in failures + [f"failed: {c}" for c in failed]:
+        print(line, file=sys.stderr)
+    return int(bool(failures or failed))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--plugins", action="store_true")
     parser.add_argument("--windows", action="store_true", help="the window tests a release needs a record of")
     parser.add_argument("--tag", help="with --windows: make this annotated release tag holding the record")
+    parser.add_argument("--all", action="store_true", help="with --windows: every window test, with no record")
     parser.add_argument("--prepare", action="store_true", help="build required executables and fixtures")
     parser.add_argument("--archive", type=Path, help="build an archive for test shards")
     parser.add_argument("--run-archive", type=Path, help="run an archive without compiling")
@@ -306,6 +362,10 @@ def main():
     args = parser.parse_args()
     if args.tag and not args.windows:
         parser.error("--tag needs --windows")
+    if args.all and (args.tag or not args.windows):
+        parser.error("--all goes with --windows, without --tag")
+    if args.windows and args.all:
+        return windows_all(args)
     if args.windows:
         if args.list:
             for command in window_commands():

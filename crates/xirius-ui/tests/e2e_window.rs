@@ -1,5 +1,6 @@
 //! One song made from start to end through the real window's presses (ARC-040): every stage of
 //! the `e2e` script checks the screen and the song, and says so on stderr.
+mod support;
 
 /// The stages of the `e2e` script.
 const STAGES: u8 = 34;
@@ -21,7 +22,14 @@ fn a_song_is_made_saved_opened_written_and_undone_through_the_real_window() {
     // The built-in instrument unless a plugin instrument is named for the run, so the result
     // does not depend on what this PC has installed.
     let instrument = std::env::var("XIRIUS_TEST_VST3_INSTRUMENT").unwrap_or_else(|_| "none".into());
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let mut app = support::app(root);
+    if instrument != "none" {
+        // The named instrument is in this PC's own VST3 folder.
+        if let Some(folder) = std::env::var_os("CommonProgramFiles") {
+            app.env("CommonProgramFiles", folder);
+        }
+    }
+    let output = app
         .args(["--park", "--silent", "--script", "e2e", "--shot"])
         .arg(&shots)
         .env("XIRIUS_CONFIG_DIR", root.join("config"))

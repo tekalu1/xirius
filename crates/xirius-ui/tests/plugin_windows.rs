@@ -6,7 +6,6 @@
 use std::collections::HashMap;
 mod support;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 /// What a stage of the run said: `plugin-check <shot> key=value …` lines, by shot.
@@ -38,7 +37,7 @@ fn run_script() -> Run {
         .unwrap();
     let dir = dir_tmp.path().to_path_buf();
     support::sample_audio(&dir);
-    let out = Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+    let out = support::app(&dir)
         .args(["--park", "--silent", "--script", "plugin", "--shot"])
         .arg(&dir)
         .current_dir(&dir)

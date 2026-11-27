@@ -1,5 +1,7 @@
 //! Approved context menus on the actual parked window. Captures use PrintWindow;
 //! input is dispatched only to that window, never to the OS input queue.
+mod support;
+
 #[cfg(windows)]
 #[test]
 fn six_targets_cascade_and_search_in_both_themes() {
@@ -11,7 +13,7 @@ fn six_targets_cascade_and_search_in_both_themes() {
         let root = sandbox.path();
         let shots = root.join("shots");
         std::fs::create_dir_all(&shots).unwrap();
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"));
+        let mut command = support::app(root);
         command
             .args([
                 "--park",
@@ -25,22 +27,6 @@ fn six_targets_cascade_and_search_in_both_themes() {
             .arg(&shots);
         if light {
             command.arg("--light");
-        }
-        for name in [
-            "USERPROFILE",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "TEMP",
-            "TMP",
-            "CommonProgramFiles",
-            "CommonProgramW6432",
-            "CommonProgramFiles(x86)",
-            "XIRIUS_CONFIG_DIR",
-            "XIRIUS_CRASH_DIR",
-        ] {
-            let directory = root.join(name);
-            std::fs::create_dir_all(&directory).unwrap();
-            command.env(name, directory);
         }
         let log = root.join("stderr.log");
         command.stdout(std::process::Stdio::null());

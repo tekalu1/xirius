@@ -1,8 +1,8 @@
 //! PrintWindow and own-window messages only; no foreground/global input/device.
 #![cfg(all(windows, feature = "loading-probe"))]
+mod support;
 use std::{
     fs,
-    process::Command,
     time::{Duration, Instant},
 };
 
@@ -37,7 +37,7 @@ fn live_edit_recording_and_editor_survive_held_work_and_native_window_operations
             let root = tempfile::tempdir().unwrap();
             let log = root.path().join("probe.log");
             let output = fs::File::create(&log).unwrap();
-            let mut child = Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+            let mut child = support::app(root.path())
                 .args([
                     "--park",
                     "--silent",

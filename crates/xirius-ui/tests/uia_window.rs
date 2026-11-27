@@ -3,7 +3,7 @@
 //! the audio settings' input rows come as RadioButtons with a selection state.
 #![cfg(windows)]
 
-use std::process::{Child, Command};
+use std::process::Child;
 mod support;
 use std::time::{Duration, Instant};
 
@@ -113,7 +113,7 @@ fn launch(env: Option<(&str, &str)>) -> AppChild {
     let keep = tmp.path().join("keep");
     std::fs::create_dir_all(&keep).unwrap();
     // Startup now shows Home; explicitly request the sample for the track tree.
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_xirius-ui"));
+    let mut cmd = support::app(tmp.path());
     support::sample_audio(tmp.path());
     cmd.current_dir(tmp.path());
     cmd.args(["--park", "--silent"])
