@@ -1,9 +1,11 @@
 //! Every row of the reviewed routing table (`tests/context_menus/mapping.json` and
 //! `supplemental.json`), checked from the table (ARC-054).
 //!
+//! - Every row of the table names the commands it runs, each in the command table, or says
+//!   in `no_command` why it runs none; a row with neither fails.
 //! - Whenever a test opens a menu, each of its rows runs a command that is in the command
 //!   table, takes the arguments the row gives and is the one the table names
-//!   ([`verify_commands`]).
+//!   ([`verify_commands`]); a row the table says runs none runs no command while it is lit.
 //! - Each target in [`TARGETS`] is opened from the sample song: its rows, their labels in their
 //!   order, are as `tests/context_menus/menus.txt` has them, and a press on each row is at most
 //!   one step of the history that one undo takes back (a press that makes no step leaves the
@@ -65,11 +67,20 @@ fn args_of(item: &Item) -> Option<serde_json::Map<String, Value>> {
 /// What the command table says of one row, or nothing when it agrees.
 fn table_says(item: &Item) -> Option<String> {
     let id = item.ledger_id.as_deref()?;
-    // A row whose action the placement cannot name (a `Do` of the screen's own) is not compared.
-    let named_in_table = &route(id).command;
+    let route = route(id);
     let runs = command_of(item);
-    if !named_in_table.is_empty() && !runs.is_empty() && runs != named_in_table {
-        return Some(format!("runs {runs}, the table names {named_in_table}"));
+    if route.no_command.is_some() {
+        // A row the table says runs no command: an action of the screen, a name of the
+        // screen's own ("ui.") or a row that is always dim.
+        if !runs.is_empty() && !runs.starts_with("ui.") && item.enabled {
+            return Some(format!("runs {runs}, the table says it runs no command"));
+        }
+    } else if !route.runs(runs) && (item.enabled || !runs.is_empty()) {
+        // A dim row that stands in for one that is not there runs nothing.
+        return Some(format!(
+            "runs {runs:?}, the table names {:?}",
+            route.command
+        ));
     }
     // The command the row runs itself; a name of the screen's own ("ui.") is not a command.
     let name = match &item.run {
@@ -118,6 +129,28 @@ pub(super) fn verify_commands(target: &str, items: &[Item]) {
         failed.len(),
         failed.join("\n")
     );
+}
+
+#[test]
+fn every_row_of_the_table_names_its_commands_or_says_why_it_runs_none() {
+    let mut failed = Vec::new();
+    for r in routes() {
+        match (r.command.is_empty(), &r.no_command) {
+            (true, None) => failed.push(format!("{}: no command and no reason", r.id)),
+            (false, Some(_)) => failed.push(format!("{}: a command and a reason for none", r.id)),
+            (true, Some(why)) if why.trim().is_empty() => {
+                failed.push(format!("{}: an empty reason", r.id))
+            }
+            _ => {}
+        }
+        for c in &r.command {
+            let table = RENAMED.iter().find(|(inventory, _)| inventory == c);
+            if registry().get(table.map_or(c, |(_, t)| t)).is_none() {
+                failed.push(format!("{}: {c} is not in the command table", r.id));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
 /// The menu as it stands, a row on each line: its label, its rule and whether it is dim,

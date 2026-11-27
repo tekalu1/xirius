@@ -6,7 +6,7 @@
     "asis": ["プリセット", "ファイルから読み込む…"],
     "tobe": ["機器", "プリセット", "ファイルから読み込む…"],
     "category": "機器",
-    "command": "preset.load",
+    "command": "plugin.preset.open",
     "dynamic": false
   },
   {
@@ -55,7 +55,7 @@
       "書き直す"
     ],
     "category": "書き出し",
-    "command": "",
+    "command": "export.update",
     "dynamic": false
   },
   {
@@ -222,7 +222,7 @@
       "User にコピー…"
     ],
     "category": "機器",
-    "command": "",
+    "command": "view.preset-copy",
     "dynamic": false
   },
   {
@@ -237,7 +237,7 @@
       "読み込む"
     ],
     "category": "トラック",
-    "command": "",
+    "command": "browser.preset.load",
     "dynamic": false
   },
   {
@@ -252,7 +252,7 @@
       "User にコピー…"
     ],
     "category": "トラック",
-    "command": "",
+    "command": "view.preset-copy",
     "dynamic": false
   },
   {
@@ -267,7 +267,7 @@
       "お気に入り"
     ],
     "category": "表示",
-    "command": "browser.preset.favourite",
+    "command": "browser.favorite",
     "dynamic": false
   },
   {
