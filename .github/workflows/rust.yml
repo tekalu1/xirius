@@ -105,7 +105,7 @@ jobs:
             library: macos/libmp3lame.dylib
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           # Cache source only. The release build scripts verify its digest on every run.
           path: ${{ runner.temp }}/lame/lame-3.100.tar.gz
