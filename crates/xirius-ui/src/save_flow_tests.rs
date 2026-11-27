@@ -697,13 +697,18 @@ fn a_click_on_a_row_of_the_start_screen_opens_that_song() {
         };
         w.click_hit(Hit::Home(spot));
         {
+            // The click's own frame polls the open (`Studio::idle`, then `Studio::tick`), so a
+            // small song may be open already; a press the tempo band took opens nothing.
             let s = w.studio.borrow();
-            assert!(s.opening.is_some(), "row {i} starts to open its song");
-            assert_eq!(
-                s.project().tempo.len(),
-                tempo,
-                "no tempo point under row {i}"
-            );
+            if s.opening.is_some() {
+                assert_eq!(
+                    s.project().tempo.len(),
+                    tempo,
+                    "no tempo point under row {i}"
+                );
+            } else {
+                assert_eq!(s.song.dir(), Some(want.clone()), "row {i} opens its song");
+            }
         }
         w.settle();
         let s = w.studio.borrow();
