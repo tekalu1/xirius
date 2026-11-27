@@ -325,9 +325,9 @@ pub(crate) fn script_dir(own: impl FnOnce() -> std::path::PathBuf) -> std::path:
 /// being put away on their threads (`song::wait_retired`), the cleanups of the songs closed
 /// there (`tidy::wait_ended`), the recent-song lists kept there (`recent_worker::wait_settled`),
 /// work marked [`Using`] it, the browser's places read and written there
-/// (`browser_prefs_io::wait_read`, `browser_prefs_save::wait_written`), and the readers of the
-/// players the test closed, which keep the peaks of the files they read
-/// (`audition::wait_closed`).
+/// (`browser_prefs_io::wait_read`, `browser_prefs_save::wait_written`), the exports started
+/// there writing how they ended (`jobs::wait_ended`), and the readers of the players the test
+/// closed, which keep the peaks of the files they read (`audition::wait_closed`).
 #[cfg(test)]
 pub(crate) fn settle(folder: &std::path::Path) {
     xirius_session::audition::wait_closed(std::time::Duration::from_secs(30));
@@ -335,6 +335,7 @@ pub(crate) fn settle(folder: &std::path::Path) {
     crate::tidy::wait_ended(folder);
     crate::recent_worker::wait_settled(folder);
     wait_unused(folder);
+    xirius_session::jobs::wait_ended(folder, std::time::Duration::from_secs(30));
     crate::browser_prefs_io::wait_read(folder);
     crate::browser_prefs_save::wait_written(folder);
     // Imports queue peak files independently of preparation and session/save

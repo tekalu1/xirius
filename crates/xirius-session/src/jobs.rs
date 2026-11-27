@@ -65,6 +65,8 @@ impl Store {
     /// dropped. `None` when the lock cannot be made (the job then reads as interrupted from
     /// elsewhere while it runs, and as what it ended with afterwards).
     pub fn lock(&self, id: &str) -> Option<File> {
+        #[cfg(feature = "test-io")]
+        ending().push((self.dir.clone(), id.to_string()));
         fs::create_dir_all(&self.dir).ok()?;
         let f = File::create(self.file(id, "lock")).ok()?;
         f.try_lock().ok()?;
@@ -76,6 +78,8 @@ impl Store {
         drop(lock);
         let _ = fs::remove_file(self.file(id, "lock"));
         let _ = fs::remove_file(self.file(id, "cancel"));
+        #[cfg(feature = "test-io")]
+        ending().retain(|(dir, job)| !(*dir == self.dir && job == id));
     }
 
     /// Whether a process holds `id`'s lock.
@@ -186,5 +190,25 @@ impl Store {
         s.insert(key.to_string(), value);
         let bytes = serde_json::to_vec_pretty(&Value::Object(s)).unwrap_or_default();
         atomic_write(&self.dir.join(SETTINGS), &bytes)
+    }
+}
+
+/// The jobs of this process that took their lock and have not let go of it yet, with their
+/// records' folder.
+#[cfg(feature = "test-io")]
+fn ending() -> std::sync::MutexGuard<'static, Vec<(PathBuf, String)>> {
+    static ENDING: std::sync::Mutex<Vec<(PathBuf, String)>> = std::sync::Mutex::new(Vec::new());
+    ENDING.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Waits (at most `within`) until the jobs of this process whose records are under `root`
+/// have written how they ended and let go of their lock. Their card shows them ended before
+/// that, and the last write makes the folders again: a test removes its folder only after it.
+/// The lock file is no sign, as removing the folder removes it while it is held.
+#[cfg(feature = "test-io")]
+pub fn wait_ended(root: &Path, within: std::time::Duration) {
+    let end = std::time::Instant::now() + within;
+    while ending().iter().any(|(dir, _)| dir.starts_with(root)) && std::time::Instant::now() < end {
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
