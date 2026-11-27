@@ -155,14 +155,14 @@ EXT/build/bin/Release/validator.exe -e EXT/bundles/XiriusTest.vst3   # 拡張の
 
 ### SDK のサンプルプラグイン（host-checker ほか）
 
-`host-checker` はホストの側を採点するプラグイン。`again`・`adelay`・`note-expression-synth` は振る舞いがソースから分かるので、ホストの音の結果を確かめられる。`crates/xirius-vst3/tests/it/sdk_samples.rs` がこれらを窓も装置も無しで動かす。環境変数が無いときは飛ばす。
+`host-checker` はホストの側を採点するプラグイン。`again`・`adelay`・`note-expression-synth` は振る舞いがソースから分かるので、ホストの音の結果を確かめられる。`crates/xirius-vst3/tests/it/sdk_samples.rs` がこれらを窓も装置も無しで動かす。試験は `#[ignore]` で、下の `-- --ignored` で流す。環境変数が無いときは落ちる。
 
 ```sh
 cmake -S EXT/vst3sdk -B EXT/build-samples -G "Visual Studio 17 2022" -A x64 \
   -DSMTG_ENABLE_VSTGUI_SUPPORT=ON -DSMTG_ADD_VST3_PLUGINS_SAMPLES=ON \
   -DSMTG_CREATE_PLUGIN_LINK=OFF -DSMTG_ADD_VST3_HOSTING_SAMPLES=OFF -DSMTG_RUN_VST_VALIDATOR=OFF
 cmake --build EXT/build-samples --config Release --target host-checker again adelay note-expression-synth
-XIRIUS_VST3_SDK_SAMPLES=EXT/build-samples/VST3/Release cargo test -p xirius-vst3 --test it sdk_samples::
+XIRIUS_VST3_SDK_SAMPLES=EXT/build-samples/VST3/Release cargo test -p xirius-vst3 --test it sdk_samples:: -- --ignored
 ```
 
 ### clap-validator

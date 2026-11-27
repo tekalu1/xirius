@@ -21,8 +21,12 @@ background history writes, session playback/audition/MIDI capture, CLI/MCP song 
 prefs persistence without that workspace union.
 These are additional builds, not part of a claim that every configuration builds once.
 
-`--plugins` remains the explicit real-ARA check: set the plugin paths listed in
-`docs/ara-verification.md`. Tests opening real windows remain excluded by the lists in
+`--plugins` remains the explicit real-plugin check: set the plugin paths listed in
+`docs/ara-verification.md`, and `XIRIUS_REAL_VST3_EFFECT` and `XIRIUS_REAL_VST3_INSTRUMENT` to an
+installed VST3 effect's and instrument's bundle. A test that needs an installed plugin is
+`#[ignore]`d, is listed in `PLUGIN_TESTS` (`scripts/ci_tests.py`) and fails without its variable;
+it never passes by skipping. What it guards without a real plugin runs everywhere on the test
+plugins (`xirius-test-vst3`, `xirius-test-clap`). Tests opening real windows remain excluded by the lists in
 `scripts/ci_tests.py` and must run on a desktop of known size before release.
 `--windows --tag v<version>` runs the window tests a release needs a record of
 (`WINDOW_TESTS` in `scripts/release_ci_gate.py`; for now the `xirius-ui` `e2e_window` save
@@ -298,7 +302,7 @@ which runs on CI, fails a window test that starts the app another way. `python s
 --windows --all` runs every window test, one target at a time, inside the same watch as above and
 writes no tag; `--windows --all --list` names them. It runs as on a PC with no plugins installed
 (the common program files folder is an empty one, and the plugin path variables are unset): the
-tests that skip without a real plugin skip, and the real plugins are `--plugins`'s.
+window tests open the test plugins, and the real plugins are `--plugins`'s.
 
 ## CI stages
 

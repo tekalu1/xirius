@@ -1,14 +1,16 @@
 // Windows-only: HWND vendor editor inspection; macOS native editors are stage 3.
 #![cfg(target_os = "windows")]
 //! What other vendors' editors put under the frame (PLG-048): the class of every child window
-//! and which of them own a caret or an input context. Each test skips when its plugin is not
-//! installed. The windows open off every screen and never take the foreground; no OS input is
-//! sent.
+//! and which of them own a caret or an input context. The vendors are the installed effect and
+//! instrument `XIRIUS_REAL_VST3_EFFECT` and `XIRIUS_REAL_VST3_INSTRUMENT` name (`#[ignore]`d, run
+//! by `python scripts/ci_tests.py --plugins`; each fails when its variable is not set). The
+//! frame's own focus policy is tried on the test VST3. The windows open off every screen and
+//! never take the foreground; no OS input is sent.
 //!
 //! Every plugin of this file is made, shown and released on one thread ([`on_ui_thread`]), the
 //! way a host has one UI thread. The tests themselves run on several threads at once, and two
-//! kHs editors opened from two of them at the same moment crashed inside Kilohearts' shared
-//! `HeartCore.core_64` (an access violation, about once in 25 runs on a busy machine).
+//! editors of one vendor opened from two of them at the same moment have crashed inside the
+//! vendor's shared library (an access violation, about once in 25 runs on a busy machine).
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Sender, channel};
@@ -21,7 +23,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumChildWindows, GW_CHILD, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetWindow,
     GetWindowLongW, GetWindowThreadProcessId, PostMessageW, WM_KEYDOWN, WM_KEYUP, WS_EX_NOACTIVATE,
 };
-use xirius_vst3::{Module, Placement, Plugin, default_vst3_dir};
+use xirius_vst3::{Module, Placement, Plugin};
 
 type Job = Box<dyn FnOnce() + Send>;
 /// A job and where its outcome (or its panic's message) goes.
@@ -83,19 +85,14 @@ fn pump_until(
     }
 }
 
-fn load(relative: &str) -> Option<Plugin> {
-    let path: PathBuf = default_vst3_dir().join(relative);
-    if !path.exists() {
-        eprintln!("skipped: {} is not installed", path.display());
-        return None;
-    }
-    let module = Arc::new(Module::load(&path).expect("load"));
+fn load(path: &std::path::Path) -> Plugin {
+    let module = Arc::new(Module::load(path).expect("load"));
     let class = module
         .classes()
         .into_iter()
         .find(|c| c.is_audio_processor())
         .expect("an audio class");
-    Some(Plugin::new(module, &class).expect("create"))
+    Plugin::new(module, &class).expect("create")
 }
 
 fn classes(frame: HWND) -> Vec<String> {
@@ -122,58 +119,52 @@ fn classes(frame: HWND) -> Vec<String> {
     out
 }
 
-fn survey(relative: &'static str) {
-    on_ui_thread(move || survey_here(relative));
+/// Surveys the editor of the installed bundle `variable` names.
+fn survey(variable: &'static str) {
+    let path = std::env::var_os(variable)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("{variable} names an installed VST3 bundle"));
+    on_ui_thread(move || survey_here(&path));
 }
 
-fn survey_here(relative: &str) {
-    let Some(plugin) = load(relative) else {
-        return;
-    };
+fn survey_here(path: &std::path::Path) {
+    let plugin = load(path);
+    let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+    let label = name.as_str();
     plugin.set_editor_bar(xirius_vst3::EditorBar {
         track: "Vocal".into(),
-        device: std::path::Path::new(relative)
-            .file_stem()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned(),
+        device: name.clone(),
         preset: "Default".into(),
         powered: true,
         ..Default::default()
     });
     let before = unsafe { GetForegroundWindow() };
     let mut editor = plugin
-        .open_editor_at(relative, Placement::offscreen())
+        .open_editor_at(label, Placement::offscreen())
         .expect("an editor");
     editor.pump(Duration::from_millis(1500));
     // A vendor that makes its windows late (a busy machine) is waited for.
     pump_until(&mut editor, |e| !classes(e.hwnd() as HWND).is_empty());
     let found = classes(editor.hwnd() as HWND);
     eprintln!(
-        "{relative}: native-frame fallback={}",
+        "{label}: native-frame fallback={}",
         editor.uses_native_frame()
     );
     if let Some(dir) = std::env::var_os("XIRIUS_EDITOR_SHOTS") {
-        let path = PathBuf::from(dir).join(format!(
-            "{}.bmp",
-            std::path::Path::new(relative)
-                .file_stem()
-                .unwrap()
-                .to_string_lossy()
-        ));
+        let path = PathBuf::from(dir).join(format!("{label}.bmp"));
         editor.capture_bmp(&path).expect("capture common frame");
     }
-    eprintln!("{relative}: {found:?}");
-    assert!(!editor.took_foreground(), "{relative}: {found:?}");
+    eprintln!("{label}: {found:?}");
+    assert!(!editor.took_foreground(), "{label}: {found:?}");
     // Another program (or the person) may move the foreground meanwhile; none of ours may.
     let now = unsafe { GetForegroundWindow() };
     assert!(
         now == before || !ours(now),
-        "{relative}: our window took the foreground"
+        "{label}: our window took the foreground"
     );
     assert!(
         !found.is_empty(),
-        "{relative}: the view has windows below the frame"
+        "{label}: the view has windows below the frame"
     );
     // SAFETY: a plain query on our window.
     let child = unsafe { GetWindow(editor.viewport_hwnd() as HWND, GW_CHILD) };
@@ -196,7 +187,7 @@ fn survey_here(relative: &str) {
     seen += editor.take_play_requests();
     assert_eq!(
         seen, 1,
-        "{relative}: a Space the vendor's window leaves alone reaches the frame once"
+        "{label}: a Space the vendor's window leaves alone reaches the frame once"
     );
     // SAFETY: as above; a letter is the vendor's own to take.
     unsafe {
@@ -213,22 +204,19 @@ fn survey_here(relative: &str) {
     });
     editor.pump(Duration::from_millis(300));
     after += editor.take_play_requests();
-    assert_eq!(after, 1, "{relative}: only Space");
+    assert_eq!(after, 1, "{label}: only Space");
 }
 
 #[test]
-fn a_gain_from_kilohearts_has_child_windows() {
-    survey("Kilohearts/kHs Gain.vst3");
+#[ignore = "needs XIRIUS_REAL_VST3_EFFECT (python scripts/ci_tests.py --plugins)"]
+fn an_installed_effects_editor_has_child_windows() {
+    survey("XIRIUS_REAL_VST3_EFFECT");
 }
 
 #[test]
-fn supermassive_has_child_windows() {
-    survey("ValhallaSupermassive.vst3");
-}
-
-#[test]
-fn vital_has_child_windows() {
-    survey("Vital.vst3");
+#[ignore = "needs XIRIUS_REAL_VST3_INSTRUMENT (python scripts/ci_tests.py --plugins)"]
+fn an_installed_instruments_editor_has_child_windows() {
+    survey("XIRIUS_REAL_VST3_INSTRUMENT");
 }
 
 /// A frame opened where a person asked for it takes focus from a click; the others stay
@@ -240,9 +228,10 @@ fn a_requested_frame_takes_focus_from_a_click_and_a_tool_does_not() {
 }
 
 fn requested_frame_takes_focus() {
-    let Some(plugin) = load("Kilohearts/kHs Gain.vst3") else {
-        return;
-    };
+    xirius_test_vst3::fixture_marker();
+    let plugin = load(&xirius_test_vst3::fixture_path(
+        std::env::current_exe().unwrap().parent().unwrap(),
+    ));
     let away = Placement::offscreen();
     let noactivate = |place: Placement| {
         let editor = plugin.open_editor_at("focus", place).expect("an editor");

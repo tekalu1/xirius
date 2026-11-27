@@ -1,8 +1,8 @@
 //! Scanning folders of bundles through the real scan process (`xirius-plugin-scan`).
 //!
 //! The bundles are made here: a DLL that is not one, a folder without a binary, and names the
-//! scan process is told to crash or hang on. When kHs Gain is installed, a copy of it is
-//! scanned as well; without it that part is skipped.
+//! scan process is told to crash or hang on, and a copy of the test VST3 (`xirius-test-vst3`)
+//! that opens.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -46,14 +46,22 @@ fn options(plugins: &Path, cache: &Path) -> ScanOptions {
     }
 }
 
-fn khs_gain() -> Option<PathBuf> {
-    let p = xirius_vst3::default_vst3_dir().join(r"Kilohearts\kHs Gain.vst3");
-    if p.is_file() {
-        Some(p)
+/// A copy of the test VST3 in `dir`, under a name of its own: the DLL on Windows, the
+/// bundle's files on macOS.
+fn fixture_copy(dir: &Path) -> PathBuf {
+    xirius_test_vst3::fixture_marker();
+    let fixture =
+        xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
+    let dst = dir.join("Test Gain.vst3");
+    if fixture.is_dir() {
+        std::fs::create_dir_all(dst.join("Contents/MacOS")).unwrap();
+        for file in ["Contents/Info.plist", "Contents/MacOS/Fixture"] {
+            std::fs::copy(fixture.join(file), dst.join(file)).unwrap();
+        }
     } else {
-        eprintln!("skipped the real plugin: {} is not installed", p.display());
-        None
+        std::fs::copy(fixture, &dst).unwrap();
     }
+    dst
 }
 
 #[test]
@@ -87,18 +95,13 @@ fn a_crashing_or_hanging_bundle_does_not_stop_the_scan() {
     fake_bundle(&plugins, "Crashes On Load", b"MZ");
     fake_bundle(&plugins, "Not A Dll", b"this is not a library");
     std::fs::create_dir_all(plugins.join("No Binary.vst3")).unwrap();
-    let real = khs_gain().map(|src| {
-        let dst = plugins.join("kHs Gain.vst3");
-        std::fs::copy(src, &dst).unwrap();
-        dst
-    });
+    let real = fixture_copy(&plugins);
 
     let mut opts = options(&plugins, &root.join("plugins.json"));
     opts.extra_args = vec!["--crash-on".into(), "Crashes On Load".into()];
     let r = scan(&opts).expect("scan");
-    let expected = 3 + real.is_some() as usize;
-    assert_eq!(r.bundles, expected);
-    assert_eq!(r.probed, expected);
+    assert_eq!(r.bundles, 4);
+    assert_eq!(r.probed, 4);
     assert_eq!(r.failed, 3, "{:?}", r.catalog.failures);
     let kind_of = |c: &Catalog, name: &str| {
         c.failures
@@ -112,29 +115,26 @@ fn a_crashing_or_hanging_bundle_does_not_stop_the_scan() {
     );
     assert_eq!(kind_of(&r.catalog, "Not A Dll"), Some(FailureKind::Failed));
     assert_eq!(kind_of(&r.catalog, "No Binary"), Some(FailureKind::Failed));
-    if let Some(real) = real {
-        let gain = r
-            .catalog
-            .entries
-            .iter()
-            .find(|e| e.path == real)
-            .expect("kHs Gain is listed");
-        assert_eq!(gain.kind, PluginKind::Effect);
-        assert_eq!(gain.format, "vst3");
-        assert_eq!(gain.uid.len(), 32);
-        assert!(gain.vendor.contains("Kilohearts"), "{gain:?}");
-        assert_eq!(r.catalog.search("gain", None).len(), 1);
-        assert!(
-            r.catalog
-                .search("", Some(PluginKind::Instrument))
-                .is_empty()
-        );
-    }
+    let gain = r
+        .catalog
+        .entries
+        .iter()
+        .find(|e| e.path == real)
+        .expect("the test VST3 is listed");
+    assert_eq!(gain.kind, PluginKind::Effect);
+    assert_eq!(gain.format, "vst3");
+    assert_eq!(gain.uid.len(), 32);
+    assert_eq!(r.catalog.search("latency", None).len(), 1);
+    assert!(
+        r.catalog
+            .search("", Some(PluginKind::Instrument))
+            .is_empty()
+    );
     // What the scan wrote is what the browser reads.
     assert_eq!(Catalog::load(&opts.cache), r.catalog);
 
     // A bundle that hangs is given up on after the timeout, and the scan goes on. Scanned
-    // apart from the real plugin, with a shorter timeout that still leaves a busy machine time
+    // apart from the test VST3, with a shorter timeout that still leaves a busy machine time
     // to start the scan process for the bundle that is not a DLL. On Windows the timeout counts
     // only the time the process gets (ARC-037), so a busy machine does not use it up; elsewhere
     // it is wall time.

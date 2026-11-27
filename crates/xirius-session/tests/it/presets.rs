@@ -161,14 +161,12 @@ fn malformed_file_and_dry_run_leave_song_and_disk_untouched() {
 }
 
 #[test]
-fn installed_vst3_restores_its_own_stream_from_a_preset_file() {
+fn a_vst3_restores_its_own_stream_from_a_preset_file() {
     use std::sync::Arc;
     use xirius_plugins::{decode_state, encode_state, probe, uid_hex};
-    let path = xirius_vst3::default_vst3_dir().join("Kilohearts/kHs Gain.vst3");
-    if !path.exists() {
-        eprintln!("kHs Gain not installed; native preset test skipped");
-        return;
-    }
+    // The test VST3 (`xirius-test-vst3`): its "Gain" is in its own stream.
+    xirius_test_vst3::fixture_marker();
+    let path = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     let entry = probe(&path).unwrap().remove(0);
     let module = Arc::new(xirius_vst3::Module::load(&path).unwrap());
     let class = module

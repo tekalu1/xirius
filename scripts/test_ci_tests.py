@@ -23,9 +23,15 @@ class SelectionTests(unittest.TestCase):
         self.assertTrue(ci_tests.opens_windows("xirius-ui", "new_window"))
         self.assertTrue(ci_tests.opens_windows("xirius-ui", "new_windows"))
         self.assertFalse(ci_tests.opens_windows("xirius-session", "empty_instrument"))
-        self.assertEqual(len(ci_tests.plugin_commands()), 3)
+        self.assertEqual(len(ci_tests.plugin_commands()), len(ci_tests.PLUGIN_TESTS))
         for command in ci_tests.plugin_commands():
             self.assertIn("--ignored", command)
+        self.assertIn(["cargo", "test", "-p", "xirius-ui", "--lib", "--", "mixer::editor_tests::installed_",
+                       "--ignored", "--nocapture"], ci_tests.plugin_commands())
+        self.assertIn(["cargo", "test", "-p", "xirius-ara", "--test", "test_plugin", "--", "--ignored",
+                       "--nocapture"], ci_tests.plugin_commands())
+        self.assertIn("XIRIUS_REAL_VST3_INSTRUMENT", ci_tests.plugin_variables())
+        self.assertTrue(set(ci_tests.plugin_variables()) - {"XIRIUS_ARA_TEST_PLUGIN"} <= set(ci_tests.PLUGIN_PATHS))
         self.assertIn("not test(mixer::editor_tests)", ci_tests.test_filter())
 
     def test_a_window_test_that_is_no_longer_a_target_is_named(self):

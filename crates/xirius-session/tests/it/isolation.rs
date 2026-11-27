@@ -5,8 +5,8 @@
 //! a host that goes down leaves the plugins on the others playing, and a plugin that moves
 //! keeps its state. Nothing here opens an audio device: the engine is pulled by the test.
 //!
-//! The tests skip when kHs Gain is not installed or `xirius-plugin-host` has not been built
-//! (`cargo test --workspace` builds it).
+//! The plugin is the test one (`xirius-test-vst3`, its "Gain"), in `xirius-plugin-host`
+//! (`cargo test --workspace` builds both).
 
 use crate::crash_records;
 
@@ -109,8 +109,8 @@ fn unity() -> f64 {
     f64::from(AMP) / 2f64.sqrt()
 }
 
-/// kHs Gain, the host, a state made by the plugin itself with the gain turned down, and how
-/// many dB down that is. `None` (the test skips) when either is missing.
+/// The test plugin (`xirius-test-vst3`), the host, a state made by the plugin itself with its
+/// "Gain" turned down to 0.3, and how many dB down that is.
 struct Gain {
     host: PathBuf,
     catalog: Arc<Catalog>,
@@ -121,16 +121,10 @@ struct Gain {
     unity_value: f64,
 }
 
-fn gain() -> Option<Gain> {
-    let path = xirius_vst3::default_vst3_dir().join("Kilohearts/kHs Gain.vst3");
-    if !path.exists() {
-        eprintln!("skipped: kHs Gain is not installed");
-        return None;
-    }
-    let Some(host) = find_host() else {
-        eprintln!("skipped: xirius-plugin-host is not built");
-        return None;
-    };
+fn gain() -> Gain {
+    let host = find_host().expect("xirius-plugin-host is built with the tests");
+    xirius_test_vst3::fixture_marker();
+    let path = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     let entries = probe(&path).expect("probe");
     let uid = entries[0].uid.clone();
     let module = Arc::new(xirius_vst3::Module::load(&path).unwrap());
@@ -146,18 +140,11 @@ fn gain() -> Option<Gain> {
         .find(|p| p.title == "Gain")
         .unwrap();
     assert!(plugin.set_param(p.id, 0.3));
-    let text = plugin.param_text(p.id, 0.3).unwrap();
-    let quiet_db: f64 = text
-        .trim()
-        .replace('\u{2212}', "-")
-        .split_whitespace()
-        .next()
-        .unwrap()
-        .parse()
-        .unwrap();
+    // Its "Gain" is the output times the value.
+    let quiet_db = db(0.3);
     let quiet_state = encode_state(&plugin.get_state().unwrap());
     let unity_value = p.default;
-    Some(Gain {
+    Gain {
         host,
         catalog: Arc::new(Catalog {
             entries,
@@ -167,10 +154,10 @@ fn gain() -> Option<Gain> {
         quiet_state,
         quiet_db,
         unity_value,
-    })
+    }
 }
 
-/// A saved song with an audio track playing a sine for `secs` and kHs Gain on it.
+/// A saved song with an audio track playing a sine for `secs` and the test plugin on it.
 fn song(dir: &Dir, g: &Gain, secs: f32) -> (Session, PathBuf, String) {
     let song_dir = dir.path().join("song");
     let mut s = Session::with_registry(Project::new("isolation"), shared_registry());
@@ -186,7 +173,7 @@ fn song(dir: &Dir, g: &Gain, secs: f32) -> (Session, PathBuf, String) {
     let pid = id_of(&run(
         &mut s,
         "plugin.add",
-        json!({ "track": t, "name": "kHs Gain", "format": "vst3", "uid": g.uid }),
+        json!({ "track": t, "name": "Test Gain", "format": "vst3", "uid": g.uid }),
     ));
     (s, song_dir, pid)
 }
@@ -206,7 +193,7 @@ fn options(g: &Gain, song_dir: &Path, isolation: Isolation) -> Options {
 /// the export through the host (its start included) is faster than real time. That holds on a
 /// quiet machine only, so it runs with `--ignored`.
 fn export_through_the_host(speed: bool) {
-    let Some(g) = gain() else { return };
+    let g = gain();
     let dir = Dir::new("match");
     let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 10.0);
@@ -273,7 +260,7 @@ fn the_export_through_the_host_is_faster_than_real_time() {
 
 #[test]
 fn a_host_that_goes_down_during_an_export_recovers_without_silence() {
-    let Some(g) = gain() else { return };
+    let g = gain();
     let dir = Dir::new("crash");
     let _records = CrashRecords::new();
     let secs = 60.0;
@@ -517,7 +504,7 @@ fn wait_for(host: &mut SessionHost, what: &str, f: impl Fn(&mut SessionHost) -> 
 
 #[test]
 fn while_playing_a_killed_host_recovers_the_state_automatically() {
-    let Some(g) = gain() else { return };
+    let g = gain();
     let dir = Dir::new("kill");
     let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 30.0);
@@ -559,7 +546,7 @@ fn while_playing_a_killed_host_recovers_the_state_automatically() {
 
 #[test]
 fn a_parameter_set_in_the_song_reaches_the_running_plugin_without_a_new_mix() {
-    let Some(g) = gain() else { return };
+    let g = gain();
     let dir = Dir::new("param");
     let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 30.0);
@@ -583,7 +570,7 @@ fn a_parameter_set_in_the_song_reaches_the_running_plugin_without_a_new_mix() {
 
 #[test]
 fn an_edit_in_the_plugin_comes_into_the_song_as_one_undo_step_and_feeds_automation() {
-    let Some(g) = gain() else { return };
+    let g = gain();
     let dir = Dir::new("collect");
     let _records = CrashRecords::new();
     let (mut s, song_dir, _) = song(&dir, &g, 30.0);
@@ -721,7 +708,7 @@ fn wait_open(host: &mut SessionHost) {
 
 #[test]
 fn every_process_mode_plays_without_added_delay() {
-    let Some(g) = gain() else { return };
+    let g = gain();
     let dir = Dir::new("modes");
     let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 30.0);
@@ -785,11 +772,11 @@ fn every_process_mode_plays_without_added_delay() {
 
 #[test]
 fn a_host_that_goes_down_leaves_the_plugins_on_the_other_hosts_playing() {
-    let Some(g) = gain() else { return };
+    let g = gain();
     let dir = Dir::new("hosts");
     let _records = CrashRecords::new();
     let (mut s, song_dir, a) = song(&dir, &g, 60.0);
-    // A second track with the same sine and its own kHs Gain.
+    // A second track with the same sine and its own test plugin.
     let t = id_of(&run(&mut s, "track.add.audio", json!({ "name": "Sine 2" })));
     run(
         &mut s,
@@ -799,7 +786,7 @@ fn a_host_that_goes_down_leaves_the_plugins_on_the_other_hosts_playing() {
     let b = id_of(&run(
         &mut s,
         "plugin.add",
-        json!({ "track": t, "name": "kHs Gain", "format": "vst3", "uid": g.uid }),
+        json!({ "track": t, "name": "Test Gain", "format": "vst3", "uid": g.uid }),
     ));
     for id in [&a, &b] {
         run(
@@ -899,7 +886,7 @@ fn a_host_that_goes_down_leaves_the_plugins_on_the_other_hosts_playing() {
 
 #[test]
 fn a_plugin_moved_to_another_process_keeps_its_state_and_the_move_is_one_undo_step() {
-    let Some(g) = gain() else { return };
+    let g = gain();
     let dir = Dir::new("move");
     let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 60.0);
@@ -985,7 +972,7 @@ fn a_plugin_moved_to_another_process_keeps_its_state_and_the_move_is_one_undo_st
 
 #[test]
 fn a_plugin_that_takes_the_shared_host_down_is_suggested_a_host_of_its_own() {
-    let Some(g) = gain() else { return };
+    let g = gain();
     let dir = Dir::new("suggest");
     let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 60.0);
@@ -1043,7 +1030,7 @@ fn level_between(host: &mut SessionHost, pull: &Pull, from: f64, to: f64) -> f64
 
 #[test]
 fn a_parameter_lane_moves_the_plugin_while_playing_in_and_out_of_process() {
-    let Some(g) = gain() else { return };
+    let g = gain();
     let dir = Dir::new("lane");
     let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 10.0);
@@ -1100,7 +1087,7 @@ fn a_parameter_lane_moves_the_plugin_while_playing_in_and_out_of_process() {
 fn an_edit_in_the_plugin_while_playing_is_written_into_its_lane_in_one_step() {
     use xirius_core::auto::AutoTarget;
     use xirius_session::autowrite::Pass;
-    let Some(g) = gain() else { return };
+    let g = gain();
     let dir = Dir::new("write");
     let _records = CrashRecords::new();
     let (mut s, song_dir, pid) = song(&dir, &g, 30.0);

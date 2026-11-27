@@ -1,8 +1,9 @@
-//! Real plugin windows: an effect from its insert row and an instrument from the keys
-//! button and mixer. Each opens in a plugin host, off every screen, and draws content.
-//! State capture of host editor changes is covered by the session's recapture tests.
+//! Real plugin windows: an effect from its insert row (the test VST3) and an instrument from
+//! the keys button and mixer (the installed one `XIRIUS_REAL_VST3_INSTRUMENT` names; `#[ignore]`d,
+//! run by `python scripts/ci_tests.py --plugins`). Each opens in a plugin host, off every
+//! screen, and draws content. State capture of host editor changes is covered by the session's
+//! recapture tests.
 
-use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -11,20 +12,15 @@ use xirius_session::output::OutputMode;
 
 use super::*;
 use crate::instrument::{Pick, current};
+#[cfg(windows)]
 use crate::popup::Action;
 
 const W: f32 = 1600.0;
 const H: f32 = 1000.0;
 
-/// The effect the tests open: free, and found on many PCs.
-const EFFECT: &str = "Kilohearts/kHs Gain.vst3";
-/// The instruments, the first found: free (sforzando's licence lets it be loaded; Vital's
-/// program is only run, not shipped).
-const INSTRUMENTS: [&str; 2] = ["sforzando.vst3", "Vital.vst3"];
-
 /// One test at a time opens a plugin's windows: a plugin may draw every window of the process
-/// from one thread (kHs Gain does), as the app opens them, and a window another test's
-/// thread opened at the same time may never be drawn.
+/// from one thread, as the app opens them, and a window another test's thread opened at the
+/// same time may never be drawn.
 static WINDOWS: Mutex<()> = Mutex::new(());
 
 struct WindowGuard {
@@ -63,9 +59,9 @@ fn one_at_a_time() -> WindowGuard {
 
 /// Keeps COM up in the test process until it ends, as the app's UI thread does. A thread
 /// that opened a window (OLE) and is the last to leave COM tears COM down for the process,
-/// holding COM's lock while it waits for the loader's; kHs Gain starts COM while the loader
-/// loads it, holding the loader's lock while it waits for COM's: the two wait for each other
-/// and every test that loads or ends a thread waits behind them.
+/// holding COM's lock while it waits for the loader's; a plugin that starts COM while the
+/// loader loads it holds the loader's lock while it waits for COM's: the two wait for each
+/// other and every test that loads or ends a thread waits behind them.
 fn keep_com() {
     #[cfg(windows)]
     {
@@ -80,21 +76,6 @@ fn keep_com() {
             let hr = unsafe { CoIncrementMTAUsage(&mut cookie) };
             assert!(hr >= 0, "CoIncrementMTAUsage: {hr:#x}");
         });
-    }
-}
-
-fn entries(bundle: &str) -> Option<Vec<Entry>> {
-    let path: PathBuf = xirius_vst3::default_vst3_dir().join(bundle);
-    if !path.exists() {
-        eprintln!("skipped: {} is not installed", path.display());
-        return None;
-    }
-    match xirius_plugins::probe(&path) {
-        Ok(e) => Some(e),
-        Err(e) => {
-            eprintln!("skipped: {} does not open: {e}", path.display());
-            None
-        }
     }
 }
 
@@ -190,14 +171,13 @@ fn check_window(s: &mut Studio, id: PluginId, what: &str, previous: Option<isize
     hwnd
 }
 
+#[cfg(windows)]
 #[test]
 fn a_vst3_effects_window_opens_in_its_host_and_draws() {
-    // A plugin may write into the temporary folder (Vital leaves `vital_versions.txt`).
     let _temp = crate::shot::TestTemp::new();
     let _one = one_at_a_time();
-    let Some(entries) = entries(EFFECT) else {
-        return;
-    };
+    let entries = xirius_plugins::probe(&crate::plugin_fixture_shots::fixture_path()).unwrap();
+    let name = entries[0].name.clone();
     let (mut s, g) = studio(entries);
     let t = track(&s, "Vocal");
     assert!(press(&mut s, &g, MixerHit::AddInsert(t)));
@@ -207,9 +187,9 @@ fn a_vst3_effects_window_opens_in_its_host_and_draws() {
         .unwrap()
         .choices()
         .iter()
-        .find(|c| c.label.starts_with("kHs Gain"))
+        .find(|c| c.label.starts_with(&name))
         .map(|c| c.to.clone())
-        .expect("kHs Gain in the insert list");
+        .expect("the test VST3 in the insert list");
     s.popup_action(&g, Action::Pick(pick));
     let id = s.project().tracks[&t].inserts[0].id;
     assert!(s.mixer.is_open(id), "inserting opens the editor");
@@ -221,16 +201,15 @@ fn a_vst3_effects_window_opens_in_its_host_and_draws() {
 }
 
 #[test]
-fn a_vst3_instruments_window_opens_from_the_keys_button_and_the_mixer() {
-    // A plugin may write into the temporary folder (Vital leaves `vital_versions.txt`).
+#[ignore = "needs XIRIUS_REAL_VST3_INSTRUMENT (python scripts/ci_tests.py --plugins)"]
+fn installed_vst3_instruments_window_opens_from_the_keys_button_and_the_mixer() {
+    // A plugin may write into the temporary folder.
     let _temp = crate::shot::TestTemp::new();
     let _one = one_at_a_time();
-    let Some((entries, name)) = INSTRUMENTS
-        .iter()
-        .find_map(|b| entries(b).map(|e| (e, b.trim_end_matches(".vst3"))))
-    else {
-        return;
-    };
+    let path = std::env::var_os("XIRIUS_REAL_VST3_INSTRUMENT")
+        .expect("XIRIUS_REAL_VST3_INSTRUMENT names an installed VST3 instrument");
+    let entries = xirius_plugins::probe(std::path::Path::new(&path)).expect("probe");
+    let name = "instrument editor";
     let entry = entries
         .iter()
         .find(|e| e.kind == PluginKind::Instrument)
