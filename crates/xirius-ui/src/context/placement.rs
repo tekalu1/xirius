@@ -14,7 +14,18 @@ struct Route {
     after: Vec<String>,
     category: Category,
     dynamic: bool,
-    command: String,
+    /// The commands the row runs, from the mapping (more than one where it runs one of them by
+    /// what it stands on); empty where it runs none.
+    command: Vec<String>,
+    /// Why the row runs no command of the table, where it runs none.
+    #[cfg_attr(not(test), allow(dead_code))]
+    no_command: Option<String>,
+}
+
+impl Route {
+    fn runs(&self, command: &str) -> bool {
+        self.command.iter().any(|c| c == command)
+    }
 }
 
 fn routes() -> &'static [Route] {
@@ -55,7 +66,12 @@ fn routes() -> &'static [Route] {
                         .find(|c| Some(c.label()) == to["category"].as_str())
                         .expect("classified route"),
                     dynamic: from["dynamic"].as_bool().unwrap_or(false),
-                    command: from["command"].as_str().unwrap_or("").into(),
+                    command: match &to["command"] {
+                        Value::Array(_) => strings(&to["command"]),
+                        Value::String(c) if !c.is_empty() => vec![c.clone()],
+                        _ => Vec::new(),
+                    },
+                    no_command: to["no_command"].as_str().map(Into::into),
                 }
             })
             .collect()
@@ -133,54 +149,44 @@ fn target_matches(route: &str, target: &str) -> bool {
         }
 }
 
+/// Commands the reviewed inventory names otherwise than the command table: (inventory, table).
+const RENAMED: &[(&str, &str)] = &[("plugin.copy", "plugin.copy_to")];
+
 fn command_of(item: &Item) -> &str {
+    use crate::{
+        instrument::menu::{LOAD, Menu, OPEN},
+        popup::{Action, PopupKind},
+    };
     match &item.run {
-        Run::Cmd(c, _) | Run::Key(c) | Run::Ask(c, ..) | Run::AskNumber(c, ..) => {
-            if *c == "plugin.copy_to" {
-                "plugin.copy"
-            } else {
-                c
-            }
-        }
+        Run::Cmd(c, _) | Run::Key(c) | Run::Ask(c, ..) | Run::AskNumber(c, ..) => RENAMED
+            .iter()
+            .find(|(_, table)| table == c)
+            .map_or(c, |(inventory, _)| inventory),
         Run::Field(kind, ..) => kind.command(),
         Run::Do(super::Act::Lane(..)) => "auto.lane.show",
         Run::Do(super::Act::AraAttach(..)) => "clip.ara.attach",
         Run::Do(super::Act::Preset(..)) => "plugin.preset.choose",
-        Run::Do(super::Act::InsertRecent(..)) => "plugin.recent",
-        Run::Legacy(
-            crate::popup::PopupKind::InstMenu(crate::instrument::menu::Menu::Preset(..)),
-            _,
-            action,
-        ) if matches!(action.as_ref(), crate::popup::Action::Pick(to) if to.starts_with(crate::instrument::menu::LOAD)) => {
-            "instrument.preset.load"
+        // A preset of an external instrument; a built-in one applies it through the browser.
+        Run::Legacy(PopupKind::InstMenu(Menu::Preset(..)), _, action) if matches!(action.as_ref(), Action::Pick(to) if to.starts_with(LOAD)) => {
+            "preset.load"
         }
-        Run::Legacy(
-            crate::popup::PopupKind::InstMenu(crate::instrument::menu::Menu::Params(..)),
-            ..,
-        ) => "auto.lane.show",
+        // Asks for the file first and opens it once picked.
+        Run::Legacy(PopupKind::InstMenu(Menu::Preset(..)), _, action) if matches!(action.as_ref(), Action::Pick(to) if to == OPEN) => {
+            "plugin.preset.open"
+        }
+        Run::Legacy(PopupKind::InstMenu(Menu::Params(..)), ..) => "auto.lane.show",
+        // Where the plugin runs: a setting of the preferences (and of the song, without a window).
+        Run::Legacy(PopupKind::Plugin(..), _, action)
+            if matches!(
+                action.as_ref(),
+                Action::Plugin(crate::health::PlugAct::Mode(_))
+            ) =>
+        {
+            "prefs.set"
+        }
+        // A dim row stands in for one that is not there: it runs nothing.
+        Run::Do(act) if item.enabled => super::screen_cmd::act_command(act).0,
         _ => "",
-    }
-}
-
-fn dynamic_command(route: &Route) -> &str {
-    if !route.command.is_empty() {
-        return &route.command;
-    }
-    match route.id.as_str() {
-        "other-18:002" => "track.output.set",
-        "other-20:004" | "other-69:003" => "track.preset.add",
-        "other-31:000" | "other-48:033" | "other-49:027" | "other-50:005" | "other-59:010" => {
-            "auto.lane.show"
-        }
-        "other-36:000" => "roll.drum.hide",
-        "other-36:001" => "roll.drum.rename",
-        "other-48:029" => "track.preset.apply",
-        "other-54:000" => "send.target.set",
-        "other-55:000" => "send.add",
-        "other-56:001" => "plugin.recent",
-        "other-59:001" => "instrument.preset.load",
-        "other-67:002" => "control.unassign",
-        _ => "unclassified dynamic rule",
     }
 }
 
@@ -307,7 +313,7 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
             .copied()
             .find(|r| {
                 same_path(&r.before, &lookup)
-                    && (r.command.is_empty() || command.is_empty() || r.command == command)
+                    && (r.command.is_empty() || command.is_empty() || r.runs(command))
             })
             .or_else(|| {
                 candidates.iter().copied().find(|r| {
@@ -323,10 +329,10 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
                         }
                         && (empty
                             || if r.dynamic {
-                                dynamic_command(r) == command
+                                r.runs(command)
                             } else {
                                 matches!(item.run, Run::Do(super::Act::Preset(..)))
-                                    && r.command == "plugin.preset.choose"
+                                    && r.runs("plugin.preset.choose")
                             })
                 })
             })

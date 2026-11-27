@@ -273,7 +273,14 @@ fn approved_inventory_and_mapping_keep_all_924_identities_and_payloads() {
         let id = route["id"].as_str().unwrap();
         assert!(visited.insert(id), "duplicate {id}");
         let before = by_id[id];
-        assert_eq!(route["command"], before["command"], "{id}");
+        // The mapping fills in the command where the inventory left it out, and names every one
+        // a row runs by what it stands on; it keeps the one the inventory names.
+        let named = before["command"].as_str().unwrap();
+        let runs = match &route["command"] {
+            serde_json::Value::Array(all) => all.iter().any(|c| c == named),
+            c => c == named,
+        };
+        assert!(named.is_empty() || runs, "{id}");
         assert_eq!(route["args"], before["args"], "{id}");
         assert!(
             Category::ALL
