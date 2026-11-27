@@ -102,6 +102,8 @@ raw-window-handle = "0.6"
 syn = { version = "3", features = ["full", "visit"] }
 uuid = "1"
 xirius-test-vst3 = { path = "../xirius-test-vst3" }
+# The test CLAP of the user flow tests (ARC-058).
+xirius-test-clap = { path = "../xirius-test-clap" }
 # The stand-in ARA plugin of the window's save tests (PLG-036).
 xirius-ara = { path = "../xirius-ara" }
 
