@@ -198,12 +198,11 @@ pub fn paint_ruler(pen: &mut Pen, studio: &Studio, roll: &Roll, ctx: &Ctx, f: &F
             Radius::Xs,
         );
     }
-    let over = band(studio, roll, ctx).and_then(|(band, rolls)| {
+    if let Some((band, rolls)) = band(studio, roll, ctx) {
         shared::paint_rolls(pen, ruler, rolls);
         shared::paint_band(pen, &band, ruler, None);
-        band.over()
-    });
-    shared::paint_labels(pen, &marks, ruler, over, |t| scale.x(t));
+    }
+    shared::paint_labels(pen, &marks, ruler, |t| scale.x(t));
 }
 
 /// What the roll's loop band shows, and the pre-roll and the post-roll beside it (window x)

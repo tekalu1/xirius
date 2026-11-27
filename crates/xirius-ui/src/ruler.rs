@@ -262,17 +262,6 @@ pub struct Band {
 }
 
 impl Band {
-    /// Whether the band's face is a fill (on, held or pointed at): the numbers over it take
-    /// the ink for a fill. Under auto-punch an off band is a faint red, not a fill.
-    pub fn filled(&self) -> bool {
-        self.lit || self.held || self.hover.is_some_and(|g| g != LoopGrip::New)
-    }
-
-    /// The stretch of the ruler the numbers cross in the ink for a fill, if any.
-    pub fn over(&self) -> Option<(f32, f32)> {
-        self.filled().then_some((self.x0, self.x1))
-    }
-
     /// The band's face: the loop's fill while on, grey while off; under auto-punch the
     /// alert red while on and a faint red while off, so a press shows on either.
     pub fn face(&self, c: &Colors) -> Hsla {
@@ -329,76 +318,51 @@ pub fn paint_band(pen: &mut Pen, band: &Band, ruler: Rect, shade_to: Option<Rect
 
 /// The ruler's numbers, each just right of its tick, below the loop band
 /// (2026-11-19): a bar's in blue, the others in the ink. `x_of` puts a tick on screen.
-pub fn paint_labels(
-    pen: &mut Pen,
-    marks: &[Mark],
-    ruler: Rect,
-    over: Option<(f32, f32)>,
-    x_of: impl Fn(Tick) -> f32,
-) {
-    paint_row(pen, ruler, over, |pen, row, on_fill| {
-        for m in marks {
-            let x = x_of(m.tick).round();
-            let ink = number_ink(pen.c, m.bar, on_fill);
-            pen.digits(
-                &m.label,
-                FontSize::Caption,
-                Weight::Medium,
-                ink,
-                Rect::new(x + Space::X1.px(), row.y, STEP_MIN_PX, row.h),
-                Align::Left,
-            );
-        }
-    });
+pub fn paint_labels(pen: &mut Pen, marks: &[Mark], ruler: Rect, x_of: impl Fn(Tick) -> f32) {
+    let row = band_row(ruler);
+    for m in marks {
+        let x = x_of(m.tick).round();
+        pen.digits(
+            &m.label,
+            FontSize::Caption,
+            Weight::Medium,
+            number_ink(pen.c, m.bar),
+            Rect::new(x + Space::X1.px(), row.y, STEP_MIN_PX, row.h),
+            Align::Left,
+        );
+    }
 }
 
-/// Draws text in the lower row, outside the loop band's fill.
-pub fn paint_row(
-    pen: &mut Pen,
-    ruler: Rect,
-    _over: Option<(f32, f32)>,
-    draw: impl Fn(&mut Pen, Rect, bool),
-) {
-    draw(pen, band_row(ruler), false);
-}
-
-/// The ruler's row for time labels, below the loop band.
+/// The ruler's row for time labels, below the loop band (UI-368): no number crosses the
+/// band's fill, so none needs the ink for a fill.
 pub fn band_row(ruler: Rect) -> Rect {
     Rect::new(ruler.x, ruler.y + LOOP_H, ruler.w, ruler.h - LOOP_H)
 }
 
 /// The ink of a number on the ruler: a bar's (and a bar's time in seconds) blue, the others
-/// the ink, and over the band's fill the ink for a fill.
-pub fn number_ink(c: &Colors, bar: bool, on_fill: bool) -> Hsla {
-    if on_fill {
-        c.on_fill
-    } else if bar {
-        c.ink_blue
-    } else {
-        c.ink
-    }
+/// the ink.
+pub fn number_ink(c: &Colors, bar: bool) -> Hsla {
+    if bar { c.ink_blue } else { c.ink }
 }
 
 /// The room a time takes on the ruler (`0:09.3765`), in px.
 pub const TIME_W: f32 = 72.0;
 
 /// The ruler's times (UI-339), each just right of its tick at window x, in the band's row
-/// as the numbers are: in the ink, and in the ink for a fill where they cross the band's fill
-/// (`over`).
-pub fn paint_times(pen: &mut Pen, times: &[(f32, &str)], ruler: Rect, over: Option<(f32, f32)>) {
-    paint_row(pen, ruler, over, |pen, row, on_fill| {
-        let ink = number_ink(pen.c, false, on_fill);
-        for (x, text) in times {
-            pen.digits(
-                text,
-                FontSize::Caption,
-                Weight::Medium,
-                ink,
-                Rect::new(x.round() + Space::X1.px(), row.y, TIME_W, row.h),
-                Align::Left,
-            );
-        }
-    });
+/// as the numbers are, in the ink.
+pub fn paint_times(pen: &mut Pen, times: &[(f32, &str)], ruler: Rect) {
+    let row = band_row(ruler);
+    let ink = number_ink(pen.c, false);
+    for (x, text) in times {
+        pen.digits(
+            text,
+            FontSize::Caption,
+            Weight::Medium,
+            ink,
+            Rect::new(x.round() + Space::X1.px(), row.y, TIME_W, row.h),
+            Align::Left,
+        );
+    }
 }
 
 /// The playhead at window x: a line from the top of `view` down, with its
@@ -435,6 +399,36 @@ fn paint_head(pen: &mut Pen, x: f32, view: Rect, color: Hsla) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pointer on the band (a grip or its body) or a press lights its face; outside it
+    /// (`New`) the face stays as it was.
+    #[test]
+    fn a_band_under_the_pointer_or_held_shows_the_hover_face() {
+        let band = |lit, held, hover| Band {
+            x0: 10.0,
+            x1: 90.0,
+            lit,
+            held,
+            hover,
+            punch: false,
+        };
+        for theme in xirius_design::Theme::ALL {
+            let c = Colors::new(theme);
+            for lit in [false, true] {
+                let rest = if lit {
+                    c.fill.opacity(0.7)
+                } else {
+                    c.surface_3
+                };
+                assert_eq!(band(lit, false, None).face(&c), rest);
+                assert_eq!(band(lit, false, Some(LoopGrip::New)).face(&c), rest);
+                for grip in [LoopGrip::Start, LoopGrip::End, LoopGrip::Body] {
+                    assert_eq!(band(lit, false, Some(grip)).face(&c), c.fill_hover);
+                }
+                assert_eq!(band(lit, true, None).face(&c), c.fill_hover);
+            }
+        }
+    }
 
     #[test]
     fn scale_maps_ticks_both_ways_and_rounds_like_the_arrangement() {

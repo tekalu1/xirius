@@ -933,13 +933,13 @@ fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
         if g.tempo.h > 0.0 {
             crate::arrange::paint::tempo(pen, studio, &project, g);
         }
-        let over = crate::arrange::paint::loop_band(pen, studio, &project, g);
+        crate::arrange::paint::loop_band(pen, studio, &project, g);
         let scale = studio.ruler_scale(g);
         if studio.song.session().state.view.ruler_seconds {
             if let Some(times) = &grid.times {
                 crate::grid_lines::paint_time_ticks(pen, times, g.ruler, |t| studio.tick_x_f(g, t));
             }
-            crate::context::marker::paint_seconds(pen, studio, g, over);
+            crate::context::marker::paint_seconds(pen, studio, g);
         } else {
             crate::grid_lines::paint_ticks(pen, &grid.lines, g.ruler, |t| scale.x(t));
             // Numbers thin out until they fit; markers take precedence.
@@ -960,7 +960,7 @@ fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
                 })
             })
             .collect();
-            crate::ruler::paint_labels(pen, &marks, g.ruler, over, |t| scale.x(t));
+            crate::ruler::paint_labels(pen, &marks, g.ruler, |t| scale.x(t));
             // The times, where no number of the grid's is.
             if let Some(times) = &grid.times {
                 let taken: Vec<f32> = marks.iter().map(|m| scale.x(m.tick)).collect();
@@ -971,7 +971,7 @@ fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
                     .map(|(l, text)| (studio.tick_x_f(g, l.at), text.as_str()))
                     .filter(|(x, _)| free(*x))
                     .collect();
-                crate::ruler::paint_times(pen, &shown, g.ruler, over);
+                crate::ruler::paint_times(pen, &shown, g.ruler);
             }
         }
         crate::context::marker::paint(pen, studio, g);
