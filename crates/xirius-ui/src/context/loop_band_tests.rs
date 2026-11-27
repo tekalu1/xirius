@@ -337,8 +337,8 @@ fn bands(s: &Studio, g: &Geometry) -> [Band; 2] {
     [a, r]
 }
 
-/// Review M4: under auto-punch both bands are red; a press still shows: full red with the
-/// ink for a fill while the loop is on, a faint red with the plain ink while it is off.
+/// Review M4: under auto-punch both bands are red; a press still shows: full red while the
+/// loop is on, a faint red while it is off.
 #[test]
 fn auto_punch_shows_the_loop_on_and_off_on_both_bands() {
     let (mut s, g) = with_roll();
@@ -356,7 +356,6 @@ fn auto_punch_shows_the_loop_on_and_off_on_both_bands() {
     );
     for b in bands(&s, &g) {
         assert!(b.punch && !b.lit);
-        assert_eq!(b.over(), None, "off: the numbers keep their ink");
         assert_eq!(b.face(&c), c.alert.opacity(0.3));
     }
     let at = band_at(&s, &g, 6 * BAR);
@@ -368,7 +367,6 @@ fn auto_punch_shows_the_loop_on_and_off_on_both_bands() {
     s.arrange.hover = Spot::None;
     for b in bands(&s, &g) {
         assert!(b.punch && b.lit);
-        assert_eq!(b.over(), Some((b.x0, b.x1)));
         assert_eq!(b.face(&c), c.alert);
     }
     let at = roll_at(&s, &g, 6 * BAR, 5.0);
@@ -393,8 +391,8 @@ fn every_number_on_the_ruler_sits_below_the_loop_band() {
     assert!(row.x >= ruler.x && row.right() <= ruler.right(), "{row:?}");
     for theme in xirius_design::Theme::ALL {
         let c = crate::paint::Colors::new(theme);
-        assert_eq!(number_ink(&c, true, false), c.ink_blue);
-        assert_eq!(number_ink(&c, false, false), c.ink);
+        assert_eq!(number_ink(&c, true), c.ink_blue);
+        assert_eq!(number_ink(&c, false), c.ink);
     }
 }
 
