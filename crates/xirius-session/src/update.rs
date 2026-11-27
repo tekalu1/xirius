@@ -1853,6 +1853,23 @@ mod tests {
             .unwrap()
     }
 
+    /// The PID of a program that has ended, for a part left by a killed window. Keep the
+    /// child: while its handle is open, Windows does not hand the PID out again. A fixed PID
+    /// is not used: Windows ignores its low two bits, and on a fresh machine a small one may
+    /// be another Xirius test, which counts as a live window.
+    fn ended_process() -> (std::process::Child, u32) {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--list")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        child.wait().unwrap();
+        let pid = child.id();
+        assert!(!pid_alive(pid), "an ended program holds no part");
+        (child, pid)
+    }
+
     /// A fetch that answers `body` and counts the asks, never reaching the network.
     fn stub(
         body: Result<&'static str, &'static str>,
@@ -2473,6 +2490,7 @@ mod tests {
         let tmp = scratch("clean");
         let base = tmp.path().join(DOWNLOAD_DIR);
         let body = b"new installer";
+        let (_killed, dead) = ended_process();
         for version in ["0.0.0-0", CURRENT, next.as_str(), newest.as_str()] {
             let dir = base.join(version);
             std::fs::create_dir_all(&dir).unwrap();
@@ -2482,7 +2500,11 @@ mod tests {
             std::fs::write(dir.join(SUMS), sums_for(&setup_name(version), body)).unwrap();
             std::fs::write(dir.join(setup_name(version)), body).unwrap();
             // A part left by a window that was killed.
-            std::fs::write(dir.join(format!("{}.part.9", setup_name(version))), b"half").unwrap();
+            std::fs::write(
+                dir.join(format!("{}.part.{dead}", setup_name(version))),
+                b"half",
+            )
+            .unwrap();
         }
         let found = ready_installer(tmp.path(), CURRENT, false, &public).unwrap();
         // Both newer versions are sound; the newest is offered and the other is removed.
@@ -2537,7 +2559,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let live = part_path(&dir, "setup.exe");
         std::fs::write(&live, b"half").unwrap();
-        let dead = dir.join(format!("other.exe.part.{}", 9_999_999));
+        let (_killed, pid) = ended_process();
+        let dead = dir.join(format!("other.exe.part.{pid}"));
         std::fs::write(&dead, b"half").unwrap();
 
         // The folder is not touched while a part belongs to a live process.
