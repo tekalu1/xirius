@@ -15,6 +15,7 @@ use xirius_core::model::{Clip, ClipBody, Track};
 use xirius_design::{FontSize, Radius, Weight};
 use xirius_session::processed::State;
 
+use crate::arrange::clipfx::{FxEdit, FxView, MIN_W};
 use crate::draw::{Align, Pen};
 use crate::studio::{Rect, Studio};
 use crate::toast::Answer;
@@ -29,8 +30,10 @@ const MARK_GAP: f32 = 3.0;
 /// top right, so the marks never sit under it and stay put whether the clip is selected or not
 /// (UI-389).
 const FLAG_ROOM: f32 = crate::arrange::clipfx::FLAG;
+/// Between the marks and the fade-out flag.
+const FLAG_GAP: f32 = 5.0;
 /// From the clip's right edge.
-const MARK_RIGHT: f32 = 5.0 + FLAG_ROOM;
+const MARK_RIGHT: f32 = FLAG_GAP + FLAG_ROOM;
 /// The name keeps at least this much before the marks.
 const NAME_KEEPS: f32 = 40.0;
 const CHIP_H: f32 = 17.0;
@@ -169,10 +172,10 @@ fn widths(marks: &[Mark]) -> Vec<f32> {
         .collect()
 }
 
-/// How many of the marks fit in the clip at `r`, whose name is `name_w` wide, when `reserve`
-/// more is kept for what follows the name (the ARA badge).
-fn kept(widths: &[f32], r: Rect, name_w: f32, reserve: f32) -> usize {
-    let room = r.w - 12.0 - FLAG_ROOM - name_w.min(NAME_KEEPS) - reserve;
+/// How many of the marks ending at `right` fit in the clip at `r`, whose name is `name_w` wide,
+/// when `reserve` more is kept for what follows the name (the ARA badge).
+fn kept(widths: &[f32], right: f32, r: Rect, name_w: f32, reserve: f32) -> usize {
+    let room = right - r.x - 7.0 - name_w.min(NAME_KEEPS) - reserve;
     let (mut keep, mut used) = (0, 0.0);
     for w in widths {
         if used + w + MARK_GAP > room {
@@ -185,8 +188,33 @@ fn kept(widths: &[f32], r: Rect, name_w: f32, reserve: f32) -> usize {
 }
 
 /// The x the marks that fit start at (what [`paint_marks`] returns), without drawing them.
-pub fn marks_left(marks: &[Mark], r: Rect, name_w: f32, reserve: f32) -> f32 {
-    left_of(&mark_rects(marks, r, name_w, reserve), r)
+pub fn marks_left(marks: &[Mark], r: Rect, name_w: f32, reserve: f32, flag: Option<Rect>) -> f32 {
+    left_of(&mark_rects(marks, r, name_w, reserve, flag), r)
+}
+
+/// Where the fade-out flag of the audio clip at `r` sits, with the fade drag under way
+/// (`edits`) applied; none for a MIDI clip, a crossfaded end or a clip too narrow for handles.
+/// It is placed whether the clip is selected or not, so the marks it moves (UI-390) move only
+/// while the fade's length changes.
+pub fn fade_flag(
+    studio: &Studio,
+    track: &Track,
+    clip: &Clip,
+    r: Rect,
+    edits: &[(ClipId, FxEdit)],
+) -> Option<Rect> {
+    if r.w < MIN_W {
+        return None;
+    }
+    let mut view = FxView::of(&studio.project(), track, clip)?;
+    for (_, edit) in edits.iter().filter(|(id, _)| *id == clip.id) {
+        view.apply(edit);
+    }
+    view.handles(studio, r).flag_out
+}
+
+fn apart(a: Rect, b: Rect) -> bool {
+    a.right() <= b.x || b.right() <= a.x || a.bottom() <= b.y || b.bottom() <= a.y
 }
 
 /// The x the name ends before, for the marks at `rects` in the clip at `r`.
@@ -196,11 +224,24 @@ fn left_of(rects: &[Rect], r: Rect) -> f32 {
         .map_or(r.right() - MARK_RIGHT, |at| at.x - MARK_GAP)
 }
 
-/// Where each of the marks that fit is drawn, the rightmost first.
-fn mark_rects(marks: &[Mark], r: Rect, name_w: f32, reserve: f32) -> Vec<Rect> {
+/// Where each of the marks that fit is drawn, the rightmost first. A fade-out `flag` over them
+/// moves them to its left, and those that no longer fit go from the right; elsewhere they stay
+/// put (UI-390).
+fn mark_rects(marks: &[Mark], r: Rect, name_w: f32, reserve: f32, flag: Option<Rect>) -> Vec<Rect> {
     let widths = widths(marks);
-    let keep = kept(&widths, r, name_w, reserve);
-    let mut x = r.right() - MARK_RIGHT;
+    let at = rects_ending(&widths, r.right() - MARK_RIGHT, r, name_w, reserve);
+    match flag {
+        Some(f) if at.iter().any(|m| !apart(*m, f)) => {
+            rects_ending(&widths, f.x - FLAG_GAP, r, name_w, reserve)
+        }
+        _ => at,
+    }
+}
+
+/// The marks that fit, the rightmost first, the last one ending at `right`.
+fn rects_ending(widths: &[f32], right: f32, r: Rect, name_w: f32, reserve: f32) -> Vec<Rect> {
+    let keep = kept(widths, right, r, name_w, reserve);
+    let mut x = right;
     widths[..keep]
         .iter()
         .rev()
@@ -214,10 +255,18 @@ fn mark_rects(marks: &[Mark], r: Rect, name_w: f32, reserve: f32) -> Vec<Rect> {
 }
 
 /// Draws the marks that fit at the right of the head of the clip at `r`, whose name is
-/// `name_w` wide and is followed by `reserve` more; returns the x the name ends before.
-pub fn paint_marks(pen: &mut Pen, marks: &[Mark], r: Rect, name_w: f32, reserve: f32) -> f32 {
+/// `name_w` wide and is followed by `reserve` more, clear of the fade-out `flag`; returns the x
+/// the name ends before.
+pub fn paint_marks(
+    pen: &mut Pen,
+    marks: &[Mark],
+    r: Rect,
+    name_w: f32,
+    reserve: f32,
+    flag: Option<Rect>,
+) -> f32 {
     let c = pen.c;
-    let rects = mark_rects(marks, r, name_w, reserve);
+    let rects = mark_rects(marks, r, name_w, reserve, flag);
     let left = left_of(&rects, r);
     for (m, at) in marks[..rects.len()].iter().rev().zip(rects) {
         pen.round(at, c.surface_3, Radius::Xs);
@@ -594,18 +643,19 @@ mod tests {
         assert_eq!(s.reason(&clip, &read), "ファイルが見つかりません");
     }
 
-    /// Whatever the clip's width and place, its name and its marks, no mark that is drawn lies
-    /// under the fade flags a selected audio clip shows on its top edge (UI-389). Proptest makes
-    /// the cases, the same on every run, and a failure comes back as the smallest one.
+    /// Whatever the clip's width and place, its name, its marks and its fade-out, no mark that
+    /// is drawn lies under the fade flags a selected audio clip shows on its top edge (UI-389),
+    /// and marks the fade-out flag is not over stay where they are without it (UI-390).
+    /// Proptest makes the cases, the same on every run, and a failure comes back as the
+    /// smallest one.
     #[test]
     fn no_mark_lies_under_the_flags_of_a_selected_clip() {
-        use crate::arrange::clipfx::{FxView, MIN_W};
         use proptest::prelude::*;
         use proptest::test_runner::{Config, RngSeed, TestRunner};
         use xirius_core::clipfx::Fade;
 
         let s = Studio::sample();
-        let view = FxView {
+        let mut view = FxView {
             gain_db: 0.0,
             own_in: Fade::default(),
             own_out: Fade::default(),
@@ -630,35 +680,54 @@ mod tests {
             any::<bool>(),
             proptest::sample::subsequence(shown.to_vec(), 0..=shown.len()),
         );
-        let mut runner = TestRunner::new(Config {
-            cases: 512,
-            failure_persistence: None,
-            rng_seed: RngSeed::Fixed(389),
-            ..Config::default()
-        });
-        runner
-            .run(&cases, |(x, w, name_w, ara, mut marks)| {
-                marks.push(Mark::Icon("loop"));
-                let r = Rect::new(x, 40.0, w, 60.0);
-                let reserve = if ara {
-                    crate::clip_ara::ara_reserve()
-                } else {
-                    0.0
-                };
-                let h = view.handles(&s, r);
-                let flags = [h.flag_in, h.flag_out];
-                for at in mark_rects(&marks, r, name_w, reserve) {
-                    for f in flags.iter().flatten() {
-                        let apart = at.right() <= f.x
-                            || f.right() <= at.x
-                            || at.bottom() <= f.y
-                            || f.bottom() <= at.y;
-                        prop_assert!(apart, "the mark at {at:?} lies under the flag at {f:?}");
+        // The fade-out's length on screen: none, its flag over the marks of a wide clip, and
+        // past them.
+        for (fade, px) in [
+            ("no fade", 0.0),
+            ("short", 12.0),
+            ("mid", 40.0),
+            ("long", 400.0),
+        ] {
+            view.fade_out = Fade {
+                length: s.px_to_ticks(px),
+                curve: 0.0,
+            };
+            view.own_out = view.fade_out;
+            let mut runner = TestRunner::new(Config {
+                cases: 512,
+                failure_persistence: None,
+                rng_seed: RngSeed::Fixed(389),
+                ..Config::default()
+            });
+            runner
+                .run(&cases, |(x, w, name_w, ara, mut marks)| {
+                    marks.push(Mark::Icon("loop"));
+                    let r = Rect::new(x, 40.0, w, 60.0);
+                    let reserve = if ara {
+                        crate::clip_ara::ara_reserve()
+                    } else {
+                        0.0
+                    };
+                    let h = view.handles(&s, r);
+                    let at = mark_rects(&marks, r, name_w, reserve, h.flag_out);
+                    for m in &at {
+                        for f in [h.flag_in, h.flag_out].iter().flatten() {
+                            prop_assert!(
+                                apart(*m, *f),
+                                "{fade}: the mark at {m:?} lies under the flag at {f:?}"
+                            );
+                        }
                     }
-                }
-                Ok(())
-            })
-            .unwrap();
+                    let plain = mark_rects(&marks, r, name_w, reserve, None);
+                    if h.flag_out
+                        .is_none_or(|f| plain.iter().all(|m| apart(*m, f)))
+                    {
+                        prop_assert_eq!(&at, &plain, "{}: the marks moved off no flag", fade);
+                    }
+                    Ok(())
+                })
+                .unwrap();
+        }
     }
 
     #[test]

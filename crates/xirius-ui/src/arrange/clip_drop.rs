@@ -722,6 +722,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
                         false,
                         None,
                         &height,
+                        &[],
                         studio,
                         Some(GHOST_ALPHA),
                     );
@@ -784,6 +785,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
                                 false,
                                 None,
                                 &height,
+                                &[],
                                 studio,
                                 Some(GHOST_ALPHA),
                             );

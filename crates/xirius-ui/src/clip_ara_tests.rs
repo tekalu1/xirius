@@ -587,7 +587,7 @@ fn the_badge_sits_after_the_name_and_stays_when_the_name_is_cut() {
     // A clip too narrow for its name: the badge stays inside it, at the name's start.
     let narrow = Rect::new(r.x, r.y, BOX_W + 8.0, r.h);
     assert!(name_w + GAP + BOX_W > narrow.w);
-    let at = s.ara_badge_rect(tr, clip, narrow, &Badge::Ready);
+    let at = s.ara_badge_rect(tr, clip, narrow, &Badge::Ready, &[]);
     assert!(
         at.x >= narrow.x && at.right() <= narrow.right(),
         "{at:?} {narrow:?}"
@@ -595,10 +595,10 @@ fn the_badge_sits_after_the_name_and_stays_when_the_name_is_cut() {
     // Analysing in a wide clip: the ring and its percent.
     let busy = Badge::Busy(Some(100));
     assert!(busy.width() > BOX_W);
-    let at = s.ara_badge_rect(tr, clip, r, &busy);
+    let at = s.ara_badge_rect(tr, clip, r, &busy, &[]);
     assert_eq!(at.w, busy.width());
     // In a narrow one the percent goes and the ring stays, inside the clip.
-    let at = s.ara_badge_rect(tr, clip, narrow, &busy);
+    let at = s.ara_badge_rect(tr, clip, narrow, &busy, &[]);
     assert_eq!(at.w, BOX_W);
     assert!(
         at.x >= narrow.x && at.right() <= narrow.right(),
@@ -607,7 +607,7 @@ fn the_badge_sits_after_the_name_and_stays_when_the_name_is_cut() {
     // Narrower than the ring: the box is cut at the clip's end, never past it.
     let thin = Rect::new(r.x, r.y, BOX_W / 2.0, r.h);
     for badge in [busy, Badge::Ready, Badge::Crashed] {
-        let at = s.ara_badge_rect(tr, clip, thin, &badge);
+        let at = s.ara_badge_rect(tr, clip, thin, &badge, &[]);
         assert!(
             at.x >= thin.x && at.right() <= thin.right() + 0.01,
             "{badge:?} {at:?} {thin:?}"
