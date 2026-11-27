@@ -9269,3 +9269,17 @@ status = "done"
 tests = [
     "xirius-ui clip_marks::tests::no_mark_lies_under_the_flags_of_a_selected_clip",
 ]
+
+[[item]]
+id = "BRW-025"
+title = "続けて試聴したとき、曲のエンジンに混ぜる試聴の新しいファイルの頭を捨てない"
+area = "BRW"
+phase = "v1.1"
+source = "2026-11-27 の持ち主の承認（beta.45 の PR の CI で 1 回揺れた試聴の試験の原因を直す）"
+after = ["BRW-020"]
+done_when = "曲のエンジンに混ぜる試聴（BRW-020 の方式 b）で、出力の側が試聴の番号を読んだ直後に次の試聴が始まって音を送っても、その音を古い試聴の物として捨てず、新しいファイルが終わりまで鳴って終わる。番号を読んでから取り出すまでの間に次の試聴が始まる順を、試聴の音のキューの単体試験で決まった順に起こして確かめる"
+status = "done"
+tests = [
+    "xirius-engine audition::bus::tests::a_cue_fed_after_the_callback_read_the_stopped_serial_loses_no_frame",
+    "xirius-session audition::tests::a_stale_cached_cue_is_stopped_before_the_fresh_file_opens",
+]
