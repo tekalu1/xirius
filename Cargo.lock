@@ -8476,6 +8476,7 @@ dependencies = [
  "xirius-plugins",
  "xirius-prefs",
  "xirius-session",
+ "xirius-test-clap",
  "xirius-test-vst3",
  "xirius-vst3",
 ]

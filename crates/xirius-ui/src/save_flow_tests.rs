@@ -25,25 +25,25 @@ const W: f32 = 1280.0;
 const H: f32 = 800.0;
 
 /// One headless app; each studio gets a window of its own in it.
-struct Desk {
+pub(crate) struct Desk {
     platform: Rc<HeadlessPlatform>,
     app: ApplicationHandle,
 }
 
 /// A studio in its window.
-struct Win {
-    studio: Rc<RefCell<Studio>>,
-    window: HeadlessWindow,
+pub(crate) struct Win {
+    pub(crate) studio: Rc<RefCell<Studio>>,
+    pub(crate) window: HeadlessWindow,
 }
 
 impl Desk {
-    fn new() -> Desk {
+    pub(crate) fn new() -> Desk {
         let platform = HeadlessPlatform::new();
         let app = Application::with_platform(platform.clone()).run_embedded(|_| {});
         Desk { platform, app }
     }
 
-    fn open(&self, studio: Studio) -> Win {
+    pub(crate) fn open(&self, studio: Studio) -> Win {
         let studio = Rc::new(RefCell::new(studio));
         let screen = studio.clone();
         self.app.update(|cx| {
@@ -69,7 +69,7 @@ impl Win {
     }
 
     /// A key pressed and let go, as `Keystroke::parse` writes it (`ctrl-shift-s`).
-    fn key(&self, key: &str) {
+    pub(crate) fn key(&self, key: &str) {
         let keystroke = Keystroke::parse(key).unwrap();
         self.window.dispatch(PlatformInput::KeyDown(KeyDownEvent {
             keystroke: keystroke.clone(),
@@ -117,7 +117,7 @@ impl Win {
     }
 
     /// Waits for a save and an open the window started, as its frames would.
-    fn settle(&self) {
+    pub(crate) fn settle(&self) {
         {
             let mut s = self.studio.borrow_mut();
             if s.saving.is_some() {
