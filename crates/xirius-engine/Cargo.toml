@@ -51,7 +51,7 @@ xirius-test-vst3 = { path = "../xirius-test-vst3" }
 embed-resource = "3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-wasapi = "0.25"
+wasapi = "0.27"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
